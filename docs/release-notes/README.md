@@ -27,6 +27,8 @@
 
 | 版本 | 主题 |
 |---|---|
+| [v1.15.0-rc0](v1.15.0-rc0.md) | 预发布候选：引擎 .so 化（双引擎 .so + MIT 抽象层）+ 运行期 JIT 算子缓存（.nnk + kernelgen）+ C++20 模块加载路径 + 5 子仓合并回主仓 + 文档工具链 |
+| [v1.14.1](v1.14.1.md) | 漏洞修复（补写）：断点续训无半提交 + 优化器 t 取权威值 |
 | [v1.14.0](v1.14.0.md) | 训练骨架（`TrainState`/`BatchSource`/`RunDriver`）+ 开放规格（`ModelSpecBase`）+ `Embedding`/`CrossAttention` + 宿主桥公开 API + 全仓格式化基线 |
 | [v1.13.0](v1.13.0.md) | 子仓拆分（core / threadpool / kvrecord / dataset / tokenizer → `extern/` submodule） |
 | [v1.12.0](v1.12.0.md) | RL 与可组合训练基础设施（具名多输出 / experience / objectives / `TrainingGroupSession`） |
