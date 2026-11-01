@@ -390,8 +390,7 @@ struct KernelCache
     [[nodiscard]] static Result<KernelCache> from_bytes(std::string_view bytes,
                                                         const std::string& expected_genver)
     {
-        auto rec_r = KeyValueRecord::parse(bytes);
-        if (!rec_r) return std::unexpected(rec_r.error());
+        NN_TRY(rec_r, KeyValueRecord::parse(bytes));
         KernelCache c;
         std::string genver;
         c.generator_version = (rec_r->get("generator_version", genver))

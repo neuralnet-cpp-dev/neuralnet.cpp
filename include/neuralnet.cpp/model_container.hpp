@@ -357,7 +357,7 @@ public:
 [[nodiscard]] inline Result<void> model_warmup(Model& model, const Tensor& input)
 {
     auto out = model.forward(input);
-    if (!out) return std::unexpected(out.error());
+    NN_TRY_CHECK(out);
     return {};
 }
 

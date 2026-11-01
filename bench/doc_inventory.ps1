@@ -3,11 +3,15 @@
 # 与 docs/internal/12-compute-engine-inventory.md §2 配套（改接口后重跑核对数字）。
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$eng = Join-Path $root 'include\neuralnet.cpp\compute_engine.hpp'
+# 引擎 .so 化（T9）后 compute_engine.hpp 移入 engine 子模块 abstraction 层（MIT 抽象层）
+$eng = Join-Path $root 'engine\abstraction\include\neuralnet.cpp\compute_engine.hpp'
 
 # 1) 接口 virtual 方法名（去重）
-$virts = Select-String -Path $eng -Pattern 'virtual\s+[\w:<>,\s\*&]+?\s+(\w+)\s*\(' -AllMatches |
-  ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value }
+#    ⚠ 必须多行感知：`[[nodiscard]] virtual Result<Tensor>` 与函数名可跨行
+#    （scan_prefix_outer_impl / offload_save_impl），按行 Select-String 会漏计。
+$engText = Get-Content $eng -Raw
+$virts = [regex]::Matches($engText, '(?s)virtual\s+[\w:<>,\s\*&]+?\s+(\w+)\s*\(') |
+  ForEach-Object { $_.Groups[1].Value }
 $uv = $virts | Sort-Object -Unique
 Write-Output "virtual methods: $($virts.Count) declarations, $($uv.Count) unique"
 
