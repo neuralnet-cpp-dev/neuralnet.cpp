@@ -5525,3 +5525,78 @@ ccache 命中已把 include 重编压到 ~0.1s/目标，模块能消除的"改�
 隔离收益真实存在（非模块域零重编、改 tokenizer 不重编 engine 消费方），绝对值被基线追平；
 若出现无 ccache / 多 TU 频繁改公共头的场景，隔离收益才会显性化。**不改主线默认加载路径**
 （`#include <nn.hpp>` + PCH + ccache 仍是默认），模块是增量接入的平行路径，双轨共存。
+
+## 引擎 .so 化（T9，2026-11-01）：双引擎 .so + 抽象层转发 → C++ 直出
+
+**承接**：34 号文档 §10 立项（用户裁定）。**目标**：header-only 引擎翻成 link 阶段——引擎实现编
+进独立 `.so`（LGPL 可替换），消费方只 include 抽象层头 + 链接。**实施大幅偏离 §10 的 E2/E3**
+（dlopen + C ABI 句柄映射）——用户二次裁定 **C++ 直出**：真实 Tensor 值类型跨界 + 虚方法分派直落
+.so，无句柄映射/序列化/dlopen。边界清单原文见 `docs/internal/34` §10，实施记录见 §10.4。
+
+**用户裁定的许可边界**（偏离原始文档的三处）：引擎 **LGPL**（双 .so 可分别替换）+ 抽象层 **MIT**
++ 主仓库 **MIT**；引擎 C++ 直出（非 C ABI）；完整适配（全 cli 改链 .so + 主仓库 clang thin LTO）。
+
+**新仓库**：`codes/compute.neuralnet.cpp`（`git@github.com:neuralnet-cpp-dev/compute.neuralnet.cpp`，
+私有；主仓库 `engine/` submodule，指针随实施更新）。结构：`abstraction/`（MIT：`compute_engine.hpp`
+完整接口面 + Tensor 值类型 + expr_spec/expr_graph/expr_opt + 工厂声明）+ `engine/`（LGPL：
+`compute_cpu/gpu_engine.hpp`、backend、shaders、scan_exprs、kernelgen）+ `tests/`（消费方验证）。
+
+**关键 ABI 决策——GpuBuffer PIMPL**：Tensor 布局与 `NN_HAS_VULKAN` **无关**（外层
+backend_identity/write_epoch/mark_content_changed 在 MIT 头，Vulkan 句柄藏引擎侧 Impl）→ 消费方
+无需同宏编译、无需 Vulkan SDK。abstraction 的跨界头（compute_engine/tensor、expr_spec/graph/opt、
+precision、core_*、algebra_*）是**唯一版本**（.so 与消费方同份编译）；引擎侧头（expr_dsl、
+expr_emitter/glsl_gen、compute_cpu/gpu_engine、backend、层/模型/CLI）只在 engine/include。
+
+**主仓库改链**（d91dd48，分支 feature/kernel-cache）：`add_subdirectory(engine)`；删除 21 个与
+抽象层重复的接口/值类型头 + 13 个引擎实现头（compute_cpu/gpu_engine.hpp、backend/*、
+expr_emitter/glsl_gen）+ nn_api C ABI 门面 + nn_kernelgen + scan_exprs + 旧 GPU 段（shader 嵌入 /
+fused_registry / nn_enable_gpu_fusion）；`cli_engine_factory` 改工厂 + `NN_GPU_ENGINE` 宏分流
+（GPU OFF 不定义 create_gpu_engine 符号 → 链接面用宏隔离）；模块闭包路径指向抽象层；PCH 段简化。
+
+**LGPL 替换验证的路线修正**（关键取舍）：CPU 的 DSL 模板路径在**消费方 TU** 求值、不经 .so →
+训练 loss 对比不可用（无 --seed 参数、两次运行 loss 不同）、text_infer 也不可观测（推理走 DSL
+模板）→ 正解 = `layer_bench --op matmul --hash`（显式调引擎 matmul_impl 虚方法，确定性 hash）；
+补丁注入点 = `compute_cpu_engine.hpp` 的 matmul_impl 内（F32 分支 scale×2）。
+
+**测试迁移（第二刀，c739cf3）**：主仓库删掉的引擎级测试迁新仓库 `tests/`，改**消费方形态**——
+只 include MIT 抽象层接口头 + 引擎侧 LGPL 头（模型/DSL/emitter header-only 编译进测试，引擎
+原语虚调用走 .so），引擎经 `create_cpu_engine`/`create_gpu_engine` 工厂创建（真实实现编在
+libnn-cpu.so / libnn-gpu.so）。迁移清单：gpu_test / gpu_f16_test / scan_bitwise_test /
+gpt_offload_test / rapt_offload_test / expr_graph_test / expr_fuse_test（+test_common.hpp、
+expr_fuse_shapes.hpp 链定义单一事实源）。**不迁**：nn_api/nn_consumer_test（C ABI 门面已废）、
+mem_probe（NN_ENABLE_PROBES 探针，非 ctest）。
+
+**踩坑实录（迁移期）**：
+- **引号 include 缺口**：引擎侧头用 `"core_domain.hpp"` 等引号 include → 测试 -I 必须含
+  `abstraction/include/neuralnet.cpp` 子目录（同主仓库 nn_core 教训，首轮构建 fatal）。
+- **层头传递包含缺口**：新仓库 compute_layer_bitlinear.hpp / model_serialization.hpp 缺
+  `ternary_pack.hpp` include（主仓库 d91dd48 修过、新仓库副本滞后）→ 测试直接 include
+  compute_layer.hpp 时 `nn::trit_pack` 未声明 → 补两处 include（与主仓库同款修复）。
+- **工厂命名空间**：测试在全局命名空间，`create_*_engine`/`last_error` 需 `nn::` 限定。
+- **expr_fuse_test 闭合世界**：链结构（x*row_broadcast(g) 视图、Adam 金刚石多输出等）不在
+  库内 dry-run/模型 pass 覆盖 → GPU end_expr 硬报错（`融合 kernel 未命中 AOT 融合 shader`）。
+  修法 = scan_exprs 加 **test_cover_pass**（用 expr_fuse_shapes.hpp 同一组链函数跑录制段；
+  NN_EXPR_SCAN 下 end_expr 登记复合 spec）。expr_fuse_shapes.cpp 的 NN_EXPR_SCAN 收集器
+  在本仓无对应物（无 nn_enable_gpu_fusion），其角色由 test_cover_pass 承接。
+- **expr_fuse_test 引擎私有 API**：批量派发计数（fused_batch_dispatches）与 BDA 可用性
+  （backend.device().bda_available()）是引擎实现私有 → 抽象层不披露，断言删除（批量 vs
+  逐个逐字节一致 + CPU 对照的数值口径保留）。
+- **逐位锚的编译前提（-march=native）**：新仓库默认 Release 若不带 -march=native，CPU 参考
+  无 FMA 收缩（裸 -O3 不生成 FMA 指令），与 GPU kernel（glslc 默认 FMA）累加路径不同 →
+  scan_bitwise_test 57/61 位型漂移（1-2 ULP）；加 `-O3 -fno-math-errno -fno-trapping-math
+  -funroll-loops -march=native`（主仓库同款）后 61/61 逐位一致。
+- **ctest 77 约定**：GPU 不可用 / Release 口径不满足 → 返回 77；新仓库测试统一
+  `SKIP_RETURN_CODE 77`（否则 ctest 记 Failed）。
+
+**验证基线（2026-11-01 实测）**：
+- 主仓库：mnist_train/mnist_infer、text_train/text_infer CPU+GPU 闭环；ctest 77/77 全绿（-j1，
+  7GB 内存 -j4 OOM）；`nm -C build/mnist_train` 无 CpuEngine 符号；lgpl_verify.sh 符号级 +
+  patched libnn-cpu.so（matmul ×2）→ layer_bench matmul hash `b9e47d0e2a73aa3d` →
+  `2bdfbf3936222a3a` → 复原 ✓。
+- 新仓库：ctest 10/10 全绿（NN_VULKAN_DEVICE=850M 权威设备）：scan_bitwise 61/61 逐位、
+  expr_fuse 融合端到端、gpt/rapt offload 一致性、gpu_test/gpu_f16_test 原语对拍、
+  expr_graph_test 图融合分析、consumer/gpu_consumer/kernelgen_smoke。
+
+**遗留（未做/可选）**：GPU .so 的 lgpl_verify 扩展（目前只验 CPU .so；GPU 同法 patch 原语 +
+GPU 观测）；mem_probe 迁新仓库（NN_ENABLE_PROBES 探针形态）；主仓库 README 同步本轮变化；
+新仓库 README 补引擎级测试/验证段落。

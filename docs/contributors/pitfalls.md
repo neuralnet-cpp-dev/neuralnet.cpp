@@ -98,7 +98,7 @@
 
 ### 3.6 除零/越界防护缺失
 
-- `steps=0`（mnist_train/text_train）、`--topk>10`、tokenizer_infer 空输入、`--iters 0`、`evaluate_mnist` 空数据集、`cli/cli_mnist_io.hpp` 末行无换行符丢样本、SGF 坐标跳 i/嵌套括号。
+- `steps=0`（mnist_train/text_train）、`--topk>10`、tokenizer_infer 空输入、`--iters 0`（`gpu_test` 参数，该测试已迁新仓库 compute.neuralnet.cpp tests/）、`evaluate_mnist` 空数据集、`cli/cli_mnist_io.hpp` 末行无换行符丢样本、SGF 坐标跳 i/嵌套括号。
 - **教训**：CLI 入口的参数防护是一次性成本，review 时逐参数过一遍。
 
 ### 3.7 CNN 全量评估撑爆显存

@@ -227,7 +227,7 @@ a_{t,i} = (q'_t)ᵀ k'_i
 2. z 扫描：把 V 换成全 1，累计 `z=Σk'`，读出 `q'·z` 作为分母的未加 ε 部分。
 
 这样不必展开所有 token 对。扫描原语契约见
-[`compute_engine.hpp`](../../include/neuralnet.cpp/compute_engine.hpp#L1230)。
+[`compute_engine.hpp`](../../engine/abstraction/include/neuralnet.cpp/compute_engine.hpp)（抽象层接口；引擎实现在新仓库 compute.neuralnet.cpp）。
 当前两次扫描都会经过同一个通用原语，因此即使 RLA-2 忽略 A 输出，原语内部的 A 计算仍存在。
 
 反向传播需要求“某个 key/value 被未来哪些 query 使用”。causal 路径按时间方向使用后缀扫描，

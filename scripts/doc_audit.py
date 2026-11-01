@@ -60,15 +60,26 @@ REMOVED_FLAGS = {
     '--cuda', '--tdr-retry', '--max-tdr-retries', '--memory-tokens', '--window',
     '--osc-guard', '--osc-window', '--osc-threshold',
     '--no-cache', '--test-file', '--loss-scope', '--export-deploy',
+    # 引擎 .so 化（T9，2026-11-01）后随探针/测试删除或迁移的参数：
+    #   --doc-mask：mem_probe 探针参数（探针已删，02 号文档标注验证口径归档 history）
+    #   --iters：gpu_test 参数（测试已迁新仓库 compute.neuralnet.cpp tests/）
+    '--doc-mask', '--iters',
 }
 # [D] 文档已标注"计划中、尚未实现"的参数（实现后移出本表）
-PLANNED_FLAGS = {'--stochastic-rounding', '--unit-scaling'}
+#   --f16-all：05 号文档明确"text_train/mnist_train 尚无 --f16-all"（Plan B 规划项，
+#   docs/internal/26 §8.B R1）；旧 mem_probe 探针的该参数已随探针删除（T9）。
+PLANNED_FLAGS = {'--stochastic-rounding', '--unit-scaling', '--f16-all'}
 
 # [F] 历史/已并入测试名（当时目标名，勿再报警）
+#   T9 引擎 .so 化（2026-11-01）后，引擎级测试迁入新仓库 compute.neuralnet.cpp
+#   tests/（消费方形态）——主仓库代码不再有这些目标，但当前状态文档（AGENTS.md
+#   §2）与历史文档仍引用其名；真实回归在 `cd compute.neuralnet.cpp && ctest`。
 HISTORICAL_TESTS = {
     'expr_fuse_test', 'expr_graph_test', 'expr_spec_test', 'matmul_fusion_test',
     'offload_primitive_test', 'zipt_test', 'zipt_gradcheck', 'zipt_smoke_test',
     'zipt_consistency_test', 'zipt_doc_test', 'ternary_deploy_test',
+    'gpu_test', 'gpu_f16_test', 'scan_bitwise_test', 'gpt_offload_test',
+    'rapt_offload_test',
 }
 
 # [E] 头部模板豁免（文档规范 §2.2）：历史归档 / 随 tag 冻结 / 采集时快照
@@ -119,7 +130,13 @@ def read_lines(p):
 def load_code_text():
     parts = []
     for p in walk({'.hpp', '.cpp'}, skip_dirs={'build', '.git', 'node_modules', '.venv', '__pycache__'}):
-        if rel(p).startswith(('include/', 'src/', 'tools/')):
+        # 引擎 .so 化（T9，2026-11-01）后抽象层头/引擎头/scan_exprs 迁入
+        # submodule engine/（挂载新仓库 compute.neuralnet.cpp 根：抽象层 =
+        # engine/abstraction，引擎头/scan_exprs = engine/engine/）——符号存在性
+        # 检查必须覆盖，否则文档引用引擎侧符号会误报"不存在"。
+        if rel(p).startswith(('include/', 'src/', 'tools/',
+                              'engine/abstraction/include/', 'engine/engine/include/',
+                              'engine/engine/src/', 'engine/engine/tools/')):
             with open(p, encoding='utf-8', errors='replace') as f:
                 parts.append(f.read())
     for p in walk({'.py'}):

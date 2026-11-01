@@ -2,13 +2,13 @@
 
 > **读者**：项目开发者（改这个库的人）。本分册定位见 [`README.md`](README.md)；历史归档在 [`../history/history.md`](../history/history.md)。
 > **一句话结论**：Phase 3 把 header-only 引擎翻成可 install 的 `libnn.so`（link 阶段，兼解 LGPL 失效与编译慢），成败取决于**先定死 C ABI 边界**——`libnn.so` 只编"具体、稳定"的引擎实现 + 手写原语 + 生成器；模板重（DSL/Layer/Loss/Optimizer 组合）留 header-only 在消费方实例化。边界协议 = **不透明句柄 + 序列化载荷**（STL/模板类型永不跨 `.so`）。
-> **状态**：现行（Phase 3-A/B/C 已实施 + 850M 验证：`libnn.so` 门面、`nn_api.h` C ABI、install 布局、LGPL 可替换）。**引擎 .so 化（双引擎 .so + header-only 抽象层转发）为下一步，边界清单见 §10（用户裁定，2026-11-01）**。
+> **状态**：现行（Phase 3-A/B/C 已实施 + 850M 验证：`libnn.so` 门面、`nn_api.h` C ABI、install 布局、LGPL 可替换）。**引擎 .so 化（双引擎 .so + 抽象层转发）已实施并随 T9 改链主仓库（2026-11-01 用户裁定，实施偏离 E2/E3 为 C++ 直出——见 §10.4 实施记录）**。
 
 ## 0. 动机与前置事实
 
 - **LGPL 失效**：header-only 把库代码内联进消费方二进制，没有可替换的 `.so` → LGPL 形同 GPL。解药 = link 阶段（预编译 `.so` + C ABI），让消费方能 link/替换 `libnn.so`（`docs/internal/33` §0.3）。
 - **编译慢根因**是 per-TU codegen（PCH 后 `-ftime-trace`：后端 29.1s vs 前端 4.0s），不是头解析。真正提速靠"模板进 header 的只编一次、具体实现编进 `.so`"。
-- 前置已交付：生成器 `libnn-kernelgen.so`（C ABI `nnk_generate_spirv`，`kernelgen_api.h`）+ `.nnk` JIT 缓存 + 引擎 JIT miss 路径（`docs/internal/33` Phase 2 ✅）。
+- 前置已交付：生成器 `libnn-kernelgen.so`（C ABI `nnk_generate_spirv`，`kernelgen_api.h`）+ `.nnk` JIT 缓存 + 引擎 JIT miss 路径（`docs/internal/33` Phase 2 ✅）。**引擎 .so 化落地后 kernelgen 的 JIT 角色不变**：`libnn-kernelgen.so` 仍由 GPU 引擎运行期 dlopen（`nnk_generate_spirv`），与 §10 双引擎 .so 正交。
 
 ## 1. 边界总原则
 
@@ -169,3 +169,23 @@ CpuEngine + CPU 原语   GpuEngine + Vulkan backend + shader + kernelgen
 - **性能**：句柄 + 序列化每方法往返有开销；热路径（matmul/训练循环）需要评估是否命中 `.so` 的批量/录制窗口，避免"每个原语一次 IPC 往返"打崩吞吐。
 - **双 .so 划分**：kernelgen（JIT 生成器）与 GPU 引擎同 .so 后，`nnk_generate_spirv` 的 dlopen/符号归属要理顺（是引擎内部依赖还是对外入口）。
 - **双轨维护**：header-only（现状）与抽象层转发并存期间，两套引擎实现要一致——本方案**最终以 .so 为权威**，header-only 面收敛到抽象层转发（不再各自实例化引擎体）。
+
+### 10.4 实施记录：C++ 直出版（2026-11-01 落地，偏离 E2/E3）
+
+> 本节约定的 **E1 完全按裁定执行**；**E2/E3 被用户二次裁定推翻**——抽象层不做 dlopen/句柄映射，改为 **C++ 直出**。实施与验证过程（含 A/B 与取舍）归档在 `docs/history/history.md`「引擎 .so 化（T9）」条。
+
+**最终形态（替代 10.1 的 E2/E3）：**
+
+- **引擎**（LGPL，`git@github.com:neuralnet-cpp-dev/compute.neuralnet.cpp`，主仓库 `engine/` submodule）：
+  - `libnn-cpu.so` = 真实 `nn::CpuEngine`（header-only 实现编进 .so）+ 导出工厂 `nn::create_cpu_engine()` / `nn::last_error()`
+  - `libnn-gpu.so` = 真实 `nn::GpuEngine` + Vulkan backend + 原语 shader + AOT 融合注册表（`scan_exprs` 构建期生成 fused_registry，158 结构）；工厂 `nn::create_gpu_engine(device)`（空 = 自动选卡 / `NN_VULKAN_DEVICE`）
+  - `libnn-kernelgen.so` = 运行期 JIT 生成器（GPU 引擎 miss 时 dlopen，`nnk_generate_spirv`）
+- **抽象层**（MIT，同仓库 `abstraction/`）：`compute_engine.hpp` 完整 ComputeEngine 接口面 + **真实 Tensor 值类型跨界**（GpuBuffer PIMPL：Vulkan 句柄藏在引擎侧 Impl，布局与 `NN_HAS_VULKAN` 无关）+ ExprSpec/expr_graph/expr_opt 等 DSL 支持头 + `create_cpu_engine`/`create_gpu_engine`/`last_error` 工厂声明。**无句柄映射、无序列化、无 dlopen**——虚方法分派直接落 .so 内实现（两侧同编译器/旗标，ABI 一致）。
+- **主仓库**（MIT）：`add_subdirectory(engine)` 集成 submodule，cli/model/layer 全改链双 .so；`include/neuralnet.cpp/` 删除与抽象层重复的 21 个接口/值类型头 + 13 个引擎实现头（`compute_cpu/gpu_engine.hpp`、`backend/*`、`expr_emitter/glsl_gen`），保留层/模型/DSL 头（消费方 TU 编译，引擎原语虚调用走 .so）。`cli_engine_factory` 用工厂 + `NN_GPU_ENGINE` 宏分流链接面。
+- **测试**：引擎级测试迁入新仓库 `tests/`（消费方形态：只 include 抽象层接口 + 工厂 + 链 .so），主仓库保留 77 个 ctest（层/模型/CLI 侧，全部改工厂创建）。
+
+**验证基线（2026-11-01，均实测）：**
+
+- 主仓库：mnist_train/mnist_infer、text_train/text_infer CPU+GPU 闭环；ctest 77/77 全绿（-j1）；`nm` 消费方二进制 0 引擎符号；`bench/lgpl_verify.sh` 符号级 + patched `libnn-cpu.so`（matmul ×2）→ `layer_bench --op matmul --hash` 原 hash → patched hash → 复原。
+- 新仓库：ctest 10/10 全绿（`NN_VULKAN_DEVICE=850M` 权威设备）：`scan_bitwise_test` 61/61 逐位、`expr_fuse_test` 融合端到端、`gpt/rapt_offload_test` 一致性、`gpu_test`/`gpu_f16_test` 原语对拍、`expr_graph_test` 图融合分析。
+- ⚠ **逐位锚的编译前提**：新仓库默认 Release 必须带 `-march=native`（FMA 收缩）——裸 `-O3` 下 CPU 参考与 GPU kernel 累加路径不同，`scan_bitwise_test` 57/61 位型漂移（1-2 ULP）。

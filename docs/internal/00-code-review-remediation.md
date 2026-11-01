@@ -233,7 +233,7 @@ display / beta / state_bufs / half_state）+ `optimizer_table()` / `find_optimiz
 「故意泄漏（进程退出时由 OS 回收）：避免静态析构顺序问题……**若作为库被长驻进程 embed，此泄漏会持续累积**
 （`vkDestroyDevice`/`vkDestroyInstance`/`vkFreeMemory` 永不调用）。**恢复方案：显式 `shutdown()` + 引用计数，或进程级一次清理**。」
 
-**方案**：落地它自己写好的 TODO——`nn::vulkan::shutdown()`（幂等）+ `GpuEngine` 析构递减引用计数
+**方案**：落地它自己写好的 TODO——`vulkan::shutdown()`（幂等；当时的命名空间方案，未实施）+ `GpuEngine` 析构递减引用计数
 （计数归零才 `vkDestroy*`）；Debug 下给 `Tensor` 析构加"引擎存活探测"（或给 `observer_ptr` 加 Debug 校验）。
 注意保持铁律 6（录制期引用必须活到 `end_batch`）。
 

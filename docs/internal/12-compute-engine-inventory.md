@@ -128,7 +128,7 @@ op-level 引擎原语，不进 DSL 闭合世界、无需 scan 登记，见 `docs
 | `cast` / `copy_from` | `model_serialization.hpp` + f16 测试 / gradcheck |
 | `cast_into` / `copy_into` / `supports_*` | 基类 NVI 边界 cast 的"写回原存储"路径（`compute_engine.hpp`）+ 引擎实现互调（CPU `cast_into` 同精度分支转 `copy_into`）+ `write` 的 f16 目标（经 `copy_from` → f32 上传 + `cast_into`） |
 | `pool_stats` | `src/text_train.cpp`（池账本统计） |
-| `release_idle_pool_blocks` | `cli/cli_mnist_io.hpp`、`src/text_train.cpp`、`mem_probe.cpp` |
+| `release_idle_pool_blocks` | `cli/cli_mnist_io.hpp`、`src/text_train.cpp`（mem_probe 探针已随引擎 .so 化删除，T9） |
 | `submit_scalar_readback` / `poll_scalar_readback` / `scalar_readback_slots` | 标量回读（loss / `ce_fusion_test`），Layer 不直调 |
 | `device` | 引擎外部少量判断 |
 

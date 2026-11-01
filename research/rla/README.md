@@ -35,7 +35,7 @@
 1. [`compute_layer_rapt.hpp`](../../include/neuralnet.cpp/compute_layer_rapt.hpp)：
    RLA-2、RAPTBlock、RAPTModel。
 2. [`domain_rla.hpp`](../../include/neuralnet.cpp/domain_rla.hpp)：公开构建约束与配置。
-3. [`compute_engine.hpp`](../../include/neuralnet.cpp/compute_engine.hpp)：扫描原语语义。
+3. [`compute_engine.hpp`](../../engine/abstraction/include/neuralnet.cpp/compute_engine.hpp)：扫描原语语义（抽象层接口）。
 4. [`src/rapt_gradcheck.cpp`](../../src/rapt_gradcheck.cpp) 与
    [`src/rapt_smoke_test.cpp`](../../src/rapt_smoke_test.cpp)：正确性和接线证据。
 5. [`docs/development/08-rapt-algorithm.md`](../../docs/development/08-rapt-algorithm.md)：

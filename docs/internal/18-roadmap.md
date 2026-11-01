@@ -314,7 +314,7 @@ f16（P2-14/P2-15）与训练性能（P4-1/P4-2/P4-3）仍按原裁定暂缓，�
 | 13 §5.3 GUI 绘制节流 | **✅ 已完成（2026-10-15，P2-6 绘制半边）** | 原表述"每次 motion 全量降采样重绘"与实测不符（当时已在 render 端节流）；真正的拖动开销 = 逐事件建画布项 + 逐事件 PIL 画线，已改为一笔一项 + 空帧跳过 + 按帧节流 + 光栅化延迟，见 §3.3 X5 与 `docs/history/history.md` |
 | 13 §7 checkpoint 优化器状态 | **做（P1-2）** | TDR 重启动量归零是**真实功能缺陷**（C4）。设计已明确：可选段 + 老文件缺段 = 冷启动 + `MODEL_VERSION` 升版。**依赖 §3 先拆**。**2026-10-16 裁定扩写**：段内容 = 计数器 + 优化器状态 + 训练配方 + 数据集身份，role 门控，**v7 → v8**（与 P2-1 同批）；role 语义 = `Checkpoint` 禁 A/B 输入 / `Model` 全权（含 `.nnmodel` warm start，SFT）——细则见 §4.2 P1-2 行与 [`23`](23-library-design-cleanup-and-model-file-roles.md) §2.1.1 |
 | 13 §8 CI 冒烟 | **做（P1-5）** | MSVC Debug + 权重变化断言可防"loss 不动"类静默失败，与 C1/C3 同族。`/bigobj` 未复现前不加 |
-| 13 §9.4 max_abs_diff 统一 | **不做（择机）** | **实测 7 份定义**（`attn_consistency_test.cpp`、`ce_fusion_test.cpp`、`conv2d_gradcheck.cpp`、`fused_gpu_test.cpp`、`gpu_test.cpp`、`maxpool_gradcheck.cpp`、`tensor_expr_test.cpp`），且语义有分叉（conv2d 版多形状守卫返回 `1e9`）。**计数三处不一致**：13 号原文写 9 份、`src/test_common.hpp:19` 注释仍写 9 份、中途交接口径写 8 份，实测为 7 份——P0-2 文档回正时需一并订正。纯测试卫生、无产品风险，机械改写有反例 |
+| 13 §9.4 max_abs_diff 统一 | **不做（择机）** | **实测 7 份定义**（`attn_consistency_test.cpp`、`ce_fusion_test.cpp`、`conv2d_gradcheck.cpp`、`fused_gpu_test.cpp`、gpu_test（已迁新仓库 compute.neuralnet.cpp tests/）、`maxpool_gradcheck.cpp`、`tensor_expr_test.cpp`），且语义有分叉（conv2d 版多形状守卫返回 `1e9`）。**计数三处不一致**：13 号原文写 9 份、`src/test_common.hpp:19` 注释仍写 9 份、中途交接口径写 8 份，实测为 7 份——P0-2 文档回正时需一并订正。纯测试卫生、无产品风险，机械改写有反例 |
 | 13 §9.5 `gpt_test` 偶发失败 | **做（P1-4）** | 偶发红在 CI 化（P0-1）后必然变成噪声；先复现再定性。62 次直跑 1 次失败、日志被覆盖，需先补日志留存 |
 | 13 §9b H3 解码循环骨架 | **不做** | 仅采样段已合并，三个 `generate()` 循环体因运行态不同而保留；统一会引入条件分支，收益低。理由已归档 |
 | 13 §9b H4 精度/形状三元组收敛 | **不做** | 尾部 `p_.compute` 实参在各点**可能是刻意不同**（RAPT 残差相加即反例），机械改写有语义风险；收益只是少写一个参数 |
