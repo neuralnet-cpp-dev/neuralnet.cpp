@@ -9,7 +9,12 @@
 //                        BPE 能学会合并常见中文词组（更适合小模型）
 // ─────────────────────────────────────────────────────────────────────────
 
+#ifdef NN_USE_MODULES
+import nn.tokenizer;
+#else
 #include <neuralnet.cpp/nn.hpp>
+#endif
+#include <neuralnet.cpp/core_errors.hpp>   // 宏（NN_TRY/NN_EXIT 等不可随模块导出，双轨）
 #include <neuralnet.cpp/cli/cli_help.hpp>
 
 #include <chrono>

@@ -95,6 +95,7 @@ target_link_libraries(my_app PRIVATE neuralnet::nn)
 | `NN_ENABLE_PCH` | `ON` / `OFF` | `ON` | 本仓共享 PCH（`nn.hpp` 预编译一次，多目标 `REUSE_FROM`）。无 app 目标时自动无候选、无副作用 |
 | `NN_ENABLE_NATIVE` | `ON` / `OFF` | `ON` | `-march=native`（只作用于本仓目标，不影响消费方编译选项）。分发 / CI 用 `OFF` 生成可移植基线 |
 | `NN_ENABLE_PROBES` | `ON` / `OFF` | `OFF` | **探针编译门**：打开才编译库内热路径探针并创建探针目标（`mem_probe` / `f16_cpu_probe` / `gpu_stability_probe`）。会改变库头语义 → **不可与默认构建的对象 / 缓存混用** |
+| `NN_ENABLE_MODULES` | `ON` / `OFF` | 顶层 `ON` / 嵌入 `OFF` | **粒度 C++ 模块**（`nn.core` / `nn.kvrecord` / `nn.dataset` / `nn.tokenizer`，见 §0/「C++ 模块」小节）：构建四个薄接口模块的 BMI，并把本仓叶子消费者切到 `import nn.<域>`（双轨 `#ifdef NN_USE_MODULES`）。仅 GNU 驱动 Clang 生效（GCC / cl.exe / clang-cl 自动关闭，消费方回落 include）；嵌入默认 `OFF`，不打扰消费方 |
 | `NN_COMPILER_LAUNCHER` | path | 自动探测 ccache / sccache | 编译器缓存启动器；显式传空串 = 禁用 |
 
 ```cmake
@@ -207,7 +208,8 @@ include 路径全部来自 `target_include_directories`（`include/` +
 
 1. `NN_ENABLE_PCH`：`nn.hpp` 预编译一次，由编译条件相同的目标 `REUSE_FROM` 共享
    （本机 Debug 全量 125.5s → 72.7s）；
-2. `CMAKE_CXX_SCAN_FOR_MODULES OFF`：本项目零 C++ 模块；
+2. `CMAKE_CXX_SCAN_FOR_MODULES OFF`：本仓 C++ 模块走**显式接线**（见下「C++ 模块」小节），
+   不开 CMake 模块扫描 → 只有 4 个模块单元 + 9 个消费方参与，其余 ~270 个 TU 零扫描；
 3. `scan_exprs` 的 glslc **并行**（环境变量 `NN_SCAN_JOBS=<n>` 覆盖，`=1` 回串行）
    + `fused_registry.hpp` 内容稳定写入（内容不变则不动 mtime，靠 `restat` 掐断下游重编）；
 4. 编译器缓存探测扩到 ccache / sccache（可用 `-DNN_COMPILER_LAUNCHER=<path>` 指定）。
@@ -236,6 +238,33 @@ include 路径全部来自 `target_include_directories`（`include/` +
 
 > ⚠ 两条不变量：① 收集器目标（`scan_exprs`、`*_nnfusion_collect`）**不套 PCH**；
 > ② 新写「生成物参与 PCH」的场景必须显式 `add_dependencies(<pch_target>, <生成边>)`。
+
+---
+
+## 8.1 C++ 模块（粒度导入，`NN_ENABLE_MODULES`）
+
+自 2026-11-01 起本仓提供**粒度 C++20 模块**消费路径：`nn.core` / `nn.kvrecord` /
+`nn.dataset` / `nn.tokenizer` 四个薄接口模块（`modules/nn.{core,kvrecord,dataset,tokenizer}.cpp`），
+DAG 依赖链 `nn.core → nn.kvrecord → nn.dataset → nn.tokenizer`。动机与实测结论见
+`research/modules-import-nn/README.md` §6（**非提速路径**，价值 = 标准符合性 + 精确依赖 +
+消费方摆脱 PCH 依赖）。
+
+- **开关**：`NN_ENABLE_MODULES`（顶层默认 `ON`，嵌入 `add_subdirectory` 默认 `OFF`）。
+  仅 **GNU 驱动 Clang** 生效（GCC / cl.exe / clang-cl 自动关闭）。
+- **形态**：每个模块单元 = 全局模块片段文本包含域头 + `export module nn.<域>` +
+  `export namespace nn { using nn::X; … }` 逐符号 re-export + `export import nn.<依赖域>`
+  （C++ 模块的 import **不可传递**，必须显式 re-export，消费方只 `import nn.tokenizer` 即
+  连带拿到全部四域名字）。
+- **构建**：显式 BMI 自定义命令（`clang++ --precompile`，`-fmodule-file` 逐依赖传入）+
+  INTERFACE 目标 `nn_mod_<域>` 传播标志与 `NN_USE_MODULES` 宏。`CMAKE_CXX_SCAN_FOR_MODULES`
+  保持 `OFF`——只有模块单元与消费方参与，其余 TU 零扫描。
+- **消费方接入**：`nn_use_modules(<目标> <域...>)`（链接模块 INTERFACE + 从共享 PCH 候选
+  剔除）。源码双轨：`#ifdef NN_USE_MODULES / import nn.<域> / #else / #include … / #endif`。
+- **硬约束**：宏（`NN_TRY` / `NN_UNWRAP` 等）不可导出 → 消费方显式 include `core_errors.hpp`；
+  STL 留在全局片段 → 消费方自带用到的 STL 头（缺了会报 "missing '#include'"）。engine /
+  layers / model / train 域依赖 `NN_EXPR_SCAN` 宏收集（闭合世界铁律）→ 本轮不模块化。
+- **嵌入消费方**：默认 `OFF`（不编译模块、不切换任何目标）；消费方要启用就
+  `set(NN_ENABLE_MODULES ON)` 于 `add_subdirectory` 之前。
 
 ---
 

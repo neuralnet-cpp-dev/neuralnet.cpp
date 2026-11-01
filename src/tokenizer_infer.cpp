@@ -9,13 +9,19 @@
 // 支持交互模式和命令行模式。
 // ─────────────────────────────────────────────────────────────────────────
 
+#ifdef NN_USE_MODULES
+import nn.tokenizer;
+#else
 #include <neuralnet.cpp/nn.hpp>
+#endif
+#include <neuralnet.cpp/core_errors.hpp>   // 宏（NN_TRY/NN_EXIT 等不可随模块导出，双轨）
 #include <neuralnet.cpp/cli/cli_help.hpp>
 
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <queue>
 #include <sstream>
 #include <string>

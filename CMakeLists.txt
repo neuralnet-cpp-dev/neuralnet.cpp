@@ -51,13 +51,15 @@ set(NN_LIB_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE INTERNAL
 set(NN_LIB_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}" CACHE INTERNAL
     "neuralnet.cpp binary root (stable under add_subdirectory)")
 
-# ── C++ 模块：本项目不使用 ────────────────────────────────────────────────
-# C++20 起 CMake 默认为每个源文件追加一次 `clang-scan-deps` 依赖扫描
-# （build.ninja 里的 *.obj.ddi / CXX.dd / *.obj.modmap 三条边），本项目
-# **没有任何 `import`/`export module`**（header-only 库），扫描是纯浪费：
-# 实测每个 TU 约 2.1s（占单文件编译时间 ~12%）。关闭后 `.ddi` 边整体消失，
-# 编译命令里的 `@*.obj.modmap` 响应文件也不再生成。
-# 若将来真的要引入 C++ 模块，删掉这一行即可恢复默认行为。
+# ── C++ 模块：粒度导入路径，显式接线，不开 CMake 模块扫描 ────────────────
+# 本仓自 2026-11-01 起提供粒度 C++20 模块（nn.core / nn.kvrecord /
+# nn.dataset / nn.tokenizer，见下方 nn_add_module 块与 research/modules-import-nn）。
+# 但**不**为此打开 CMake 默认的模块依赖扫描：C++20 起 CMake 默认给每个源文件
+# 追加一次 `clang-scan-deps` 依赖扫描（build.ninja 里的 *.obj.ddi / CXX.dd /
+# *.obj.modmap 三条边），实测每个 TU 约 2.1s（占单文件编译时间 ~12%），而本仓
+# 的模块路径走**显式 BMI 自定义命令 + -fmodule-file 传播**（nn_add_module /
+# nn_use_modules），只有模块单元与它们的消费方参与，其余 ~270 个 TU 零扫描。
+# 若将来改用 CMake 原生 FILE_SET CXX_MODULES，删掉这一行即可恢复默认行为。
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 # ── C++26 标准 ──────────────────────────────────────────────────────────
@@ -420,6 +422,175 @@ function(nn_add_executable name)
     endif()
 endfunction()
 
+# ══════════════════════════════════════════════════════════════════════════
+#  C++ 模块：粒度导入路径（nn.core / nn.kvrecord / nn.dataset / nn.tokenizer）
+# ══════════════════════════════════════════════════════════════════════════
+# 形态 = 「薄接口」模块（research/modules-import-nn 实证，2026-11-01）：
+#   全局模块片段文本包含域头文件（STL 与库声明留在全局模块，实体仍挂全局
+#   模块 → 与 `#include` 消费方是**同一实体**，import 与 include 可混合链接，
+#   无双轨 ODR 问题），`export module nn.<域>` 后经
+#   `export namespace nn { using nn::X; ... }` 逐符号 re-export；
+#   `export import nn.<依赖域>` 让消费方只 import 最顶域即可连带拿到依赖域
+#   名字（C++ 模块的 import **不可传递**，必须显式 re-export）。
+# 约束（实证，README §4）：
+#   · 宏（NN_TRY / NN_UNWRAP / NN_ASSERT_* 等）**不可导出** → 消费者双轨：
+#     `import nn.<域>` + 按需 `#include <neuralnet.cpp/core_errors.hpp>` 宏头；
+#   · STL 留在全局片段 → 消费者自带用到的 STL 头；
+#   · 仅 GNU 驱动 Clang（GCC / cl.exe / clang-cl 无等效显式 -fmodule-file
+#     姿势，NN_MODULES_ENABLED 自动为 OFF，消费方回落 include 分支）。
+# 构建 = 显式 BMI 自定义命令（clang --precompile）+ -fmodule-file 经
+#   INTERFACE 目标传播，不开 CMake 模块扫描（见文件头注释的成本说明）。
+# 嵌入消费方默认 OFF（PROJECT_IS_TOP_LEVEL = ON 才默认开）。
+option(NN_ENABLE_MODULES
+    "Build granular C++20 modules (nn.core/nn.kvrecord/nn.dataset/nn.tokenizer) \
+     and switch leaf consumers to import (clang only; embedders default OFF)"
+    ${PROJECT_IS_TOP_LEVEL})
+if(NN_ENABLE_MODULES AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND NOT MSVC)
+    set(NN_MODULES_ENABLED ON)
+else()
+    set(NN_MODULES_ENABLED OFF)
+endif()
+message(STATUS "C++ modules (import nn.<domain>): "
+               "${NN_MODULES_ENABLED} (NN_ENABLE_MODULES=${NN_ENABLE_MODULES}, "
+               "compiler=${CMAKE_CXX_COMPILER_ID})")
+
+# ── 各域头文件闭包（nn_add_module 的 DEPENDS；跨域头改动触发对应 BMI 重编）──
+# 闭包 = 模块单元文本包含的全部 nn 头（含传递）。宁多勿少：多列只会偶发
+# 重编，少列会在头改动后**静默用旧 BMI**（比编译慢更糟）。
+set(NN_MOD_CORE_HEADERS
+    include/neuralnet.cpp/core_assert.hpp
+    include/neuralnet.cpp/core_config.hpp
+    include/neuralnet.cpp/core_errors.hpp
+    include/neuralnet.cpp/core_file.hpp
+    include/neuralnet.cpp/core_parallel.hpp
+    include/neuralnet.cpp/core_sha256.hpp
+    include/neuralnet.cpp/core_threadpool.hpp
+    include/neuralnet.cpp/precision.hpp)
+# kvrecord 闭包 = 自身 + core（model_keyvalue_record → core_errors）
+set(NN_MOD_KVRECORD_HEADERS
+    include/neuralnet.cpp/model_keyvalue_record.hpp
+    ${NN_MOD_CORE_HEADERS})
+# dataset 闭包 = dataset/dataset_format + kvrecord + core_file/core_sha256/core_errors
+#   （dataset 不依赖 threadpool/parallel/config/precision/assert，无需全 core）
+set(NN_MOD_DATASET_HEADERS
+    include/neuralnet.cpp/dataset.hpp
+    include/neuralnet.cpp/dataset_format.hpp
+    include/neuralnet.cpp/model_keyvalue_record.hpp
+    include/neuralnet.cpp/core_errors.hpp
+    include/neuralnet.cpp/core_file.hpp
+    include/neuralnet.cpp/core_sha256.hpp)
+# tokenizer 闭包 = 4 分词器头 + base 的传递（core_errors/core_parallel/
+#   core_threadpool/dataset_format → core_config/precision/core_assert/kvrecord）
+#   —— 恰好与 spike 实测的「12 头闭包」一致
+set(NN_MOD_TOKENIZER_HEADERS
+    include/neuralnet.cpp/domain_tokenizer.hpp
+    include/neuralnet.cpp/domain_tokenizer_base.hpp
+    include/neuralnet.cpp/domain_tokenizer_bpe.hpp
+    include/neuralnet.cpp/domain_tokenizer_charbpe.hpp
+    include/neuralnet.cpp/core_errors.hpp
+    include/neuralnet.cpp/core_parallel.hpp
+    include/neuralnet.cpp/core_threadpool.hpp
+    include/neuralnet.cpp/core_config.hpp
+    include/neuralnet.cpp/core_assert.hpp
+    include/neuralnet.cpp/precision.hpp
+    include/neuralnet.cpp/dataset_format.hpp
+    include/neuralnet.cpp/model_keyvalue_record.hpp)
+
+# ── 模块注册：nn_add_module(<短名> <模块源> DEPS <依赖短名...> HEADERS <闭包头...>) ──
+# 短名 = "core" / "kvrecord" / "dataset" / "tokenizer"；C++ 模块全名 = nn.<短名>。
+# 产出：
+#   · <build>/modules/nn.<短名>.pcm —— BMI（自定义命令，DEPENDS 头闭包 + 依赖 BMI）
+#   · nn_mod_<短名>（INTERFACE）—— 消费方 target_link_libraries 即得
+#     -fmodule-file=nn.<短名>=<bmi>（依赖域的标志经 INTERFACE 传递）+ NN_USE_MODULES
+#   · nn_<短名>_bmi（custom target）—— BMI 产物聚合，nn_use_modules 挂到消费方
+function(nn_add_module modname source)
+    cmake_parse_arguments(NNM "" "" "DEPS;HEADERS" ${ARGN})
+    if(NOT NN_MODULES_ENABLED)
+        return()
+    endif()
+    set(_cpp "nn.${modname}")
+    set(_bmi "${NN_LIB_BINARY_DIR}/modules/${_cpp}.pcm")
+    # 编译标志 = 库内目标同款（目录级 add_compile_options 不作用于自定义命令，
+    # 必须在此显式列出；优化标志与消费方同档，避免"同实体两种 -O"的度量失真；
+    # 探针门保持与 nn_core INTERFACE 同值，见该变量注释）。
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(_opt ${DEBUG_FLAGS})
+    else()
+        set(_opt ${RELEASE_FLAGS})
+    endif()
+    set(_flags
+        "-std=c++${CMAKE_CXX_STANDARD}"
+        -fno-exceptions -Wall -Wextra -Wpedantic -Werror
+        -fexperimental-library -Wno-pass-failed
+        ${_opt}
+        -I "${NN_LIB_SOURCE_DIR}/include")
+    if(NN_ENABLE_PROBES)
+        list(APPEND _flags -DNN_ENABLE_PROBES=1)
+    endif()
+    set(_file_deps "")
+    foreach(d IN LISTS NNM_DEPS)
+        list(APPEND _flags "-fmodule-file=nn.${d}=${NN_LIB_BINARY_DIR}/modules/nn.${d}.pcm")
+        list(APPEND _file_deps "${NN_LIB_BINARY_DIR}/modules/nn.${d}.pcm")
+    endforeach()
+    foreach(h IN LISTS NNM_HEADERS)
+        list(APPEND _file_deps "${NN_LIB_SOURCE_DIR}/${h}")
+    endforeach()
+    add_custom_command(
+        OUTPUT ${_bmi}
+        COMMAND ${CMAKE_CXX_COMPILER} ${_flags} --precompile
+                -o ${_bmi} -x c++-module ${NN_LIB_SOURCE_DIR}/${source}
+        DEPENDS ${NN_LIB_SOURCE_DIR}/${source} ${_file_deps}
+        COMMENT "[nn] module BMI: ${_cpp}"
+        VERBATIM
+    )
+    add_library(nn_mod_${modname} INTERFACE)
+    target_compile_options(nn_mod_${modname} INTERFACE "-fmodule-file=${_cpp}=${_bmi}")
+    target_compile_definitions(nn_mod_${modname} INTERFACE NN_USE_MODULES)
+    foreach(d IN LISTS NNM_DEPS)
+        target_link_libraries(nn_mod_${modname} INTERFACE nn_mod_${d})
+    endforeach()
+    target_link_libraries(nn_mod_${modname} INTERFACE nn_core)
+    # BMI 产物挂到消费方的编译边：INTERFACE 目标的依赖会传递到消费方
+    #（与 compile_gpu_shaders 同机制，见 GPU 块注释），nn_use_modules 另加
+    # 一层显式 add_dependencies 兜底。
+    add_custom_target(nn_${modname}_bmi DEPENDS ${_bmi})
+    add_dependencies(nn_mod_${modname} nn_${modname}_bmi)
+endfunction()
+
+# ── 消费方接入：nn_use_modules(<目标> <模块...>) ──────────────────────────
+# 链接模块 INTERFACE（-fmodule-file 链 + NN_USE_MODULES 宏）并把目标从共享
+# PCH 候选剔除——模块消费方的 TU 同时带 nn.hpp 的 PCH 与模块 BMI 时，同一
+# 实体两处声明（PCH 按 NN_HAS_VULKAN 编、BMI 不带）存在分歧风险，叶子目标
+# 编译量小，直接各自解析更稳。
+function(nn_use_modules target)
+    if(NOT NN_MODULES_ENABLED)
+        return()
+    endif()
+    foreach(m IN LISTS ARGN)
+        if(TARGET nn_mod_${m})
+            target_link_libraries(${target} PRIVATE nn_mod_${m})
+            add_dependencies(${target} nn_${m}_bmi)
+        endif()
+    endforeach()
+    list(REMOVE_ITEM NN_PCH_CANDIDATES ${target})
+    set(NN_PCH_CANDIDATES ${NN_PCH_CANDIDATES} PARENT_SCOPE)
+endfunction()
+
+# ── 四个叶子域模块（DAG：core → kvrecord → dataset → tokenizer）──────────
+# 域边界 = 合并回主仓的四个子仓域；全部不依赖 GPU/AOT 扫描（NN_EXPR_SCAN 的
+# 宏收集无法进模块，engine/layers/model/train 域本轮不模块化，见研究 README）。
+nn_add_module(core        modules/nn.core.cpp
+    HEADERS ${NN_MOD_CORE_HEADERS})
+nn_add_module(kvrecord    modules/nn.kvrecord.cpp
+    DEPS core
+    HEADERS ${NN_MOD_KVRECORD_HEADERS})
+nn_add_module(dataset     modules/nn.dataset.cpp
+    DEPS core kvrecord
+    HEADERS ${NN_MOD_DATASET_HEADERS})
+nn_add_module(tokenizer   modules/nn.tokenizer.cpp
+    DEPS core kvrecord dataset
+    HEADERS ${NN_MOD_TOKENIZER_HEADERS})
+
 # ── 测试/验证目标开关（默认关闭） ──────────────────────────────────────
 # 默认只构建应用与基准工具目标，避免生成大量验证程序；
 # 需要时用 -DNN_ENABLE_TESTS=ON 开启全部 gradcheck / *_test / *_probe / *_debug。
@@ -463,11 +634,15 @@ if(NN_BUILD_APPS)
     nn_add_executable(tokenizer_train src/tokenizer_train.cpp)
     nn_add_executable(tokenizer_infer src/tokenizer_infer.cpp)
     list(APPEND NN_APP_TARGETS text_train text_infer tokenizer_train tokenizer_infer)
+    nn_use_modules(tokenizer_train tokenizer)
+    nn_use_modules(tokenizer_infer tokenizer)
 
     # ── 数据集工具（生成器 + 旧格式转换器）────────────────────────────────
     nn_add_executable(dataset_gen src/dataset_gen.cpp)
     nn_add_executable(dataset_convert src/dataset_convert.cpp)
     list(APPEND NN_APP_TARGETS dataset_gen dataset_convert)
+    nn_use_modules(dataset_gen tokenizer)
+    nn_use_modules(dataset_convert tokenizer)
 
     # ── 层吞吐量基准（CPU/Vulkan GPU；--all 或 --layer <name> 指定） ────────
     nn_add_executable(layer_bench src/layer_bench.cpp)
@@ -843,6 +1018,10 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     list(APPEND NN_TEST_TARGETS nnvocab_test)
     nn_add_executable(dataset_integration_test src/dataset_integration_test.cpp)
     list(APPEND NN_TEST_TARGETS dataset_integration_test)
+    nn_use_modules(dataset_test dataset)
+    nn_use_modules(tokenizer_test tokenizer)
+    nn_use_modules(nnvocab_test tokenizer)
+    nn_use_modules(dataset_integration_test tokenizer)
 
 endif()
 

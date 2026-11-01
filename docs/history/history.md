@@ -5481,3 +5481,47 @@ include 冷 13.58s（前端 12.23 / 后端 1.60）；`import nn` 冷建 BMI 14.8
 
 **注意（易误判）**：本 spike 证伪的是「全量 import」，**不等于「模块无价值」**——标准符合性
 与粒度隔离是两条独立于本测速结论的价值线。详见 `research/modules-import-nn/README.md` §5。
+
+## 粒度导入落地（2026-11-01，NN_ENABLE_MODULES）
+
+**承接**：上一条「粒度拆分未测，留作后续」——本条目落地该后续（`research/modules-import-nn/README.md` §6）。
+
+**形态**：四个叶子域薄接口模块 `modules/nn.{core,kvrecord,dataset,tokenizer}.cpp`，
+DAG 依赖链 `nn.core → nn.kvrecord → nn.dataset → nn.tokenizer`，`export import` 让消费方只
+import 最顶域即连带拿到依赖域名字。域边界 = 合并回主仓的四个子仓域，全部不依赖 GPU/AOT
+扫描（engine/layers/model/train 依赖 `NN_EXPR_SCAN` 宏收集、宏不可导出 → 本轮不模块化）。
+
+**构建**：显式 BMI 自定义命令（`clang++ --precompile` + `-fmodule-file` 逐依赖）+ INTERFACE
+目标（`nn_mod_<域>`）传播标志与 `NN_USE_MODULES` 宏；`CMAKE_CXX_SCAN_FOR_MODULES OFF` 保持
+（~270 个非模块 TU 零扫描）。消费方经 `nn_use_modules(<目标> <域...>)` 接入并从共享 PCH
+候选剔除。开关 `NN_ENABLE_MODULES` 顶层默认 ON、嵌入默认 OFF、仅 GNU 驱动 Clang
+（GCC/cl.exe/clang-cl 自动 OFF 回落 include）。
+
+**消费者**（9 个双轨，`#ifdef NN_USE_MODULES` import / else include）：`tokenizer_test` /
+`tokenizer_consistency_test` / `nnvocab_test` / `dataset_test` / `dataset_integration_test`
+5 个测试 + `tokenizer_train` / `tokenizer_infer` / `dataset_gen` / `dataset_convert` 4 个 app。
+
+**真实 bug 暴露并修复**：
+- `core_file.hpp` 缺 `<vector>`（头自包含缺口，正常构建靠 include 顺序侥幸通过，模块单元按
+  任意顺序包含域头时暴露）→ 补 include。
+- `tokenizer_infer` 缺 `<memory>`（STL 可见性缺口，此前靠 nn.hpp 传递拿到；切换后显式补）。
+
+**接线坑（踩过并修正）**：`nn_add_module` 初版用 C++ 模块全名 `nn.core` 拼 CMake 目标名，
+与 `nn_use_modules` 的短名 `tokenizer` 对不上 → `if(TARGET ...)` 静默跳过 → **模块路径从未
+被构建系统执行**，消费方静默走 include 分支、测试"通过"但未验证 import（BMI 产物不生成）。
+修正为统一短名（`nn_mod_<短名>` / `nn_<短名>_bmi`，C++ 全名只出现在 `-fmodule-file` 与模块
+源内），并用 `ninja -t commands` 核对 `-fmodule-file` 链 + `NN_USE_MODULES` 真实出现在
+消费方编译命令里。
+
+**实测（n=1，本机 / -O3 / ccache / 纯 CPU）**：BMI 体积 core 25 MB / kvrecord 10 MB /
+dataset 22 MB / tokenizer 44 MB（各域独立，全量对照 86 MB）；tokenizer BMI 建造 10.61 s；
+改 consumer 源重编 import 0.50 s vs include+ccache 0.48 s（**持平**）；改
+`domain_tokenizer_base.hpp` 全量增量 ON 18.0 s / 75 步（含 BMI 重建 10.6 s）vs OFF 12.7 s / 83 步。
+
+**裁定（如实）**：粒度模块在本仓 ccache+PCH 基线下**不是提速路径**（与全量 import 同源——
+ccache 命中已把 include 重编压到 ~0.1s/目标，模块能消除的"改公共头 → 重 parse 全库"在本仓
+不存在；BMI 重建 10.6s 反成新单点热点）。落地价值 = **标准符合性**（库提供 C++20 模块消费
+形态）+ **精确依赖**（`import nn.<域>` 语义化声明）+ **PCH 独立性**（消费方不再依赖 nn_pch）。
+隔离收益真实存在（非模块域零重编、改 tokenizer 不重编 engine 消费方），绝对值被基线追平；
+若出现无 ccache / 多 TU 频繁改公共头的场景，隔离收益才会显性化。**不改主线默认加载路径**
+（`#include <nn.hpp>` + PCH + ccache 仍是默认），模块是增量接入的平行路径，双轨共存。

@@ -16,7 +16,11 @@
 #include <string>
 #include <vector>
 
+#ifdef NN_USE_MODULES
+import nn.tokenizer;
+#else
 #include <neuralnet.cpp/domain_tokenizer.hpp>
+#endif
 
 namespace
 {

@@ -20,6 +20,7 @@
 #include <iterator>
 #include <span>
 #include <string>
+#include <vector>
 
 #include "core_errors.hpp"
 #include "core_sha256.hpp"

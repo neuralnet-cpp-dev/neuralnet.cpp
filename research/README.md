@@ -108,9 +108,13 @@
 * **重跑**:`cd research/modules-import-nn && ./measure.sh`(clang++ 24 / -O3 / 纯 CPU;
   `-DNN_ENABLE_PROBES` 无关,纯编译计时)。
 * **边界**:仅 clang+libstdc++,未测 MSVC/libc++;未验证 `import` 与 `include` 的运行时数值等价。
-  **本 spike 只测了全量 import,未测粒度拆分**——粒度模块的 BMI 体量/建造/隔离收益是后续独立 spike。
-* **落点**:全量 `import nn` 不进主线;**粒度导入(`nn.tokenizer` 等窄模块)是模块化的真实路径**,
-  立项后按功能域划边界、增量接入(下游逐步改用 `import nn.<domain>`),不一次性替换。
+  **全量 import 已否决;粒度拆分已落地**(见下)。
+* **落点**:全量 `import nn` 不进主线;**粒度导入已随主线落地(2026-11-01)**:四个叶子域模块
+  `nn.core`/`nn.kvrecord`/`nn.dataset`/`nn.tokenizer`(薄接口 + `export import` 依赖链,
+  开关 `NN_ENABLE_MODULES`,顶层默认 ON/仅 Clang),9 个叶子消费者双轨切到 `import`。实测
+  **不是提速路径**(ccache+PCH 基线已压平;tokenizer BMI 建造 10.6s 反成新热点),价值 =
+  标准符合性 + 精确依赖 + 摆脱 PCH 依赖。engine/layers/model/train 域依赖宏收集 → 本轮不模块化。
+  详见 `modules-import-nn/README.md` §6。
 
 ## 3. 目录约定
 

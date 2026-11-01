@@ -34,7 +34,7 @@ std::string g_self;         // argv[0]：子进程自举用
 nn::Result<int> require_ok()
 { return 42; }
 nn::Result<int> require_bad()
-{ return std::unexpected(nn::Error{"require failed"}); }
+{ NN_FAIL("require failed"); }
 
 int run_self(const char* args)
 {
