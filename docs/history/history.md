@@ -5615,3 +5615,127 @@ mem_probe（NN_ENABLE_PROBES 探针，非 ctest）。
 **遗留（未做/可选）**：GPU .so 的 lgpl_verify 扩展（目前只验 CPU .so；GPU 同法 patch 原语 +
 GPU 观测）；mem_probe 迁新仓库（NN_ENABLE_PROBES 探针形态）；主仓库 README 同步本轮变化；
 新仓库 README 补引擎级测试/验证段落。
+
+# 免 latent 构建（P2 残差根治）：推理入口按部署形态建 BitLinear（2026-11）
+
+**类型**：演进记录（新能力；docs/internal/21 §4.15 的 P2「剩余」项收口）。背景：旧流程
+`text_infer`/`mnist_infer` 先按规格 `build_*_from_spec` 建出**全部 BitLinear 的 f32 latent**
+（init 即分配，4 B/权重），`load_model` 载入部署文件后才把 latent 丢弃（`import_param`
+`TernaryPacked2` → `latent_w_ = Tensor{}`）。于是 nvidia-smi 停在载入峰值：驱动可见显存
+≈ 4.25 B/权重，与同尺寸 f32 模型几乎一样 —— **"t1_58 完全不省显存"的直接观感来源**
+（2B4T 级模型是 GB 级瞬时）。而 `text_infer` 载入后**从不调 `release_idle_pool_blocks`**
+（训练路径 `text_trainer.hpp` 每块结束都调），空闲 latent 底材留在池里不还给驱动，
+进一步掩盖了部署态的真实收益（live 权重 0.25 B/权重）。
+
+**改法**（开关沿现有 `weight_quant` 同款工厂链穿线，全部带默认值 ⇒ 既有调用方零改动）：
+
+- `BitLinear(in, out, inference_only = false)`：`init_impl` 在 `inference_only` 时
+  `packed_only_ = true`，**不分配 latent**（打包/τ 缓冲也留给 import 直接收走 entry 的引擎
+  张量 —— 载入前本层权重足迹只剩偏置 (out,1)）；载入前 forward fail-fast（诚实失败）。
+- `make_linear_layer(in, out, quant, inference_only = false)` → `AttentionBase` →
+  `CausalSelfAttention` → `FeedForward` → `GPTBlock` → `GPTModel` → `GptConfig` /
+  `build_gpt_model` / `build_gpt_model_from_spec`（新增同名尾参）；MLP 侧
+  `build_mnist_mlp_model` / `build_mnist_model_from_spec` 同款。
+- CLI：`text_infer` / `mnist_infer` 按 `peek_model_role == Model` 决定
+  `inference_only = true`（`.nnckpt` 的 Checkpoint 角色走正常构建 —— 参数是 latent 形态，
+  仍需要 latent 张量）；载入后各加一次 `engine->release_idle_pool_blocks()`（归还载入期
+  解码/中转底材，与训练路径口径一致）。
+- 默认 `false` ⇒ 训练路径（含 `.nnmodel` warm start / `Trainable` 反量化）与全部既有测试
+  逐位不变。
+
+**验收（实测）**：`model_roles_test` 新增 [7] —— ① 构建后（载入前）`packed_only()`、
+latent 空、打包/τ 空、forward fail-fast；② 载入 `.nnmodel`（默认 Inference）后 latent 恒空、
+打包字 + τ 就位；③ 首次 forward 与"正常构建 + 载入"路径**逐位一致**；④ GPT 路径同断言
+（text_infer 目标形态）。本机 clang 24 + Release（build/cpu，CPU-only）ctest **77/77**：
+`model_roles_test` / `t1_58_test` / `bitnet_struct_test` / `ternary_gemm_test` 全绿
+（GPU 变体 77 = skip，沙箱内无 `/dev/nvidia*`）。
+
+**已知取舍（如实记录）**：
+- **免 latent 只覆盖"载入部署文件"这条路径**：`text_train --resume .nnmodel`（`Trainable`
+  意图，warm start）仍需要 f32 latent（反量化落点），不省——这是训练正确性要求，非缺口。
+- **训练侧显存不降**（与三值本身无关的既有结论，docs 21 §4.11/§4.13）：省显存的正路是
+  `--optimizer adamwquant`（状态 8 → ~4 B/权重，−32%）+ 推理部署文件（0.25 B/权重）。
+- **GPU 路径本轮未实测**（沙箱无 GPU）：改动本身引擎无关（构建期不建张量、import 收引擎
+  张量；`matmul_q` 两引擎都已实现）。
+
+# int8 激活量化（W1.58A8，P3 落地）：quantize_i8 / matmul_q_i8 原语 + BitLinear 接线（2026-11）
+
+**承接**：docs/internal/21 §4.16 的 P3（激活 int8 + 整数点积），BitNet b1.58 训练配方
+"trained with 1.58-bit weights and 8-bit activations"的显存侧落地 —— 训练期线性投影
+的激活缓存从 f16 2 B/元素降到 **1 B/元素**（训练显存大头削减），量化 GEMM 权重读
+0.25 B/权重、激活读 1 B/元素（f16 的 1/2），且不新增存储精度（打包字放 f32 张量，
+与 trit_pack 同先例；M7 张量存储多态仍不需要）。
+
+**引擎侧（新仓库 compute.neuralnet.cpp）**：抽象层新增三个 NVI + `*_impl` virtual：
+`quantize_i8(x, scale, col_scale)`（q = round(clamp(x/s, -127,127))，round-half-away、
+NaN → 0、s==0 → 0；容器 (M, ceil(N/4)) 1 B/元素）、`unpack_i8`、`matmul_q_i8`
+（Y = τ·s·Σ trit·q，int32 累加 + 双向量缩放；CPU 行块解码 + 稠密微内核，GPU 逐输出
+元素参考内核 + f16 直写变体）。布局/编解码唯一来源 = `int8_pack.hpp`（主仓与引擎侧各
+一份，逐字节一致；行内小端、尾部填 0）。
+
+**数值口径修正（关键，防静默错值）**：docs 21 §4.16 ③ 写死 `s = absmax(x)/127`，
+实现初稿却用 `s = col_reduce_max(|X|)` 的**原始 absmax** —— 此时 x/s ∈ [-1,1]，
+round 只能落到 {-1,0,1}，激活量化分辨率退化成三值（≈1.58 bit，不是 A8）。修法 =
+BitLinear forward 在 col_reduce_max 后补一次 `scale_inplace(·, 1/127)`（§4.16 ③ 口径：
+q ≈ 127·x/s ⇒ s·q ≈ x，8-bit 分辨率重建）；backward 的 act_scale_ 同用缩放后的 s
+（STE 梯度自动一致）。原语契约不变（scale 由调用方提供）。
+
+**BitLinear 接线**：`set_activation_quant(bool)` 开关（默认 false ⇒ 既有路径逐位不
+变）；forward = s 量化 → quantize_i8 → matmul_q_i8 + bias，input_cache_ 存**打包 Q** +
+act_scale_（1 B/元素）；backward 的 dX 仍走 matmul_q_t（与 f16 路径逐位一致），dW 的
+STE 用 unpack_i8 反量化激活（(dY∘s)·Qᵀ·τ）。int8 需要打包权重路径（无则 fail-fast）。
+
+**验收（实测）**：`src/int8_act_test.cpp`（新注册进 ctest，含 `--gpu` 变体）：
+[1] quantize 逐位（含 s==0/NaN）+ 打包布局；[2] unpack roundtrip；[3] matmul_q_i8
+与宿主整数参考**逐位一致**（K 非 16 倍数 / N 非 4 倍数 / M 跨 RB=64 行块边界；GPU
+追加 2B4T 量级）；[4] BitLinear int8 vs f16 前向差 ≤ τ·K·(absmax/127)·0.5（实测
+worst 0.19 ≤ 1）；[5] dX 两条路径逐位一致 + dW 与宿主参考 max_rel 3.9e-7；[6] MLP
+端到端 300 步 loss 0.755 → 0.034（收敛）。本机 clang 24 + Release（build/cpu）
+ctest **79/79**（新用例计入；GPU 变体 77=skip）。engine 子仓 GPU 侧编译通过
+（三个新 shader + f16 变体 glslc + libnn-gpu.so 链接）。doc_inventory 门禁全绿
+（virtual 56 声明；L2 违规 0；宏族残留 0）。
+
+**已知取舍（如实记录）**：
+- **GPU 数值本轮未实测**（沙箱无 /dev/nvidia*）：shader/后端接线已编译验证，权威设备
+  对拍（`int8_act_test --gpu`，40HX-850M）留待有 GPU 环境。
+- **宽 batch 性能未做**：matmul_q_i8 当前 = 逐输出元素参考内核（正确性优先），分块 +
+  共享解码按 P3 的"先量后承诺"流程另行 A/B（与 matmul_q 从逐元素到分块演进的同一条路）。
+- **激活量化只在线性投影**（BitLinear 内部）：Norm/注意力等其余激活不量化 —— 与
+  BitNet b1.58 训练配方 W1.58A8 同口径（a2.6 论文的 4-bit 激活按"8-bit 不需要"暂缓）。
+- **训练显存总账不变部分**：优化器状态仍 8 B/权重（正路 = `--optimizer adamwquant`
+  4 B/权重，docs 21 §4.13；int8 优化器状态是下一项，见 §4.13 注释的前置条件）。
+
+# int8 打包状态优化器 AdamWInt8：融合原语 quantized_adamw_step（2026-11）
+
+**承接**：docs/internal/21 §4.13 的 int8 增量（AdamWQuant 的 f16 payload → int8 打包
+1 B/元素）。**目标**：优化器状态账 8 → ~2 B/权重（int8 打包 1 B/元素 + 每行 f32 尺度）。
+
+**为什么是引擎领域原语（关键路线裁定）**：打包状态 DSL 读不了（位打包）—— 若
+`unpack_i8` → DSL 更新 → `quantize_i8`，会物化 f32 全尺寸临时量（4 B/状态 × 2，比
+省掉的还多）。故新增 `quantized_adamw_step`（抽象层 NVI + CPU/GPU + shader）：单内核
+解码 → 更新 → 编码 → 参数更新。**这是铁律 3（shader 不含算法）的必要豁免**（与
+matmul_q_i8 同性质的领域原语），数学口径钉死在抽象层注释。尺度前进仍在优化器层用
+DSL 完成（与 AdamWQuant 逐位一致）；参数更新用重建值 m̂ = sm·qm/127（与 AdamWQuant
+"写回后用新尺度读"同一口径）。
+
+**数值坑（int8 无次正规兜底，实测爆炸）**：int8 量化破坏 f32/f16 下 m̂² ≲ v̂ 的比例
+自洽 —— 小梯度元素 qv=0 ⇒ v̂=0 ⇒ 分母=eps ⇒ 更新爆炸（[3] 端到端前 20 步 loss
+2.27 → 1071，参数 L1 位移 62M）。**修法 = 解码端 v̂ 下限 = 量化步长 sv/127**（qv=0
+重建为最小可表示值）：最坏比值有界（|m̂| ≤ sm ⇒ m̂/√v̂ ≤ sm/√(sv/127) ≈ O(1)），更新
+量级与 f32 Adam 首步同阶。修复后 [3] loss 0.000147 ≈ f32 AdamW 0.000165。
+
+**实现**：引擎子仓 —— 抽象层 NVI + `*_impl` virtual（57 个 virtual 总数，+1）、CPU
+参考实现（逐行解码/编码 + 标量更新）、GPU `quantized_adamw_step.comp`（每线程一个
+打包字，字内 4 元素串行写回，无字节级竞态）+ backend pipeline（catalog/specs/ops）。
+主仓 —— `AdamWInt8` 类（状态 m_packed/v_packed 容器 + sm/sv 尺度；save/load 每参数
+4 张量）+ kOptimizerTable 一行 + create_optimizer 分支 + gui.py `_OPTIMIZER_FALLBACK`
+同步。**测试**：`src/adam_int8_test.cpp`（原语逐位对拍 / 状态账 / 三优化器收敛 A/B /
+零梯度 / save-load 往返）+ `optimizer_state_test` 表级存在性补 adamwint8。
+
+**验收（实测，本机 clang 24 + Release CPU 树）**：ctest **81/81**；doc_inventory
+（57 virtual、L2 违规 0）、gui_cli_audit（优化器名单）、doc_audit 全绿。GPU 数值对拍
+待权威设备（shader 已编译验证）。
+
+**已知取舍（如实记录）**：v̂ 下限是"保守过估"（qv=0 元素按分辨率下限更新）；块量化
+（每 64 元素尺度，bitsandbytes 风格）是后续精化方向；原语 = 逐元素参考内核，宽 batch
+性能另行 A/B；GPU 数值未实测。

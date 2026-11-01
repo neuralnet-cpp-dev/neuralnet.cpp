@@ -505,8 +505,14 @@ nn::Model m2 = NN_UNWRAP(nn::build_mnist_model_from_spec(engine, spec, nn::profi
 ```
 
 签名（默认值节选）：
-`build_mnist_mlp_model(engine, layer_dims = MNIST_LAYER_DIMS, norm_type = LayerNorm, precision = {})`；
+`build_mnist_mlp_model(engine, layer_dims = MNIST_LAYER_DIMS, norm_type = LayerNorm, precision = {}, inference_only = false)`；
 `build_mnist_transformer_model(engine, img_size = 28, patch_size = 7, d_model = 64, num_heads = 4, d_ff = 128, num_layers = 2, precision = {}, norm_type = LayerNorm, norm_place = NormPlace::Final)`。
+`build_*_from_spec(engine, spec, precision = {}, inference_only = false)` 的 `inference_only`
+（`build_gpt_model_from_spec` / `build_mnist_model_from_spec` / `build_gpt_model` /
+`GptConfig` 同款）：载入部署文件（`.nnmodel`）时置位 ⇒ 三值层按**部署形态**构建
+（BitLinear 不分配 f32 latent，权重由载入的打包字 + τ 接管）——消除"先建 GB 级 latent
+再被部署条目丢弃"的载入期瞬时峰值（`text_infer`/`mnist_infer` 按 `role == Model` 自动
+置位，见 docs/internal/21 §4.17）。
 
 ### 8.2 GPT
 
