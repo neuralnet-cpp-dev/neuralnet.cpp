@@ -50,7 +50,10 @@ EXTERNAL_FLAGS = {
     # clangd 自带选项（IDE 集成文档用）：clangd --compile-commands-dir <build>
     '--compile-commands-dir',
     # git 自带选项（文档命令用）：git clang-format --diff / clone --recurse-submodules / tag --tags
-    '--diff', '--recurse-submodules', '--tags',
+    # --recursive：git submodule update --init --recursive（历史 release note 中的 git 命令）
+    '--diff', '--recurse-submodules', '--tags', '--recursive',
+    # clang 编译器选项（research/modules-import-nn 构建 BMI 的 clang 命令用）
+    '--precompile',
 }
 # [D] 已在文档中明确标注"已移除"的历史参数
 REMOVED_FLAGS = {
@@ -83,7 +86,7 @@ def rel(p):
     return os.path.relpath(p, ROOT).replace(os.sep, '/')
 
 
-def walk(exts, skip_dirs={'build', '.git', 'extern', 'node_modules', '.venv', '__pycache__'}):
+def walk(exts, skip_dirs={'build', '.git', 'node_modules', '.venv', '__pycache__'}):
     for root, dirs, files in os.walk(ROOT):
         dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith('.')]
         for fn in files:
@@ -116,7 +119,7 @@ def read_lines(p):
 def load_code_text():
     parts = []
     for p in walk({'.hpp', '.cpp'}, skip_dirs={'build', '.git', 'node_modules', '.venv', '__pycache__'}):
-        if rel(p).startswith(('include/', 'src/', 'tools/', 'extern/')):
+        if rel(p).startswith(('include/', 'src/', 'tools/')):
             with open(p, encoding='utf-8', errors='replace') as f:
                 parts.append(f.read())
     for p in walk({'.py'}):
@@ -132,7 +135,7 @@ def load_code_text():
 def check_A(docs):
     miss, hist, link_miss, link_checked = 0, 0, 0, 0
     print('=== [A] 文档引用但仓库中不存在的文件 / 链接目标 ===')
-    # 全仓真实文件名索引（递归，含 extern/ 子仓头文件，与 ps1 口径一致）
+    # 全仓真实文件名索引（递归）
     real_names = set()
     for p in walk({'.hpp', '.cpp', '.comp', '.py'},
                   skip_dirs={'build', '.git', 'node_modules', '.venv', '__pycache__'}):
@@ -337,13 +340,9 @@ def check_F(docs, code_text):
     with open(os.path.join(ROOT, 'CMakeLists.txt'), encoding='utf-8') as f:
         cm = f.read()
     real_src = {os.path.basename(p) for p in walk({'.cpp'})}
-    extern_tests = set()
-    for p in walk({'.cpp'}, skip_dirs={'build', '.git', 'node_modules', '.venv', '__pycache__'}):
-        if '/tests/' in rel(p):
-            extern_tests.add(os.path.basename(p)[:-4])
     miss_t = hist_t = 0
     for t in sorted(tests):
-        if t + '.cpp' in real_src or t in extern_tests or t in cm:
+        if t + '.cpp' in real_src or t in cm:
             continue
         if t in HISTORICAL_TESTS:
             hist_t += 1
@@ -462,8 +461,6 @@ def main():
     ap.add_argument('--report', action='store_true', help='生成代码示例复核报告')
     args = ap.parse_args()
 
-    if not os.path.isdir(os.path.join(ROOT, 'extern', 'base', 'include')):
-        print('⚠ extern/ 子仓未初始化——nn:: 符号与子仓测试名检查不完整。先跑：git submodule update --init --recursive\n')
     docs = load_docs()
     global HISTORY_MD
     HISTORY_MD = os.path.join(ROOT, 'docs', 'history', 'history.md')

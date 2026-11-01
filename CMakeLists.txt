@@ -319,15 +319,6 @@ endif()
 add_library(nn_core INTERFACE)
 target_include_directories(nn_core INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-# ── 子仓 include path（拆仓集成）────────────────────────────────────────
-# core/tokenizer/dataset/kvrecord/threadpool 的头已搬到各自子仓（extern/ 下
-# submodule），门面经此把它们的 include/ 加进搜索路径。各子仓头统一在
-# <repo>/include/neuralnet.cpp/ 下，文件名不冲突 → #include <neuralnet.cpp/xxx.hpp>
-# 在门面子仓间透明解析，下游 include 路径零变化。
-foreach(_nn_sub base threadpool kvrecord dataset tokenizer)
-    target_include_directories(nn_core INTERFACE
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/extern/${_nn_sub}/include>)
-endforeach()
 target_link_libraries(nn_core INTERFACE Threads::Threads)
 if(NN_STACKTRACE_LIB)
     target_link_libraries(nn_core INTERFACE ${NN_STACKTRACE_LIB})
@@ -820,6 +811,38 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     # [5] 前置条件（batch=0 / 裁剪配置不一致）。
     nn_add_executable(text_trainer_test src/text_trainer_test.cpp)
     list(APPEND NN_TEST_TARGETS text_trainer_test)
+
+    # ── 基础件（原 base 子仓下沉测试回归主仓 ctest）─────────────────────────
+    nn_add_executable(error_macro_test src/error_macro_test.cpp)
+    list(APPEND NN_TEST_TARGETS error_macro_test)
+    nn_add_executable(assert_test src/assert_test.cpp)
+    list(APPEND NN_TEST_TARGETS assert_test)
+    nn_add_executable(file_test src/file_test.cpp)
+    list(APPEND NN_TEST_TARGETS file_test)
+    nn_add_executable(sha256_test src/sha256_test.cpp)
+    list(APPEND NN_TEST_TARGETS sha256_test)
+    nn_add_executable(precision_type_test src/precision_type_test.cpp)
+    list(APPEND NN_TEST_TARGETS precision_type_test)
+
+    # ── 并行（原 threadpool 子仓）───────────────────────────────────────────
+    nn_add_executable(threadpool_test src/threadpool_test.cpp)
+    list(APPEND NN_TEST_TARGETS threadpool_test)
+    nn_add_executable(parallel_test src/parallel_test.cpp)
+    list(APPEND NN_TEST_TARGETS parallel_test)
+
+    # ── KVRecord（原 kvrecord 子仓）─────────────────────────────────────────
+    nn_add_executable(kvrec_test src/kvrec_test.cpp)
+    list(APPEND NN_TEST_TARGETS kvrec_test)
+
+    # ── 数据集 / 分词器（原 dataset / tokenizer 子仓）────────────────────────
+    nn_add_executable(dataset_test src/dataset_test.cpp)
+    list(APPEND NN_TEST_TARGETS dataset_test)
+    nn_add_executable(tokenizer_test src/tokenizer_test.cpp)
+    list(APPEND NN_TEST_TARGETS tokenizer_test)
+    nn_add_executable(nnvocab_test src/nnvocab_test.cpp)
+    list(APPEND NN_TEST_TARGETS nnvocab_test)
+    nn_add_executable(dataset_integration_test src/dataset_integration_test.cpp)
+    list(APPEND NN_TEST_TARGETS dataset_integration_test)
 
 endif()
 

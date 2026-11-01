@@ -79,8 +79,8 @@ ctest --test-dir build -R gradcheck   # 只跑匹配的
 | 训练/反向 | 各 `gradcheck*`、`*_train_test` |
 | GPU 后端 / DSL 融合 | 带 `--gpu` 的变体（见 [`docs/internal/12-compute-engine-inventory.md`](docs/internal/12-compute-engine-inventory.md) 的清单） |
 | 三值 / BitLinear | `bitnet_struct_test`、`ternary_*`、`adam_quant_test` |
-| 序列化 / 数据集 | `train_state_test`、`model_roles_test`（容器格式本体已下沉子仓，见下） |
-| 子仓（`extern/{base,threadpool,kvrecord,dataset,tokenizer}`） | 进入子仓目录独立构建 + ctest（见各子仓 README「构建与测试」）；主仓 ctest 不再包含子仓单测 |
+| 序列化 / 数据集 | `train_state_test`、`model_roles_test`、`kvrec_test`、`dataset_test`、`nnvocab_test`、`dataset_integration_test` |
+| 基础件 / 并行 | `error_macro_test`、`assert_test`、`file_test`、`sha256_test`、`precision_type_test`、`threadpool_test`、`parallel_test`、`tokenizer_test` |
 
 ```bash
 # GPU 测试要在能看见 /dev/nvidia* 的环境里跑（容器/沙箱内会静默退回 llvmpipe 软件光栅）
@@ -117,7 +117,7 @@ git clang-format --diff          # 只看会改什么
 clang-format -i path/to/new_file.hpp
 ```
 
-> 全仓已于 2026-10-31 按 `.clang-format` **统一格式化**（提交 `5854b98`，子仓同步），
+> 全仓已于 2026-10-31 按 `.clang-format` **统一格式化**（提交 `5854b98`），
 > 现有代码即基线；新增/改动代码用上面的增量方式保持一致即可。**请不要在功能 PR 里顺手格式化无关文件。**
 > 缩进/行尾/编码这类字符级约定由 [`.editorconfig`](.editorconfig) 与 [`.gitattributes`](.gitattributes) 统一（**全仓 LF**）。
 
@@ -140,7 +140,7 @@ clang-format -i path/to/new_file.hpp
 
 ## 4. 提 PR
 
-1. Fork（或在本仓开分支）。**分支模型**（仅主仓库 `neuralnet.cpp`；子仓库各自只有 `main`）：
+1. Fork（或在本仓开分支）。**分支模型**：
 
    | 分支 | 定位 | 流转 |
    |---|---|---|
@@ -157,7 +157,12 @@ clang-format -i path/to/new_file.hpp
    ③ **发布版本号必须由人提出并明确给出**，agent（AI 编码助手）不得自行决定版本号或执行发布动作（`git tag` / `gh release` 等）。
 2. **一次 PR 一件事**。大改动请先在 issue/讨论里对齐设计——本仓有「先写设计稿进 `docs/internal/`，
    裁定后再实施」的习惯（`docs/internal/` 就是项目开发者的工作区）。
-3. 提交前自查：
+3. **不再拆分子仓库**（2026-11-01 治理裁定）。此前拆出的 core / threadpool / kvrecord /
+   dataset / tokenizer 五个子仓已合并回本仓单仓库（头文件在 `include/neuralnet.cpp/`、
+   测试在 `src/`），根因是嵌套 submodule 依赖导致"B 被存好几遍"、一次底层改动要在
+   多仓级联 bump。**如未来确需再拆，前置条件是先出现真实的外部独立消费方**，且在
+   issue 里对齐供货方式（不再用嵌套 submodule）后再动手。
+4. 提交前自查：
    ```bash
    cmake --preset dev && cmake --build --preset dev && ctest --preset dev   # 测试必须绿（当前口径：无 Vulkan 62 项 / 开 GPU 64 项）
    python bench/gui_cli_audit.py         # 改了 gui.py / cli_controllers.py / 任一 CLI 选项后必跑（七节：声明式字段表 ↔ Controller 闭包、断点续训禁列、多轮对话闭环；当前 exit 0）
@@ -179,7 +184,7 @@ clang-format -i path/to/new_file.hpp
    改了文档必跑 `python scripts/doc_audit.py`（文档 ↔ 代码对齐 + 文档规范审计，跨平台；
    `--report` 另生成代码示例人工复核清单）。Windows 侧另有 `pwsh -File bench/doc_inventory.ps1`
    （引擎接口盘点 + L2 分层门禁，需要 PowerShell 7），改了引擎接口时跑。
-4. PR 描述里写：**动机 → 改了什么 → 怎么验证的 → 影响面/兼容性**（模型文件格式、CLI 参数、
+5. PR 描述里写：**动机 → 改了什么 → 怎么验证的 → 影响面/兼容性**（模型文件格式、CLI 参数、
    数值结果是否有变化）。破坏性变更请附迁移说明。
 
 ---

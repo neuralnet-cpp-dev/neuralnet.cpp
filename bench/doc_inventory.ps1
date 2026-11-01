@@ -97,9 +97,11 @@ foreach ($d in $scanDirs) {
     if (-not (Test-Path $dd)) { continue }
     foreach ($f in (Get-ChildItem $dd -Recurse -Include *.hpp, *.cpp -File)) {
         if ($f.Name -eq 'core_assert.hpp') { continue }   # 宏定义体，豁免
+        # error_macro_test.cpp 是宏族测试：其 `return std::unexpected` 是**被测夹具**
+        # （构造错误值喂给 NN_TRY/NN_UNWRAP 断言宏行为），非手写残留 → 整文件豁免。
+        if ($f.Name -eq 'error_macro_test.cpp') { continue }
         # core_errors.hpp 的 NN_TRY/NN_FAIL 宏定义体（`return std::unexpected(...)` 是
         # 展开目标，必须保留）——逐行豁免见下。
-        # （error_macro_test.cpp 的夹具豁免已随测试下沉 base 子仓而移除）
         $isCoreErr = ($f.Name -eq 'core_errors.hpp')
         $inDefine = $false   # core_errors.hpp：#define 宏体（续行以 \ 结尾，末行收尾）
         $lineNo = 0

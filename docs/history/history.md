@@ -5428,3 +5428,56 @@ P0-4 的 `install()/find_package` 与 P2-9）；剩 13 项 = 部分完成 5（P0
 - **根 `README.md` 重写为项目介绍**（此前是文档索引+项目结构+许可证的堆叠）：
   定位改为"最吸引人的东西放最前"；文档索引职责移交 `docs/README.md`（消除两处重复维护）。
 - **`docs/README.md` 瘦身**：§3/§4 的两轮整理叙事迁入本节；新增 `contributors/` 分册段。
+
+## 子仓合并回主仓（单仓库，2026-11-01）
+
+**动机**：v1.13.0 拆出的 5 个子仓（core/base、threadpool、kvrecord、dataset、tokenizer）
+以**嵌套 submodule** 互相供货——base 的一份拷贝存在于主仓 + 4 个子仓共 5 处，kvrecord 3 处。
+一次底层改动（哪怕纯机械的 clang-format）需要 6 个仓库、约 10 次 commit/tag 的级联 bump；
+CI 的 `submodules: recursive` 曾因嵌套指针的 SSH 配置连环失败。裁定：**合并回单仓库，
+并立规矩不再拆分子仓库**（CONTRIBUTING §4.3：再拆的前置条件 = 先有真实外部独立消费方）。
+
+**迁移内容**（合并时各子仓最新 tag：base v1.0.2 / kvrecord v1.1.1 / threadpool v1.0.1 /
+dataset v1.0.1 / tokenizer v1.0.1）：
+
+- **15 个头文件**从 `extern/*/include/neuralnet.cpp/` 搬回主仓 `include/neuralnet.cpp/`
+  （跨仓 include 全是 `<neuralnet.cpp/...>` 绝对式、文件名不冲突 → 源码零改动）。
+- **13 个测试**从 `extern/*/tests/` 搬回 `src/` 并重新注册 ctest：error_macro /
+  assert / file / sha256 / precision_type（base）、threadpool / parallel（threadpool）、
+  kvrec（kvrecord）、dataset、tokenizer / nnvocab / dataset_integration
+  （tokenizer）。ctest 注册从 72 增至 **85**（本机 clang 24 + Vulkan 实测，85/85 全绿）。
+- **KVRecord 格式规范** `kvrec-format-spec.md` → `docs/development/10-kvrecord-format-spec.md`
+  （补齐文档规范头部 + 索引登记）；**Python 参考实现** `python/kvrecord.py` → `scripts/kvrecord.py`。
+- **删除**：`.gitmodules`、5 个 submodule gitlink、`extern/` 目录、CI 两处
+  `submodules: recursive`、CMake 的 `extern/*/include` 门面循环、`doc_audit.py` 的
+  extern 检查分支。`doc_inventory.ps1` 门禁 [5] 恢复 `error_macro_test.cpp` 整文件豁免
+  （其 `std::unexpected` 是宏族测试的被测夹具，非手写残留）。
+
+**保留不追溯**：5 个子仓的 GitHub 仓库与其历史 tag 冻结为只读存档（历史真源）；
+本文档与 `docs/release-notes/README.md` §1.4 记录该裁定。子仓时代的版本号规则
+（各自独立编号）随合并失效。
+
+**验收**：Release + GPU 全量构建 + ctest 全绿（13 个回归测试全部通过）；
+`python scripts/doc_audit.py` 通过。
+
+## C++20 模块化加载路径 spike（2026-11-01）
+
+**问题**：能否用 `import nn` 取代 `#include <nn.hpp>` 提升编译速度？动机有二——**提速** +
+**标准符合性**（库应是 C++20/26 模块形态，而非停在 header-only + `#include`）。
+
+**实测（clang 24 / Linux / -O3 / 纯 CPU，n=3 取 min，`research/modules-import-nn/`）**：
+include 冷 13.58s（前端 12.23 / 后端 1.60）；`import nn` 冷建 BMI 14.85s + 首 consumer 0.19s；
+**ccache 命中 0.01s**；`import nn` 热（改 consumer）0.19s = **比 ccache 慢 19×**；BMI 86.3 MB。
+
+**裁定**：
+- **全量 `import nn` 否决**——比现行 ccache+PCH 慢，且撞三重硬约束（宏不可导出 / STL 无法干净进
+  模块 purview / 86 MB BMI 绑死编译器×stdlib）。**不进主线。**
+- **但粒度导入是模块化的真实方向**：不全量 `import nn`，而是按功能域拆窄模块
+  （`nn.tokenizer` 库内闭包仅 12 头 vs 全库 200+ 头），消费者只 `import` 所需域。提速来自
+  「小 BMI + 改 A 域不重编 B 域消费者」的隔离，全量 import 会抹掉这些收益。
+- **粒度拆分未测**，留作后续独立 spike（落地前需划模块边界、处理跨域符号 re-export、
+  实测「粒度 import vs 全量 include+ccache」在真实多 TU 下的重编差异）。粒度模块是**增量接入**，
+  不一次性替换。
+
+**注意（易误判）**：本 spike 证伪的是「全量 import」，**不等于「模块无价值」**——标准符合性
+与粒度隔离是两条独立于本测速结论的价值线。详见 `research/modules-import-nn/README.md` §5。

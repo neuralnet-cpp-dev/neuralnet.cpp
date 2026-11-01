@@ -36,6 +36,7 @@
 | [`07-engine-ownership.md`](07-engine-ownership.md) | **生命周期 v3 唯一真源**：设备域从存储派生、入口域检查、backend weak 缓存、失败语义、迁移清单与性能口径 |
 | [`08-rapt-algorithm.md`](08-rapt-algorithm.md) | 线性注意力家族（RLA / RAPT / RLA-2）：直观理解 + 数学定义 + 扫描原语工程落地；详细定义基线见 [`../../research/rla/`](../../research/rla/README.md) |
 | [`09-custom-layer-ergonomics.md`](09-custom-layer-ergonomics.md) | 自定义层的**实测报告**（库外使用者视角）：7 个摩擦点、逐条坐标。写层前读 [`03-write-a-custom-layer.md`](03-write-a-custom-layer.md)，本文是它的背景证据 |
+| [`10-kvrecord-format-spec.md`](10-kvrecord-format-spec.md) | **KVRecord 二进制格式契约**（`.nnvocab` 等容器）：v1/v2 字节布局、地址连续性约定、版本自举；配套 Python 参考实现 [`../../scripts/kvrecord.py`](../../scripts/kvrecord.py) |
 
 > **编号制度**：本分册编号 = 建议阅读顺序，**连续不留洞**（文档规范见
 > [`../contributors/documentation-standard.md`](../contributors/documentation-standard.md) §1.2）。

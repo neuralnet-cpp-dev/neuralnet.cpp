@@ -96,6 +96,22 @@
 * **边界**：定义文档不是“RLA 优于 GPT”的证据，也不证明学术首创性；正确性测试通过不等于
   模型质量或实际效率。
 
+### 2.6 [`modules-import-nn/`](modules-import-nn/README.md) — `import nn` vs `#include <nn.hpp>` 编译速度
+
+* **结论(可引用,2026-11-01 clang 24 / Linux / -O3 / 纯 CPU)**:**全量 `import nn` 不采纳**——
+  热路径 **0.19s**,慢于现行 **ccache 命中 0.01s** 约 **19×**;include 冷 13.58s(前端 12.23 / 后端 1.60),
+  module 冷建 BMI 14.85s(一次性,比 include 冷还慢)。**但方向不是否决模块**:改库加载路径的动机
+  还有**标准符合性**(库应是 C++20/26 模块形态);真正的提速来自**粒度导入**——按功能域拆窄模块
+  (`nn.tokenizer` 库内闭包仅 12 头 vs 全库 200+ 头)、消费者只 `import` 所需域,而非全量塞进一个巨型 BMI。
+* **证据**:n=3 取 min;`nn.pcm` **86.3 MB**;BMI 跨 consumer 复用已实测(两个不同 consumer
+  复用同一 PCM 均 0 error)。报告 `modules-import-nn/README.md`(四段式,含踩坑)。
+* **重跑**:`cd research/modules-import-nn && ./measure.sh`(clang++ 24 / -O3 / 纯 CPU;
+  `-DNN_ENABLE_PROBES` 无关,纯编译计时)。
+* **边界**:仅 clang+libstdc++,未测 MSVC/libc++;未验证 `import` 与 `include` 的运行时数值等价。
+  **本 spike 只测了全量 import,未测粒度拆分**——粒度模块的 BMI 体量/建造/隔离收益是后续独立 spike。
+* **落点**:全量 `import nn` 不进主线;**粒度导入(`nn.tokenizer` 等窄模块)是模块化的真实路径**,
+  立项后按功能域划边界、增量接入(下游逐步改用 `import nn.<domain>`),不一次性替换。
+
 ## 3. 目录约定
 
 | 入库 | 不入库（可重跑，`.gitignore` 全域忽略） |

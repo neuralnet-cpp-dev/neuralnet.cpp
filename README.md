@@ -24,7 +24,7 @@
 ## 🚀 快速开始
 
 ```bash
-git clone --recurse-submodules git@github.com:neuralnet-cpp-dev/neuralnet.cpp.git
+git clone git@github.com:neuralnet-cpp-dev/neuralnet.cpp.git
 cd neuralnet.cpp
 cmake --preset dev && cmake --build --preset dev        # 需要 CMake ≥3.30 + Ninja + C++26 编译器
 ```
@@ -61,18 +61,6 @@ auto pred = model.forward(input);                       // engine 在 Model 内�
   ./build/dev/dataset_gen corpus.txt --vocab my_bpe.nnvocab -o corpus.nndataset
   ./build/dev/text_train corpus.nndataset --gpu
   ```
-
-</details>
-
-<details>
-<summary>克隆后 extern/ 为空？</summary>
-
-v1.13.0 起 core / threadpool / kvrecord / dataset / tokenizer 是 `extern/` 下的嵌套 submodule。
-已 clone 但漏了子仓时补救：
-
-```bash
-git submodule update --init --recursive
-```
 
 </details>
 
@@ -130,7 +118,6 @@ neuralnet.cpp/
 ├── docs/                    ← 文档总索引（docs/README.md）：usage / development / contributors / internal / history
 ├── research/                ← 可引用的研究档案（定义基线 / 实测结论 / 明确标注的 TODO）
 ├── gui.py                   ← 图形化操作界面（CustomTkinter）
-├── extern/                  ← 子仓：core / threadpool / kvrecord / dataset / tokenizer
 ├── datasets/ · pretrained/  ← 训练数据 · 预训练模型
 ├── scripts/ · bench/ · compare_with_torch/  ← 数据脚本 · 基准测试 · torch 对拍
 └── CMakePresets.json        ← 预设构建（dev / portable / cpu / probes ...）
