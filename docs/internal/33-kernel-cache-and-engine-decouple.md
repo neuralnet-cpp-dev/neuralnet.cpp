@@ -147,7 +147,7 @@ KeyValueRecord v2:
 - [x] 文档同步 + `python scripts/doc_audit.py` 全绿。
 
 > **Phase 1 实施进度**：✅ Phase 1 全部完成 = KVRecord v2 容器 + `K` 编码（版本进 key）+ 版本失效 + 懒加载热缓存 + 系统缓存目录定位 + env 覆盖 + 测试。
-> **Phase 2 进度**：✅ libnn-kernelgen.so 生成器（C ABI `ExprSpec(序列化)→SPIR-V`，内嵌 GlslEmitter + shaderc，CMake 目标 `nn_kernelgen` + install 到 `lib/`，已实测产出有效 SPIR-V magic 0x07230203）。⏳ 待做 = 引擎 GPU dispatch 在缓存 miss 时调用 `.so` 现编 + `model_warmup()` 预热钩子。
+> **Phase 2 进度**：✅ libnn-kernelgen.so 生成器（C ABI `ExprSpec(序列化)→SPIR-V`，内嵌 GlslEmitter + shaderc，CMake 目标 `nn_kernelgen` + install 到 `lib/`，已实测产出有效 SPIR-V magic 0x07230203）。✅ 引擎 JIT miss 路径（2026-11-01）：派发 miss（内嵌注册表 + 后端 pipeline 均无）→ 引擎懒 dlopen `libnn-kernelgen.so` → `nnk_generate_spirv` 现编 → 后端懒建 pipeline（`ensure_fused_kernel`）→ 执行 → `.nnk` 追加持久化（temp+rename 原子写）。`nnk_generate_spirv` 扩展 out `nnk_kernel_meta`；meta 单一来源 = `nn::fused_kernel_meta_of`（引擎与生成器同函数，vec_width 不漂移）；`pc_base_fixed` 走库侧 `fused_pc_base_fixed`（AOT 预建与 JIT 同源）。内嵌注册表降级为预热加速器，`NN_STRICT_CLOSED_WORLD=1` 为 opt-in 硬报错。**850M 实测**：`fused_gpu_test` 的 `run_fallback` 从"未扫描表达式硬报错"改为"JIT 现编成功且与 CPU 一致"——`x*y+3`（不在内嵌注册表）JIT 后逐位/容差内一致，`.nnk` 落盘含该 kernel。⏳ 待做 = `model_warmup()` 预热钩子 + 多进程并发写进程锁（temp+rename 已做）。
 > **Phase 3**：⏳ 引擎 link 阶段 + C ABI + 完整 install 布局（bin/ + lib/）。
 
 ## 8. 风险与取舍

@@ -424,23 +424,10 @@ void retire_reduce_partial_()
             : is_disp ? (2u * n_in + 2u)
                       : (n_in + 1u + static_cast<std::uint32_t>(fs.spec.extras.size()));
         // push constant **固定头**槽数（uint）：逐形态与生成器的 PC 声明
-        // 逐槽一致——
-        //   逐元素 2（count, cols）/ +matmul 6（…, rows, mm_k, mm_batch,
-        //   mm_trans）/ 归约 4（…, rows, vector_out）/ 归约+matmul 7 /
-        //   fold 5（…, vector_out, fold_k）/ fold+mm 7（…, fold_k, mm_k,
-        //   mm_batch）+ 分派变体 1 个 `prec`。
-        // ⚠ 该值**只在此处计算一次**并存进 FusedKernel::pc_base_fixed，写入侧
-        //   (run_fused_gpu) 只读：此前两侧各推导一遍，漂移会让
-        //   vkCmdPushConstants 超 range 而被驱动丢弃 → shader 读到未定义
-        //   残留（随前序 op 漂移，表现为时对时错的假 PASS，"全绿"验不出）。
-        const std::uint32_t pc_base_fixed = is_ks ? 7u // K 切分：matmul 6 槽 + ks_span
-                                            : (fs.spec.fold && fs.spec.fold->matmul)
-                                                ? 7u // fold+mm 7 槽
-                                            : (fs.spec.fold)                         ? 5u
-                                            : (fs.reduce_axis >= 0 && fs.has_matmul) ? 7u
-                                            : (fs.reduce_axis >= 0)                  ? 4u
-                                            : (fs.has_matmul)                        ? 6u
-                                                                                     : 2u;
+        // 逐槽一致——共享 helper `nn::fused_pc_base_fixed`（expr_spec.hpp，
+        // 与 JIT 生成器 kernelgen.cpp 单源）。仅 K 切分 `#ks` 的 7 槽
+        // （matmul 6 + ks_span）是 AOT 专属网格变体，JIT 不产，在此补。
+        const std::uint32_t pc_base_fixed = is_ks ? 7u : nn::fused_pc_base_fixed(fs.spec);
         // 分派变体在固定头末尾多一个 uint prec（生成器同位置声明）
         const std::uint32_t pc_base = pc_base_fixed + (is_disp ? 1u : 0u);
         const std::uint32_t pc_uints = pc_base + fs.view_param_count;

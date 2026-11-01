@@ -373,6 +373,27 @@ inline bool glsl_vec4_eligible(const ExprSpec& spec)
     return true;
 }
 
+// ── 运行期 JIT 懒建 pipeline 的 kernel 元数据（Phase 2，单一来源）────────
+// 引擎（compute_gpu_engine.hpp JIT miss）与生成器 .so（kernelgen.cpp 填
+// nnk_kernel_meta）都从同一函数推导 → 两者永不漂移（否则 vec_width 失配 =
+// dispatch 宽度错 = 静默算 1/4）。字段对应构建期 FusedShader / 后端
+// FusedKernel。JIT 只产 V0（全 f32）与 V1 运行期精度分派 `#x`（alu=false）。
+// FusedKernelMeta 结构定义在 expr_spec.hpp（backend.hpp 可见）。
+[[nodiscard]] inline FusedKernelMeta fused_kernel_meta_of(const ExprSpec& s)
+{
+    FusedKernelMeta m;
+    m.reduce_axis = expr_spec_reduce_axis(s);
+    m.has_matmul = s.matmul ? 1u : 0u;
+    m.view_param_count = expr_spec_runtime_view_param_count(s);
+    m.rparam_count = expr_spec_runtime_param_count(s);
+    m.vec_width = (!s.fold && m.reduce_axis < 0 && glsl_vec4_eligible(s)) ? 4u : 1u;
+    m.fold_out = s.fold ? (s.fold->vec_state_len > 0 ? s.fold->vec_state_len : 1u) : 0u;
+    m.fold_per_thread_row =
+        (s.fold && !(s.fold->vec_state_len > 0 || s.fold->matmul)) ? 1u : 0u;
+    m.pc_base_fixed = fused_pc_base_fixed(s);
+    return m;
+}
+
 // ── 尾逐元素链：eval_tail(mm, row, col, batch) 函数体（GLSL 内联发射）────
 // row 为 batch 内行号（全局行 = batch*m_per + row），与 Row 操作数一致。
 // matmul 融合 shader（generate_glsl_matmul，K 循环后逐输出调用）与 K 切分

@@ -40,11 +40,22 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <fstream>
+#include <sstream>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #include "compute_engine.hpp"
 #include "expr_opt.hpp"
 #include "expr_dsl.hpp"    // matmul_with_bias 经 DSL 融合（单一事实源）
+#include "expr_glsl_gen.hpp"  // fused_kernel_meta_of（JIT 懒建 pipeline 的元数据）
 #include "ternary_pack.hpp"  // 三值打包布局（trit_pack / matmul_q，P2/F3）
+#include "kernel_cache.hpp"  // KernelCache / kernel_cache_key / encode_expr_spec（Phase 2 JIT）
+#include "kernelgen_api.h"   // libnn-kernelgen.so C ABI（Phase 2 JIT 现编）
 
 #ifdef NN_FUSED_REGISTRY_EMBEDDED
 #include "fused_registry.hpp"
@@ -61,6 +72,23 @@ class GpuEngine final : public ComputeEngine
 {
 private:
     std::shared_ptr<GpuBackend> backend_;
+
+    // ── Phase 2 运行期 JIT：.nnk 缓存 + 生成器 .so（懒加载，见 docs/internal/33 §2/§10）──
+    // 派发 miss → 内存 KernelCache（懒加载自 kernel_cache_path()）→ miss →
+    // dlopen libnn-kernelgen.so → nnk_generate_spirv 现编 → insert → 后端懒建
+    // pipeline → 执行。内嵌注册表（构建期 AOT）降级为"预热加速器"，非派发硬约束。
+    // 三线程/三进程语义：本引擎单线程 dispatch；缓存落盘 temp+rename 原子写。
+    struct JitGenerator
+    {
+        void* handle = nullptr;
+        decltype(&nnk_generate_spirv) generate = nullptr;
+        decltype(&nnk_free_spirv) free = nullptr;
+        decltype(&nnk_generator_version) version = nullptr;
+        [[nodiscard]] bool loaded() const noexcept { return handle != nullptr; }
+    };
+    mutable std::shared_ptr<nn::fused::KernelCache> kernel_cache_;
+    mutable JitGenerator jit_;
+    mutable bool jit_init_tried_ = false;
 
     explicit GpuEngine(std::shared_ptr<GpuBackend> backend)
         : ComputeEngine(backend ? backend->identity() : 0), backend_(std::move(backend))
@@ -1382,6 +1410,152 @@ public:
     }
 #endif
     // ══════════════════════════════════════════════════════════════════════
+    // Phase 2 运行期 JIT（miss → 现编；docs/internal/33 §2/§10）
+    //
+    // 派发 miss（内嵌注册表 + 后端 pipeline 均无）→ 引擎 JIT：懒加载
+    // libnn-kernelgen.so → nnk_generate_spirv 现编 SPIR-V → 后端懒建 pipeline
+    // → 执行。内嵌注册表降级为"预热加速器"（避免 warmup 全 JIT），非派发硬约束；
+    // NN_STRICT_CLOSED_WORLD=1 保留为 opt-in 看门狗（硬报错）。
+    // ══════════════════════════════════════════════════════════════════════
+
+    static bool jit_strict_()
+    {
+        static const bool strict = nn::dsl::env_flag("NN_STRICT_CLOSED_WORLD");
+        return strict;
+    }
+
+    // 懒加载生成器 .so + 内存 KernelCache（各只做一次；失败 NN_FAIL 带 dlerror）。
+    [[nodiscard]] Result<void> ensure_jit_() const
+    {
+        if (jit_init_tried_) return {};
+        jit_init_tried_ = true;
+        // 1) dlopen libnn-kernelgen.so（NN_KERNELGEN_PATH 覆盖 → 系统库搜索）
+        std::string path = nn::detail::env_string_raw("NN_KERNELGEN_PATH");
+        if (path.empty()) path = "libnn-kernelgen.so";
+#ifdef _WIN32
+        HMODULE h = LoadLibraryA(path.c_str());
+        if (!h)
+        {
+            const auto err = static_cast<unsigned long>(GetLastError());
+            NN_FAIL("libnn-kernelgen.so 加载失败（JIT 需要生成器，可设 NN_KERNELGEN_PATH）："
+                    "win32 error " +
+                    std::to_string(err));
+        }
+        auto sym = [h](const char* n) { return reinterpret_cast<void*>(GetProcAddress(h, n)); };
+#else
+        void* h = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (!h)
+            NN_FAIL("libnn-kernelgen.so 加载失败（JIT 需要生成器，可设 NN_KERNELGEN_PATH）：" +
+                    std::string(dlerror()));
+        auto sym = [h](const char* n) { return dlsym(h, n); };
+#endif
+        jit_.handle = h;
+        jit_.generate = reinterpret_cast<decltype(jit_.generate)>(sym("nnk_generate_spirv"));
+        jit_.free = reinterpret_cast<decltype(jit_.free)>(sym("nnk_free_spirv"));
+        jit_.version = reinterpret_cast<decltype(jit_.version)>(sym("nnk_generator_version"));
+        if (!jit_.generate || !jit_.free || !jit_.version)
+            NN_FAIL("libnn-kernelgen.so 符号不完整（缺 nnk_generate_spirv/free/version）");
+        // 2) 加载 .nnk 缓存（generator_version 不符 → KernelCache::from_bytes 判陈旧重建）
+        const std::string& cpath = nn::fused::kernel_cache_path();
+        std::string bytes;
+        if (std::ifstream f(cpath, std::ios::binary); f)
+        {
+            std::ostringstream ss;
+            ss << f.rdbuf();
+            bytes = ss.str();
+        }
+        if (bytes.empty())
+        {
+            auto c = std::make_shared<nn::fused::KernelCache>();
+            c->generator_version = nn::fused::kKernelCacheGeneratorVersion;
+            c->rec.set("nnk_format_version", nn::fused::kKernelCacheFormatVersion);
+            c->rec.set("generator_version", nn::fused::kKernelCacheGeneratorVersion);
+            kernel_cache_ = std::move(c);
+        }
+        else
+        {
+            auto r = nn::fused::KernelCache::from_bytes(bytes, nn::fused::kKernelCacheGeneratorVersion);
+            if (!r) NN_FAIL("kernels.nnk 缓存解析失败（损坏？）：" + cpath);
+            kernel_cache_ = std::make_shared<nn::fused::KernelCache>(std::move(*r));
+        }
+        return {};
+    }
+
+    // 原子写盘（temp+rename）：进程锁留作 T6 后续（miss 罕见，单进程写为当前语义）。
+    [[nodiscard]] Result<void> persist_cache_() const
+    {
+        if (!kernel_cache_) return {};
+        const std::string data = kernel_cache_->serialize();
+        const std::string& path = nn::fused::kernel_cache_path();
+        const std::string tmp = path + ".tmp";
+        {
+            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+            if (!f) NN_FAIL("无法写 .nnk 缓存临时文件：" + tmp);
+            f.write(data.data(), static_cast<std::streamsize>(data.size()));
+        }
+#ifdef _WIN32
+        if (!MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
+            NN_FAIL("无法原子替换 .nnk 缓存：" + path);
+#else
+        if (std::rename(tmp.c_str(), path.c_str()) != 0) NN_FAIL("无法原子替换 .nnk 缓存：" + path);
+#endif
+        return {};
+    }
+
+    // 编译（或缓存命中）得到某 key 的 SPIR-V；miss → 生成器现编 → 内存缓存 insert
+    // + 落盘。prec_sig=0（V0）或 EXPR_PREC_SIG_DISPATCH（`#x`）。
+    [[nodiscard]] Result<std::vector<std::uint32_t>> jit_compile_(const std::string& key,
+                                                                  const nn::ExprSpec& spec,
+                                                                  std::uint32_t prec_sig) const
+    {
+        NN_TRY(unused, ensure_jit_());
+        (void)unused;
+        const std::string K = nn::fused::kernel_cache_key(key, prec_sig);
+        if (const auto* spv = kernel_cache_->hit(K)) return *spv;
+        const auto spec_bytes = nn::fused::encode_expr_spec(spec);
+        std::uint8_t* spirv = nullptr;
+        std::size_t len = 0;
+        nnk_kernel_meta meta;
+        const nnk_status st = jit_.generate(spec_bytes.data(), spec_bytes.size(), prec_sig, &meta,
+                                            &spirv, &len);
+        if (st != NNK_OK || spirv == nullptr)
+            NN_FAIL("JIT 现编失败（status=" + std::to_string(static_cast<int>(st)) + "），K=" + K);
+        std::vector<std::uint32_t> spv(
+            reinterpret_cast<const std::uint32_t*>(spirv),
+            reinterpret_cast<const std::uint32_t*>(spirv) + len / sizeof(std::uint32_t));
+        jit_.free(spirv);
+        NN_TRY_CHECK(kernel_cache_->insert(K, spv));
+        NN_TRY_CHECK(persist_cache_());
+        return spv;
+    }
+
+    // 完整 miss 路径：JIT 编译 V0（f32）→ 后端懒建 pipeline → 执行。
+    // 调用方在 psig!=0 时已抬 f32 重入（eval_expr_impl 边界 cast 语义），故此处
+    // 只 JIT V0 结构键；输出按 P 由调用方回贴（f16 → GpuTensorF16）。
+    [[nodiscard]] Result<Tensor> jit_run_(const nn::ExprSpec& spec, const std::string& key,
+                                          std::span<const Tensor> inputs, std::size_t rows,
+                                          std::size_t cols, Precision P)
+    {
+        auto spv_r = jit_compile_(key, spec, /*prec_sig=*/0);
+        NN_TRY_CHECK(spv_r);
+        auto fi_r = fused_buffers_(inputs);
+        NN_TRY_CHECK(fi_r);
+        std::vector<const GpuBuffer*>& gpu_inputs = fi_r->bufs;
+        const nn::FusedKernelMeta meta = nn::fused_kernel_meta_of(spec);
+        // 后端懒建 pipeline（幂等；设备能力不足 → 报错，绝无静默回退）
+        NN_TRY_CHECK(backend_->ensure_fused_kernel(key, *spv_r, meta, spec));
+        const auto vp = nn::expr_spec_runtime_view_params(spec);
+        auto out = backend_->run_fused_gpu(
+            key, gpu_inputs, spec.consts, rows, cols, /*vector_out=*/false, vp, spec.rparams,
+            /*output_override=*/nullptr, nn::expr_spec_runtime_matmul_k(spec),
+            nn::expr_spec_runtime_matmul_batch(spec), nn::expr_spec_runtime_matmul_trans(spec),
+            /*fold_k=*/std::nullopt, /*out_f16=*/false, /*prec_sig=*/0);
+        NN_TRY_CHECK(out);
+        if (P == Precision::F16)
+            return Tensor::from_gpu(GpuTensorF16(out->shared_buffer(), rows, cols));
+        return Tensor::from_gpu(std::move(*out));
+    }
+
 
     [[nodiscard]] Result<Tensor> eval_expr_impl(const ExprSpec& raw_spec,
                                                 std::span<const Tensor> inputs, std::size_t rows,
@@ -1505,11 +1679,21 @@ public:
             NN_TRY_CHECK(r);
             return to_prec(std::move(*r), P);
         }
-        // ── 闭合世界：未命中任何 AOT 融合 shader → 硬报错（绝不静默回退） ──
-        // 带上 key：闭合世界报错必须可定位——key 是登记/查表两侧的唯一标识，
-        // 可用来查 fused_registry.hpp 里有没有该条目、以及它属于哪个 Layer 路径。
+        // ── 未命中 AOT 注册表 → 运行期 JIT 现编（Phase 2；docs/internal/33）──
+        // 内嵌注册表（构建期闭合世界）降级为"预热加速器"：未知结构（使用者自研
+        // 层、未枚举签名）走 JIT —— 引擎 dlopen libnn-kernelgen.so 现编 SPIR-V、
+        // 懒建 pipeline、执行，并持久化进 .nnk 缓存。**绝不静默回退 CPU/边界 cast**。
+        // psig==0（此刻输入已全 f32、P==F32）→ 只 JIT V0 结构键 `key`；输出 f32。
+        if (!jit_strict_())
+        {
+            auto jr = jit_run_(spec, key, inputs, rows, cols, P);
+            NN_TRY_CHECK(jr);
+            return *jr;
+        }
+        // ── 严格模式（NN_STRICT_CLOSED_WORLD=1，opt-in 看门狗）──
         NN_FAIL("GpuEngine::eval_expr: 未找到该内联表达式的 AOT 融合 shader（闭合世界）；"
-                "请将对应表达式纳入构建期扫描（scan_exprs dry-run 需覆盖该 Layer 路径）；"
+                "请将对应表达式纳入构建期扫描（scan_exprs dry-run 需覆盖该 Layer 路径）"
+                "或关闭 NN_STRICT_CLOSED_WORLD 走 JIT 现编；"
                 "key=" +
                 key);
     }

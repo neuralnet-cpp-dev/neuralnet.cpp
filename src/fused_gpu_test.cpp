@@ -560,10 +560,13 @@ int run_matmul_reduce(CpuEngine& cpu, GpuEngine& gpu)
     return (ok1 && ok2 && ok3 && ok4) ? 0 : 1;
 }
 
-// ── 闭合世界：未扫描表达式 → GPU 硬报错（绝不静默回退） ─────────────────
-// 构造一个任何 Layer 都不使用的表达式（x*y + 3），其 key 不在融合注册表。
-// 项目哲学：GPU eval_expr 未命中**硬报错**，不静默回退 CPU（expr_dsl.hpp
-// "GPU 直接硬报错，绝不静默回退"）。本用例断言 GPU 侧必须返回错误。
+// ── 运行期 JIT：未扫描表达式 → 引擎现编并执行（Phase 2；docs/internal/33）──
+// 构造一个任何 Layer 都不使用的表达式（x*y + 3），其 key **不在内嵌注册表**
+// （旧行为：闭合世界硬报错；fused_gpu_test 的 run_fallback 此前断言 GPU 必须
+// 返回错误）。Phase 2 起未命中走 JIT：引擎 dlopen libnn-kernelgen.so 现编
+// SPIR-V → 懒建 pipeline → 执行 → 持久化进 .nnk 缓存。本用例断言 GPU 侧
+// **成功**且结果与 CPU 参考一致（绝不静默回退 CPU——成功即证明走了融合 kernel）。
+// 运行需 NN_KERNELGEN_PATH 指向 libnn-kernelgen.so（引擎 dlopen 搜索路径）。
 int run_fallback(CpuEngine& cpu, GpuEngine& gpu)
 {
     std::mt19937 rng(42);
@@ -582,11 +585,21 @@ int run_fallback(CpuEngine& cpu, GpuEngine& gpu)
     auto cr = nn::dsl::compute(cpu, nn::dsl::leaf(xt_cpu) * nn::dsl::leaf(yt_cpu) + three, R, C);
     NN_EXIT(cr, 1, "  CPU 求值失败: ");
 
-    // 未扫描表达式在 GPU 上必须**硬报错**（闭合世界，绝不静默回退）
+    // 未扫描表达式在 GPU 上经 **JIT 现编**成功（不再硬报错；NN_STRICT_CLOSED_WORLD
+    // 才是 opt-in 硬报错）。成功即证明走了融合 kernel（key 不在内嵌注册表）。
     auto gr = nn::dsl::compute(gpu, nn::dsl::leaf(xt_gpu) * nn::dsl::leaf(yt_gpu) + three, R, C);
-    const bool ok = !gr;
-    if (!ok) std::cerr << "  未扫描表达式在 GPU 上未报错（应硬报错而非静默回退/成功）\n";
-    std::cout << "[" << (ok ? "PASS" : "FAIL") << "] 未扫描表达式 → GPU 硬报错（不静默回退）\n";
+    if (!gr)
+    {
+        std::cerr << "  未扫描表达式 JIT 现编/执行失败: " << gr.error().message << "\n";
+        std::cout << "[FAIL] 未扫描表达式 → JIT 现编并执行\n";
+        return 1;
+    }
+    auto gm = gpu.to_matrix(*gr);
+    NN_EXIT(gm, 1, "  GPU JIT 结果下载失败\n");
+    const Scalar err = max_abs_diff(download(cpu, *cr), *gm);
+    const bool ok = err < 1e-4f;
+    if (!ok) std::cerr << "  JIT 结果与 CPU 参考不一致 err=" << err << "\n";
+    std::cout << "[" << (ok ? "PASS" : "FAIL") << "] 未扫描表达式 → JIT 现编（结果与 CPU 一致）\n";
     return ok ? 0 : 1;
 }
 

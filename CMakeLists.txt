@@ -1143,7 +1143,14 @@ if(Vulkan_FOUND)
     # Vulkan SDK；链接为单一版本化 .so（单份共享、懒加载），避免链进每个可执行
     # 文件（体积爆炸）或依赖系统 glslc（版本漂移/缺失）。见 docs/internal/33 §4。
     find_path(SHADERC_INCLUDE_DIR shaderc/shaderc.h HINTS ${Vulkan_INCLUDE_DIRS})
-    find_library(SHADERC_LIBRARY NAMES shaderc_shared HINTS ${Vulkan_LIBRARY_DIR})
+    # Vulkan_LIBRARY_DIR（FindVulkan）只指向 Vulkan loader 所在目录（SDK 的
+    # VulkanLoader/lib），shaderc_shared.so 在 SDK 主 lib/（Vulkan_INCLUDE_DIR 的
+    # ../lib）——只 HINTS 前者会漏找 → kernelgen.so 未构建 → JIT 不可用。
+    set(_NNK_SHADERC_HINTS ${Vulkan_LIBRARY_DIR})
+    if(Vulkan_INCLUDE_DIR)
+        list(APPEND _NNK_SHADERC_HINTS "${Vulkan_INCLUDE_DIR}/../lib")
+    endif()
+    find_library(SHADERC_LIBRARY NAMES shaderc_shared HINTS ${_NNK_SHADERC_HINTS})
     if(SHADERC_INCLUDE_DIR AND SHADERC_LIBRARY)
         add_library(nn_kernelgen SHARED src/kernelgen/kernelgen.cpp)
         target_include_directories(nn_kernelgen PRIVATE

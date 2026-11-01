@@ -881,6 +881,46 @@ run_fused_gpu(const std::string& shader_name,
 }
 
 // 查询融合 shader 是否已注册（GpuEngine AOT 匹配前置判断）
+// ── 运行期 JIT 懒建融合 pipeline（Phase 2）─────────────────────────────
+// 引擎在 .nnk 缓存 miss → nnk_generate_spirv 现编后调用本方法：按生成的
+// SPIR-V + 元数据建 pipeline 并插入 fused_kernels_（mutable，运行期可增长，
+// fused_mutex_ 保护）。与 init 预建（destroy.inc §16）同一套 binding/PC 布局
+// 推导——两处漂移会让 vkCmdPushConstants 超 range 被驱动丢弃（假 PASS）。
+// JIT 只产 V0（键 `key`）与 V1 运行期精度分派（键 `key#x`）两种形态；
+// 批量 `#b` / 细 tile `#f` / K 切分 `#ks`/`#kr` 是 AOT 专属网格变体，此处不处理。
+[[nodiscard]] Result<void> ensure_fused_kernel(const std::string& key,
+                                               const std::vector<std::uint32_t>& spirv,
+                                               const nn::FusedKernelMeta& meta,
+                                               const nn::ExprSpec& spec)
+{
+    if (!initialized_) NN_FAIL("GPU backend not initialized");
+    std::lock_guard<std::mutex> lock(fused_mutex_);
+    if (fused_kernels_.find(key) != fused_kernels_.end()) return {};   // 已存在（幂等）
+    const bool is_disp = std::string_view(key).ends_with(nn::EXPR_PREC_DISPATCH_SUFFIX);
+    const std::uint32_t n_in = static_cast<std::uint32_t>(spec.views.size());
+    const std::uint32_t num_bindings =
+        is_disp ? (2u * n_in + 2u)
+                : (n_in + 1u + static_cast<std::uint32_t>(spec.extras.size()));
+    // 分派变体在固定头末尾多一个 uint prec（生成器同位置声明）
+    const std::uint32_t pc_base = meta.pc_base_fixed + (is_disp ? 1u : 0u);
+    const std::uint32_t pc_size = static_cast<std::uint32_t>(
+        (pc_base + meta.view_param_count) * sizeof(std::uint32_t) +
+        sizeof(Scalar) * spec.consts.size() + sizeof(Scalar) * spec.rparams.size());
+    auto fp_r = VulkanPipeline::create_generic(device_.device(), spirv, num_bindings, pc_size);
+    if (!fp_r) return std::unexpected(fp_r.error());   // 设备能力不足/创建失败 → 引擎据此回退
+    FusedKernel kernel;
+    kernel.pipeline = std::move(*fp_r);
+    kernel.reduce_axis = meta.reduce_axis;
+    kernel.has_matmul = meta.has_matmul != 0;
+    kernel.fold = FoldMeta{meta.fold_out, static_cast<std::uint8_t>(meta.fold_per_thread_row)};
+    kernel.view_param_count = meta.view_param_count;
+    kernel.rparam_count = meta.rparam_count;
+    kernel.vec_width = meta.vec_width;
+    kernel.pc_base_fixed = meta.pc_base_fixed;
+    fused_kernels_.emplace(key, std::move(kernel));
+    return {};
+}
+
 [[nodiscard]] bool has_fused_shader(const std::string& shader_name) const noexcept
 { return fused_kernels_.find(shader_name) != fused_kernels_.end(); }
 

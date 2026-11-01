@@ -37,8 +37,8 @@ void nnk_free_spirv(uint8_t* spirv)
 }
 
 nnk_status nnk_generate_spirv(const std::uint8_t* spec_bytes, std::size_t spec_len,
-                              std::uint32_t prec_sig, std::uint8_t** out_spirv,
-                              std::size_t* out_len)
+                              std::uint32_t prec_sig, nnk_kernel_meta* out_meta,
+                              std::uint8_t** out_spirv, std::size_t* out_len)
 {
     *out_spirv = nullptr;
     *out_len = 0;
@@ -49,7 +49,24 @@ nnk_status nnk_generate_spirv(const std::uint8_t* spec_bytes, std::size_t spec_l
     if (!spec_r) return NNK_BAD_SPEC;
     const nn::ExprSpec canon = nn::canonicalize_expr_spec(*spec_r);
 
-    // 2) GlslEmitter 生成 GLSL（归约走 generate_reduce，逐元素走 generate）
+    // 2) 运行期 kernel 元数据（与构建期 FusedShader / 后端 FusedKernel 同源）：
+    //    由 canonical spec + 生成形态推导，供引擎懒建 pipeline。单一来源 =
+    //    nn::fused_kernel_meta_of（expr_glsl_gen.hpp，引擎侧同一函数）→ 两侧
+    //    永不漂移（vec_width 失配 = dispatch 宽度错 = 静默算 1/4）。
+    if (out_meta)
+    {
+        const nn::FusedKernelMeta m = nn::fused_kernel_meta_of(canon);
+        out_meta->reduce_axis = m.reduce_axis;
+        out_meta->has_matmul = m.has_matmul;
+        out_meta->view_param_count = m.view_param_count;
+        out_meta->rparam_count = m.rparam_count;
+        out_meta->vec_width = m.vec_width;
+        out_meta->fold_out = m.fold_out;
+        out_meta->fold_per_thread_row = m.fold_per_thread_row;
+        out_meta->pc_base_fixed = m.pc_base_fixed;
+    }
+
+    // 3) GlslEmitter 生成 GLSL（归约走 generate_reduce，逐元素走 generate）
     auto emitter = nn::emitter_registry::make("glsl");
     if (!emitter) return NNK_COMPILE_FAIL;
     const int raxis = nn::expr_spec_reduce_axis(canon);
@@ -58,7 +75,7 @@ nnk_status nnk_generate_spirv(const std::uint8_t* spec_bytes, std::size_t spec_l
                                  : emitter->generate("jit_kernel", canon, prec_sig, /*alu=*/false);
     if (glsl.empty()) return NNK_COMPILE_FAIL;
 
-    // 3) shaderc 编译 GLSL compute → SPIR-V（默认目标环境 = Vulkan 1.0）
+    // 4) shaderc 编译 GLSL compute → SPIR-V（默认目标环境 = Vulkan 1.0）
     shaderc_compiler_t compiler = shaderc_compiler_initialize();
     if (compiler == nullptr) return NNK_COMPILE_FAIL;
     shaderc_compile_options_t opts = shaderc_compile_options_initialize();

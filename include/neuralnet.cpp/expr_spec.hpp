@@ -597,6 +597,40 @@ expr_spec_runtime_fold_k(const ExprSpec& s) noexcept
 [[nodiscard]] inline std::uint32_t expr_spec_runtime_param_count(const ExprSpec& s) noexcept
 { return static_cast<std::uint32_t>(s.rparams.size()); }
 
+// ── push constant 固定头槽数（uint，不含 prec/vp/常量池）─────────────────
+// 单一来源：AOT 预建（compute_vk_backend_destroy.inc）与运行期 JIT 生成器
+// （kernelgen.cpp 填 nnk_kernel_meta）都调它，避免两侧各推一遍导致
+// vkCmdPushConstants 超 range（驱动丢弃 → shader 读未定义残留，假 PASS）。
+// 覆盖：逐元素 2 / +matmul 6 / 归约 4 / 归约+matmul 7 / fold 5 / fold+mm 7。
+// （K 切分 #ks 的 7 槽是 AOT 专属网格变体，JIT 不产 → 不在本函数。）
+[[nodiscard]] inline std::uint32_t fused_pc_base_fixed(const ExprSpec& s) noexcept
+{
+    if (s.fold && s.fold->matmul) return 7u;
+    if (s.fold) return 5u;
+    if (expr_spec_reduce_axis(s) >= 0 && s.matmul) return 7u;
+    if (expr_spec_reduce_axis(s) >= 0) return 4u;
+    if (s.matmul) return 6u;
+    return 2u;
+}
+
+// ── 运行期 JIT 懒建 pipeline 的 kernel 元数据（Phase 2）─────────────────
+// 纯数据载荷（定义在此，backend.hpp 可见）；推导函数 fused_kernel_meta_of
+// 在 expr_glsl_gen.hpp（需 glsl_vec4_eligible）。字段对应构建期 FusedShader /
+// 后端 FusedKernel。引擎（compute_gpu_engine.hpp JIT miss）与生成器 .so
+// （kernelgen.cpp 填 nnk_kernel_meta）都从同一函数推导 → 永不漂移（否则
+// vec_width 失配 = dispatch 宽度错 = 静默算 1/4）。
+struct FusedKernelMeta
+{
+    int reduce_axis = -1;            // -1=逐元素, 0=行归约, 1=列归约
+    std::uint32_t has_matmul = 0;    // 1=含前置 matmul 段
+    std::uint32_t view_param_count = 0;  // vp push constant 槽数
+    std::uint32_t rparam_count = 0;      // rp push constant 槽数
+    std::uint32_t vec_width = 1;         // 每线程元素数（1=标量, 4=vec4）
+    std::uint32_t fold_out = 0;          // fold 输出列数（0=非 fold）
+    std::uint32_t fold_per_thread_row = 0; // 1 → v1 标量 fold；0 → v2 双域 fold
+    std::uint32_t pc_base_fixed = 2;     // 固定头 uint 槽数（不含 prec/vp/常量池）
+};
+
 // ── 规范结构 key（AOT 收集/匹配的单一依据）──────────────────────────────
 // 把 ExprSpec 的**结构**（指令、视图、常量池**个数**、寄存器数；不含输入张量、
 // 也不含常量**值**）确定性地哈希成 16 位十六进制字符串。同一结构跨构建/跨调用

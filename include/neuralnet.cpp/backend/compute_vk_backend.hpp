@@ -526,6 +526,10 @@ private:
     };
 
     std::unordered_map<std::string, FusedKernel> fused_kernels_;
+    // JIT 懒建（ensure_fused_kernel）会运行期改写 fused_kernels_：与 init 预建
+    // 的单线程写入不同，用独立锁保护；热路径 run_fused_gpu 读（dispatch 单线程
+    // 语义）不加锁，只在 ensure 处加——miss 罕见，读侧零开销。
+    std::mutex fused_mutex_;
     // P3 批量派发观测计数（测试/诊断用：确认批量路径真的走到、而非静默降级
     // 为逐 kernel 后 A/B 自比恒真）
     std::uint64_t fused_batch_dispatches_ = 0;
