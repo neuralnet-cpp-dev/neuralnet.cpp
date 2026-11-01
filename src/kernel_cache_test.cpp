@@ -212,6 +212,28 @@ void test_key_encoding()
           "K（V0）= 版本 + 表达式");
     check(k_disp != k_v0, "不同签名 → 不同 K");
 }
+
+// 环境变量路径解析（非缓存版，可多次调）。setenv 用标准接口。
+void test_cache_path()
+{
+    // NN_KERNEL_CACHE_PATH 显式文件优先
+    ::setenv("NN_KERNEL_CACHE_PATH", "/tmp/kc/custom.nnk", 1);
+    ::setenv("NN_KERNEL_CACHE_DIR", "/tmp/kc/dir", 1);
+    check(nn::fused::kernel_cache_path_from_env() == "/tmp/kc/custom.nnk",
+          "NN_KERNEL_CACHE_PATH 优先");
+
+    // 只设 NN_KERNEL_CACHE_DIR → 目录 + kernels.nnk
+    ::unsetenv("NN_KERNEL_CACHE_PATH");
+    check(nn::fused::kernel_cache_path_from_env() == "/tmp/kc/dir/kernels.nnk",
+          "NN_KERNEL_CACHE_DIR → 目录/kernels.nnk");
+
+    // 都不设 → 回退系统缓存目录（非空、以 kernels.nnk 结尾）
+    ::unsetenv("NN_KERNEL_CACHE_DIR");
+    const std::string def = nn::fused::kernel_cache_path_from_env();
+    check(!def.empty() && def.size() >= std::string("kernels.nnk").size() &&
+              def.substr(def.size() - std::string("kernels.nnk").size()) == "kernels.nnk",
+          ("默认 → 系统缓存目录 kernels.nnk（" + def + "）").c_str());
+}
 }  // namespace
 
 int main()
@@ -221,6 +243,7 @@ int main()
     test_cache_roundtrip();
     test_version_invalidation();
     test_key_encoding();
+    test_cache_path();
     std::printf("\nkernel_cache_test: %d failure(s)\n", g_fail);
     return g_fail != 0 ? 1 : 0;
 }

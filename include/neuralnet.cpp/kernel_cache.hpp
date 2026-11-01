@@ -21,6 +21,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <neuralnet.cpp/core_env.hpp>
 #include <neuralnet.cpp/core_errors.hpp>
 #include <neuralnet.cpp/expr_spec.hpp>
 #include <neuralnet.cpp/model_keyvalue_record.hpp>
@@ -48,6 +49,39 @@ inline constexpr const char* kKernelFieldPrefix = "kernel.";
     else
         body = nn::expr_prec_sig_key(spec_key, prec_sig);
     return "v" + std::string(kKernelCacheGeneratorVersion) + "." + body;
+}
+
+// ── 缓存位置（非缓存版，供测试多次调）────────────────────────────────────
+// 优先级：NN_KERNEL_CACHE_PATH（显式文件）> NN_KERNEL_CACHE_DIR（目录）>
+// 系统统一缓存目录 + "neuralnet-cpp/kernels.nnk"。路径分隔统一用 '/'（Windows
+// CRT 接受，跨平台一致）。
+[[nodiscard]] inline std::string kernel_cache_path_from_env()
+{
+    // 1) 显式文件路径
+    if (const std::string p = nn::detail::env_string_raw("NN_KERNEL_CACHE_PATH"); !p.empty())
+        return p;
+    // 2) 显式缓存目录
+    if (const std::string d = nn::detail::env_string_raw("NN_KERNEL_CACHE_DIR"); !d.empty())
+        return d + "/kernels.nnk";
+    // 3) 系统统一缓存目录 + 库子目录
+    std::string base;
+#if defined(_WIN32)
+    base = nn::detail::env_string_raw("LOCALAPPDATA");
+    if (base.empty()) base = nn::detail::env_string_raw("USERPROFILE") + "/AppData/Local";
+#elif defined(__APPLE__)
+    base = nn::detail::env_string_raw("HOME") + "/Library/Caches";
+#else
+    base = nn::detail::env_string_raw("XDG_CACHE_HOME");
+    if (base.empty()) base = nn::detail::env_string_raw("HOME") + "/.cache";
+#endif
+    if (base.empty()) base = ".";  // 都取不到 → 回退当前目录
+    return base + "/neuralnet-cpp/kernels.nnk";
+}
+// 运行期取缓存路径：**读一次 + 缓存**（环境变量行为开关，见 core_env 注释）。
+[[nodiscard]] inline const std::string& kernel_cache_path()
+{
+    static const std::string path = kernel_cache_path_from_env();
+    return path;
 }
 
 // ── ExprSpec 序列化（生成器 .so 的 C ABI 边界载荷；见 doc §3.2）──────────
