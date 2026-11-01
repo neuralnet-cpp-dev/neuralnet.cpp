@@ -59,6 +59,55 @@ int main()
     nnn_tensor_destroy(e, Bt);
     nnn_tensor_destroy(e, At);
 
+    // ── 1b. 数据操作/归约原语（Phase 3-B 补全）────────────────────────
+    // transpose: A(2x3) → At(3x2): [[1,4],[2,5],[3,6]]
+    {
+        nnn_tensor T = nullptr;
+        check("transpose", nnn_transpose(e, nnn_tensor_from_matrix(e, A, 2, 3, NNN_PREC_F32), &T) ==
+                               NNN_OK && T);
+        float Td[6];
+        size_t tn = 0;
+        check("transpose 形状 3x2", nnn_tensor_rows(e, T) == 3 && nnn_tensor_cols(e, T) == 2);
+        nnn_tensor_to_matrix(e, T, Td, 6, &tn);
+        const float Texp[6] = {1, 4, 2, 5, 3, 6};
+        bool tok = tn == 6;
+        for (int i = 0; i < 6 && tok; ++i) tok = (std::fabs(Td[i] - Texp[i]) < 1e-4f);
+        check("transpose 数值", tok);
+        nnn_tensor_destroy(e, T);
+    }
+    // col_reduce_sum: X(2x3) = [1,2,3; 4,5,6] → 每列和 (1,3): [5,7,9]
+    {
+        const float Xv[6] = {1, 2, 3, 4, 5, 6};
+        nnn_tensor R = nullptr;
+        check("col_reduce_sum", nnn_col_reduce_sum(e, nnn_tensor_from_matrix(e, Xv, 2, 3,
+                                                                              NNN_PREC_F32),
+                                                   &R) == NNN_OK && R);
+        float Rd[3];
+        size_t rn = 0;
+        check("col_reduce_sum 形状 1x3", nnn_tensor_rows(e, R) == 1 && nnn_tensor_cols(e, R) == 3);
+        nnn_tensor_to_matrix(e, R, Rd, 3, &rn);
+        const float Rexp[3] = {5, 7, 9};
+        bool rok = rn == 3;
+        for (int i = 0; i < 3 && rok; ++i) rok = (std::fabs(Rd[i] - Rexp[i]) < 1e-4f);
+        check("col_reduce_sum 数值", rok);
+        nnn_tensor_destroy(e, R);
+    }
+    // scale_inplace + clone: S = clone(X); S *= 2 → [2,4,6,8,10,12]
+    {
+        const float Xv[6] = {1, 2, 3, 4, 5, 6};
+        nnn_tensor S = nullptr;
+        check("clone", nnn_clone(e, nnn_tensor_from_matrix(e, Xv, 2, 3, NNN_PREC_F32), &S) == NNN_OK &&
+                           S);
+        check("scale_inplace", nnn_scale_inplace(e, S, 2.0f) == NNN_OK);
+        float Sd[6];
+        size_t sn = 0;
+        nnn_tensor_to_matrix(e, S, Sd, 6, &sn);
+        bool sok = sn == 6;
+        for (int i = 0; i < 6 && sok; ++i) sok = (std::fabs(Sd[i] - 2.0f * Xv[i]) < 1e-4f);
+        check("clone+scale_inplace 数值 (X*2)", sok);
+        nnn_tensor_destroy(e, S);
+    }
+
     // ── 2. eval_expr（序列化 ExprSpec 边界载荷；x + 3）───────────────
     // 手工构造 out = input + const(3)：views=[Linear]，一条 Add。
     nn::ExprSpec spec;

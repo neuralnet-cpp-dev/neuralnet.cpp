@@ -73,6 +73,23 @@ void nnn_tensor_destroy(nnn_engine e, nnn_tensor t);
 nnn_status nnn_matmul(nnn_engine e, nnn_tensor A, nnn_tensor B, int transA, int transB,
                       nnn_tensor* out);
 
+// 归约（输出为归约向量：(rows,1) 行归约 / (1,cols) 列归约；新建张量）。
+nnn_status nnn_row_reduce_sum(nnn_engine e, nnn_tensor A, nnn_tensor* out);
+nnn_status nnn_col_reduce_sum(nnn_engine e, nnn_tensor A, nnn_tensor* out);
+nnn_status nnn_col_reduce_max(nnn_engine e, nnn_tensor A, nnn_tensor* out);
+
+// 数据操作。
+nnn_status nnn_transpose(nnn_engine e, nnn_tensor A, nnn_tensor* out);   // 新建 (cols,rows)
+nnn_status nnn_clone(nnn_engine e, nnn_tensor A, nnn_tensor* out);       // 新建深拷贝
+// 原地（A 就地改写；成功 = NNN_OK）。
+nnn_status nnn_add_inplace(nnn_engine e, nnn_tensor A, nnn_tensor B);    // A += B
+nnn_status nnn_scale_inplace(nnn_engine e, nnn_tensor A, float s);       // A *= s
+nnn_status nnn_zero(nnn_engine e, nnn_tensor A);                         // A = 0
+
+// ── 批处理录制窗口（GPU 录制到 command buffer；CPU 为 no-op）──────────
+nnn_status nnn_batch_begin(nnn_engine e);
+nnn_status nnn_batch_end(nnn_engine e);
+
 // ── 表达式求值（JIT/AOT 融合；docs/internal/33）────────────────────
 // spec = encode_expr_spec 编码的 ExprSpec 字节；inputs 为输入张量句柄数组；
 // rows/cols = 输出网格形状；prec_sig = 精度签名（0=V0 全 f32）。out 为新建张量。

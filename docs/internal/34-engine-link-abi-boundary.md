@@ -102,7 +102,7 @@ STL（`std::string`/`vector`/`expected`）与模板类型**永不跨 `.so` 边�
 | 阶段 | 内容 |
 |------|------|
 | **A** | `.so` 只编 CPU/GPU 引擎 + 原语 + 张量句柄（§3.1–3.3、§4 引擎行）——**第一步动代码从这开始**，先出 `nnn_engine/tensor/matmul/eval_expr` 最小闭环 ✅（2026-11-01） |
-| **B** | cli 改链 `libnn.so`（不再每 TU 全编引擎），install 布局落地 |
+| **B** | 原语面补全（归约/扫描/数据操作进 `nn_api.h`）+ cli 改链 `.so`：**归约（row/col reduce）+ 数据操作（transpose/clone/add/scale/zero）+ 批处理已入 `nn_api.h` 并 850M 验证（2026-11-01，`nn_consumer_test` 全 PASS）**；install 布局含 cli 到 `bin/`（D8）。cli 改链 `.so` 需要把引擎实现真正抽到 `.so` 编译单元（与 header-only 双轨冲突，见 §4 结论），列为后续 |
 | **C** | LGPL 可用性验证（外部消费方 link 可替换 `libnn.so`） |
 | **D**（后期，风险高） | model ABI（§3.4）——待 A–C 稳定后单独立项 |
 

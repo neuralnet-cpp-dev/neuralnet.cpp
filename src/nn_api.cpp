@@ -54,6 +54,20 @@ inline Precision to_precision(int prec)
     return (prec == static_cast<int>(NNN_PREC_F16)) ? Precision::F16 : Precision::F32;
 }
 
+// 通用"新建输出张量"原语包装（模板须 C++ linkage，故放匿名命名空间而非 extern "C"）
+template <typename F>
+nnn_status nnn_unary_(nnn_engine e, nnn_tensor A, nnn_tensor* out, F&& f)
+{
+    if (!e || !A || !out) { set_err("null 参数"); return NNN_ERR; }
+    auto r = f(A->t);
+    if (!r) { set_err(r.error().message); return NNN_ERR; }
+    auto* t = new (std::nothrow) nnn_tensor_t;
+    if (!t) { set_err("tensor 分配失败"); return NNN_ERR; }
+    t->t = std::move(*r);
+    *out = t;
+    return NNN_OK;
+}
+
 } // namespace
 
 extern "C"
@@ -170,6 +184,55 @@ nnn_status nnn_matmul(nnn_engine e, nnn_tensor A, nnn_tensor B, int transA, int 
     if (!t) { set_err("tensor 分配失败"); return NNN_ERR; }
     t->t = std::move(*r);
     *out = t;
+    return NNN_OK;
+}
+
+// 通用"新建输出张量"原语包装
+nnn_status nnn_row_reduce_sum(nnn_engine e, nnn_tensor A, nnn_tensor* out)
+{ return nnn_unary_(e, A, out, [&](const Tensor& x) { return e->e->row_reduce_sum(x); }); }
+nnn_status nnn_col_reduce_sum(nnn_engine e, nnn_tensor A, nnn_tensor* out)
+{ return nnn_unary_(e, A, out, [&](const Tensor& x) { return e->e->col_reduce_sum(x); }); }
+nnn_status nnn_col_reduce_max(nnn_engine e, nnn_tensor A, nnn_tensor* out)
+{ return nnn_unary_(e, A, out, [&](const Tensor& x) { return e->e->col_reduce_max(x); }); }
+nnn_status nnn_transpose(nnn_engine e, nnn_tensor A, nnn_tensor* out)
+{ return nnn_unary_(e, A, out, [&](const Tensor& x) { return e->e->transpose(x); }); }
+nnn_status nnn_clone(nnn_engine e, nnn_tensor A, nnn_tensor* out)
+{ return nnn_unary_(e, A, out, [&](const Tensor& x) { return e->e->clone(x); }); }
+
+nnn_status nnn_add_inplace(nnn_engine e, nnn_tensor A, nnn_tensor B)
+{
+    if (!e || !A || !B) { set_err("null 参数"); return NNN_ERR; }
+    auto r = e->e->add_inplace(A->t, B->t);
+    if (!r) { set_err(r.error().message); return NNN_ERR; }
+    return NNN_OK;
+}
+nnn_status nnn_scale_inplace(nnn_engine e, nnn_tensor A, float s)
+{
+    if (!e || !A) { set_err("null 参数"); return NNN_ERR; }
+    auto r = e->e->scale_inplace(A->t, s);
+    if (!r) { set_err(r.error().message); return NNN_ERR; }
+    return NNN_OK;
+}
+nnn_status nnn_zero(nnn_engine e, nnn_tensor A)
+{
+    if (!e || !A) { set_err("null 参数"); return NNN_ERR; }
+    auto r = e->e->zero(A->t);
+    if (!r) { set_err(r.error().message); return NNN_ERR; }
+    return NNN_OK;
+}
+
+nnn_status nnn_batch_begin(nnn_engine e)
+{
+    if (!e) { set_err("null engine"); return NNN_ERR; }
+    auto r = e->e->begin_batch();
+    if (!r) { set_err(r.error().message); return NNN_ERR; }
+    return NNN_OK;
+}
+nnn_status nnn_batch_end(nnn_engine e)
+{
+    if (!e) { set_err("null engine"); return NNN_ERR; }
+    auto r = e->e->end_batch();
+    if (!r) { set_err(r.error().message); return NNN_ERR; }
     return NNN_OK;
 }
 

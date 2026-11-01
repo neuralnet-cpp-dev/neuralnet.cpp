@@ -715,6 +715,12 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     endif()
 endif()
 
+# cli 安装到 bin/（D8 完整布局：bin/ + lib/ + include/，无散落 .o/.obj）。
+# cli 仍用 header-only C++ 面（模板 + 引擎内联；libnn.so 是为纯 C ABI 消费方 /
+# LGPL 场景）——编译慢的根治（引擎实现抽 .so）见 docs/internal/34 §6，双轨保留。
+# 放此处是因为 NN_APP_TARGETS 要到上面才填满（install 在生成期解析列表）。
+install(TARGETS ${NN_APP_TARGETS} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 # ── 测试 / 验证目标 ────────────────────────────────────────────────────
 # 构建门 = (NN_BUILD_APPS OR NN_ENABLE_TESTS)：默认（顶层工程 NN_BUILD_APPS=ON）
 #   就把全部回归可执行文件编出来，方便本地**直接跑**（无需每次重配）；
