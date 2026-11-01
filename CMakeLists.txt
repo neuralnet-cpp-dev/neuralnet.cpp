@@ -136,6 +136,17 @@ else()
     endif()
 endif()
 
+# ── LTO（链接期优化，2026-11：Clang thin LTO）──────────────────────────
+# 用 Clang thin LTO（并行分片 + 惰性合并，性能优于 GCC fat LTO）+ LLD 链接器。
+# 仅 Clang（非 MSVC 分支）生效；GCC 构建不自动开（避免 GCC LTO 与 -Werror
+# 的组合噪音）。NN_ENABLE_LTO=OFF 可关闭（A/B 或排障）。需 clang + lld。
+option(NN_ENABLE_LTO "Clang thin LTO（需 LLD）" ON)
+if(NN_ENABLE_LTO AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND NOT MSVC)
+    add_compile_options(-flto=thin)
+    add_link_options(-flto=thin -fuse-ld=lld)
+    message(STATUS "LTO: Clang thin LTO + LLD 已启用（NN_ENABLE_LTO=OFF 可关闭）")
+endif()
+
 # Windows 上的 clang++（GNU-like 驱动）不是 CMake 的 MSVC 分支，但链接仍走
 # link.exe，默认栈同样是 1 MB。实测（102 / clang 23.1 + MSVC STL / Release）
 # t1_58_test、bitnet_struct_test、model_roles_test 在 ctest 中 SegFault；
