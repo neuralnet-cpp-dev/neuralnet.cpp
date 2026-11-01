@@ -48,7 +48,7 @@ int g_fail = 0;
     } while (0)
 
 // ── 引擎侧工具（M1：Tensor 一律经引擎创建/读写）────────────────────────────
-nn::Tensor make_tensor(nn::CpuEngine& eng, std::size_t rows, std::size_t cols, float base,
+nn::Tensor make_tensor(nn::ComputeEngine& eng, std::size_t rows, std::size_t cols, float base,
                        float step)
 {
     nn::Tensor t = eng.create_tensor(rows, cols);
@@ -64,7 +64,7 @@ nn::Tensor make_tensor(nn::CpuEngine& eng, std::size_t rows, std::size_t cols, f
     return t;
 }
 
-std::vector<Scalar> read_back(nn::CpuEngine& eng, const nn::Tensor& t)
+std::vector<Scalar> read_back(nn::ComputeEngine& eng, const nn::Tensor& t)
 {
     auto m = eng.to_matrix(t);
     if (!m)
@@ -111,8 +111,8 @@ nn::ExprSpec make_binary(nn::ExprOp op)
 // ── [1] RV-04：元数据表 ↔ 工厂 ─────────────────────────────────────────────
 void test_optimizer_table()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     const auto table = nn::optimizer_table();
     CHECK(!table.empty(), "优化器表非空");
 
@@ -176,8 +176,8 @@ void test_adamw_order()
     const Scalar lr = 0.05f, b1 = 0.9f, b2 = 0.999f, eps = 1e-8f, wd = 0.1f;
     const std::size_t rows = 3, cols = 4;
 
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     nn::Tensor p = make_tensor(eng, rows, cols, 0.5f, 0.03f);
     nn::Tensor g = make_tensor(eng, rows, cols, -0.2f, 0.02f);
     const std::vector<Scalar> p0 = read_back(eng, p);
@@ -222,8 +222,8 @@ void test_adamw_order()
 // ── [3] RV-03：同目标写序的图分析（建边 / 不合组 / 反序 fail-fast）────────
 void test_dst_order_hazard()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     const std::size_t rows = 2, cols = 3;
     nn::Tensor p = make_tensor(eng, rows, cols, 0.5f, 0.1f);
     nn::Tensor x = make_tensor(eng, rows, cols, 1.0f, 0.0f);
@@ -284,7 +284,7 @@ double l1_move(const std::vector<Scalar>& before, const std::vector<Scalar>& aft
 bool detect_movement(const std::vector<Scalar>& before, const std::vector<Scalar>& after)
 { return l1_move(before, after) > 1e-3; }
 
-std::vector<Scalar> snapshot_params(nn::CpuEngine& eng, nn::Model& model)
+std::vector<Scalar> snapshot_params(nn::ComputeEngine& eng, nn::Model& model)
 {
     std::vector<Scalar> out;
     for (auto& t : model.parameters())
@@ -303,8 +303,8 @@ std::vector<Scalar> snapshot_params(nn::CpuEngine& eng, nn::Model& model)
 
 void test_weight_movement_smoke()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     nn::PrecisionProfile prof;   // 默认全 f32
     auto m_r = nn::build_mnist_mlp_model(eng, nn::MNIST_LAYER_DIMS, nn::NormType::LayerNorm, prof);
     CHECK(m_r.has_value(), "训练冒烟：build_mnist_mlp_model");

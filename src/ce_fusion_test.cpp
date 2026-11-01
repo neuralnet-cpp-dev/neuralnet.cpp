@@ -575,28 +575,26 @@ int main()
               << "  列式 softmax 融合 + 稀疏交叉熵验证\n"
               << "========================================\n";
 
-    auto cpu_engine_owner = nn::CpuEngine::create();
-    nn::CpuEngine& cpu_engine = *cpu_engine_owner;
+    auto cpu_engine_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& cpu_engine = *cpu_engine_owner;
     int fail = run_case(cpu_engine, "CPU");
     std::cout << "\n── 新旧 CE 逐用例对拍（online-softmax fold vs 旧数学，容差 1e-6） ──\n";
     fail += run_old_new_parity(cpu_engine, "CPU");
 
-#ifndef NN_HAS_VULKAN
+#ifndef NN_GPU_ENGINE
     std::cout << "[SKIP] 无 Vulkan，跳过 GPU 部分\n";
 #else
-    auto backend_owner = nn::GpuBackend::shared();
-    nn::GpuBackend& backend = *backend_owner;
-    auto init_r = backend.initialize();
-    if (!init_r)
+    auto gpu_engine_owner = nn::create_gpu_engine("");
+    if (!gpu_engine_owner)
     {
         // 无可用 Vulkan 设备（CI runner / 缺 ICD）→ 77 = ctest SKIP
         // （与 cnn_test / batchnorm_test 的可用性预检同一约定：GPU 用例
         //  在无卡环境记 Skipped，而非假红——CPU 段另由 expr_cpu_test 等覆盖）
-        std::cout << "[SKIP] GPU 不可用: " << init_r.error().message << "\n";
+        const char* err = nn::last_error();
+        std::cout << "[SKIP] GPU 不可用: " << (err ? err : "(无错误信息)") << "\n";
         return 77;
     }
-    auto gpu_engine_owner = nn::GpuEngine::create(backend);
-    nn::GpuEngine& gpu_engine = *gpu_engine_owner;
+    nn::ComputeEngine& gpu_engine = *gpu_engine_owner;
     fail += run_case(gpu_engine, "GPU");
     fail += run_old_new_parity(gpu_engine, "GPU");
 

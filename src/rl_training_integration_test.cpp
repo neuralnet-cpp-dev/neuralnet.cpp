@@ -72,7 +72,7 @@ nn::ExperienceSchema experience_schema()
 
 void test_named_rl_session_update()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     const nn::Tensor input = make_tensor(*engine, 2, 2, 0.2f, 0.1f);
     auto output_schema = policy_value_schema();
 

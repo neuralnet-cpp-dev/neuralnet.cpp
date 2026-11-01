@@ -21,7 +21,7 @@
 #include <neuralnet.cpp/compute_tensor.hpp>
 #include <neuralnet.cpp/expr_dsl.hpp>
 #include <neuralnet.cpp/expr_spec.hpp>
-#include <neuralnet.cpp/compute_cpu_engine.hpp>
+#include <neuralnet.cpp/engine.hpp>
 #include "test_common.hpp"
 
 // 测试写在全局作用域（非 namespace nn），避免 ADL 把匹配拉进 nn 命名空间。
@@ -65,8 +65,8 @@ auto rope_expr(const nn::Tensor& q, const nn::Tensor& cos, const nn::Tensor& sin
 
 void test_rope()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     constexpr std::size_t DK = 32, ROWS = 64, COLS = 4;
     nn::Tensor q = make_tensor(eng, ROWS, COLS, 0.5f, 0.001f);
     nn::Tensor cos = make_tensor(eng, DK, COLS, 0.9f, 0.0002f);
@@ -146,8 +146,8 @@ void test_rope()
 
 void test_elementwise()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     constexpr std::size_t R = 8, C = 5;
     nn::Tensor a = make_tensor(eng, R, C, 1.0f, 0.1f);
     nn::Tensor b = make_tensor(eng, R, C, 0.5f, 0.05f);
@@ -243,8 +243,8 @@ void test_elementwise()
 
 void test_swiglu()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     constexpr std::size_t R = 8, C = 5;
     nn::Tensor g = make_tensor(eng, R, C, 0.3f, 0.01f);
     nn::Tensor s = make_tensor(eng, R, C, 0.7f, 0.008f);

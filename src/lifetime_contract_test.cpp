@@ -24,7 +24,7 @@ namespace
 
 void test_expr_segment_holds_engine()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     CHECK(engine != nullptr, "CpuEngine::create");
 
     auto begin = engine->begin_expr();
@@ -40,14 +40,13 @@ void test_expr_segment_holds_engine()
 
 void test_offload_state_machine()
 {
-#ifdef NN_HAS_VULKAN
-    auto backend = nn::GpuBackend::create();
-    if (!backend->initialize())
+#ifdef NN_GPU_ENGINE
+    auto engine = nn::create_gpu_engine("");
+    if (!engine)
     {
         std::printf("[SKIP] offload 状态机：本机无可用 Vulkan 设备\n");
         return;
     }
-    auto engine = nn::GpuEngine::create(backend);
     nn::Tensor a = engine->create_tensor(2, 3, nn::Precision::F32);
     nn::Tensor b = engine->create_tensor(4, 1, nn::Precision::F32);
     CHECK(a.valid() && b.valid(), "创建 F32 激活张量");
@@ -91,7 +90,7 @@ void test_offload_rejects_cpu_engine()
 {
     // CPU 引擎的 offload 原语是 no-op（restore 返回 1×1）→ export 必须拒绝，
     // 否则成员缓存被置空、backward 拿到 1×1 张量（CLI 与 Session 也各自拒绝）。
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Tensor a = engine->create_tensor(2, 2, nn::Precision::F32);
     nn::ActivationOffloader off;
     off.set_enabled(true);
@@ -104,7 +103,7 @@ void test_offload_rejects_cpu_engine()
 
 void test_offload_rejects_non_f32()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Tensor h = engine->create_tensor(2, 2, nn::Precision::F16);
     CHECK(h.valid() && h.precision() == nn::Precision::F16, "创建 F16 激活张量");
 
@@ -119,7 +118,7 @@ void test_offload_rejects_non_f32()
 
 void test_optimizer_before_model_order()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Model model(*engine);
     CHECK(model.add<nn::Linear>(4, 3), "add Linear(4,3)");
     CHECK(model.add<nn::ReLU>(), "add ReLU");

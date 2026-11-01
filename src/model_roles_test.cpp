@@ -105,8 +105,8 @@ bool matrices_bit_identical(const nn::Matrix& a, const nn::Matrix& b)
 void test_model_and_checkpoint_roles()
 {
     std::puts("[1] Model 角色：打包形态落盘 + 只读态载入 + 前向逐位一致");
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     const nn::ModelSpec spec = ternary_spec();
     const nn::PrecisionProfile t1 = nn::profile_t1_58();
 
@@ -239,8 +239,8 @@ void test_model_and_checkpoint_roles()
 // （Trainable）——后者就是三值模型的 SFT / QAT 续训入口。
 void test_ternary_warm_start()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     const nn::ModelSpec spec = ternary_spec();
     const nn::PrecisionProfile t1 = nn::profile_t1_58();
 

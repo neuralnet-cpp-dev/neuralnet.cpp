@@ -34,13 +34,13 @@ nn::TensorSchema rollout_schema()
 class CountingSource final : public nn::RolloutSource
 {
 private:
-    nn::CpuEngine& engine_;
+    nn::ComputeEngine& engine_;
     nn::TensorSchema schema_;
 
 public:
     std::size_t calls = 0;
 
-    explicit CountingSource(nn::CpuEngine& engine) : engine_(engine), schema_(rollout_schema()) {}
+    explicit CountingSource(nn::ComputeEngine& engine) : engine_(engine), schema_(rollout_schema()) {}
 
     [[nodiscard]] nn::Result<nn::TensorRecord> rollout(nn::DeterministicRng& rng) override
     {
@@ -122,7 +122,7 @@ struct PipelineBundle
     nn::RLTrainingPipeline pipeline;
 };
 
-nn::Result<PipelineBundle> make_pipeline(nn::CpuEngine& engine,
+nn::Result<PipelineBundle> make_pipeline(nn::ComputeEngine& engine,
                                          std::shared_ptr<nn::MetricSink> metrics,
                                          std::shared_ptr<nn::CheckpointProvider> checkpoints = {},
                                          std::uint64_t seed = 177, bool clear_buffer = false)
@@ -148,7 +148,7 @@ nn::Result<PipelineBundle> make_pipeline(nn::CpuEngine& engine,
 
 void test_pipeline_and_metrics()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     auto metrics = std::make_shared<nn::CollectingMetricSink>();
     auto bundle = make_pipeline(*engine, metrics, {}, 177, true);
     CHECK(bundle.has_value(), "pipeline composition");
@@ -166,7 +166,7 @@ void test_pipeline_and_metrics()
 
 void test_checkpoint_reproducibility()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     auto checkpoints = std::make_shared<nn::InMemoryCheckpointProvider>();
     auto base = make_pipeline(*engine, {}, checkpoints, 4242, false);
     CHECK(base.has_value(), "checkpoint base pipeline");
@@ -209,7 +209,7 @@ void test_checkpoint_reproducibility()
 
 void test_after_update_failure_commits_state()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     auto bundle = make_pipeline(*engine, {}, {}, 991, true);
     CHECK(bundle.has_value(), "after-hook pipeline composition");
     if (!bundle) return;
@@ -231,7 +231,7 @@ void test_after_update_failure_commits_state()
 
 void test_invalid_components()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::RLPipelineConfig cfg;
     cfg.batch_size = 2;
     cfg.min_buffer_size = 2;

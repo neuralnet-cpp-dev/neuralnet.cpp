@@ -6,17 +6,12 @@
 // 是「按需加载」的转发，只为了 `#include <neuralnet.cpp/engine.hpp>` 这种
 // 好记的写法，不必去猜 `compute_*.hpp` 的命名。
 //
-// ⚠ 这是**整洁性**入口，**不省 parse**：各头的依赖闭包本就相互牵连（如
-//   `compute_tensor.hpp` 无条件引用 Vulkan 后端头），真正省时间要按依赖
-//   重切（另案，见 docs/internal/18-roadmap.md P0-4 / 编译提速）。
-//
-// 提供：`ComputeEngine`（原语接口）、`CpuEngine`，以及 GPU 构建下的 `GpuEngine`。
+// 引擎实现（CpuEngine/GpuEngine 具体类体）自 2026-11 起编进独立 .so
+// （libnn-cpu.so / libnn-gpu.so，LGPL，见 docs/internal/34 §10）；本头只提供
+// 抽象层接口（ComputeEngine）+ 工厂声明（nn::create_cpu_engine /
+// nn::create_gpu_engine / nn::last_error），消费方链接对应 .so 拿到实现。
 // 用法：
 //     #include <neuralnet.cpp/engine.hpp>
-//     auto engine = nn::CpuEngine::create();   // shared_ptr，RAII 管理
+//     auto engine = nn::create_cpu_engine();   // shared_ptr，RAII 管理
 
-#include "compute_engine.hpp"
-#include "compute_cpu_engine.hpp"
-#ifdef NN_HAS_VULKAN
-#include "compute_gpu_engine.hpp"
-#endif
+#include <neuralnet.cpp/compute_engine.hpp>

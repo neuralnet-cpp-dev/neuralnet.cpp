@@ -22,7 +22,7 @@
 #include <neuralnet.cpp/expr_spec.hpp>
 #include <neuralnet.cpp/expr_opt.hpp>
 #include <neuralnet.cpp/expr_dsl.hpp>
-#include <neuralnet.cpp/compute_cpu_engine.hpp>
+#include <neuralnet.cpp/engine.hpp>
 #include "test_common.hpp"
 
 // 测试写在全局作用域（非 namespace nn），避免 ADL 把匹配拉进 nn 命名空间。
@@ -213,8 +213,8 @@ void test_regalloc()
 // ── 测试 5：确定性（多次 canonicalize 结果一致） ────────────────────────
 void test_determinism()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     std::vector<nn::ExprSpec> specs;
 
     // 1) RoPE forward（真实 DSL 折叠路径）
@@ -270,8 +270,8 @@ void test_determinism()
 // ── 测试 6：语义等价（canonical 前后 CPU 求值一致） ─────────────────────
 void test_semantic_equivalence()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
 
     // 含归约的 softmax 表达式（走 eval_expr 路径）
     {
@@ -416,8 +416,8 @@ void test_output_invariant()
 void test_reduce_preserved()
 {
     // softmax 表达式：归约指令 dst 与逐元素 dst 区段分离，Reduce 引用正确
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     nn::Tensor x = make_tensor(eng, 3, 7, -0.8f, 0.11f);
     auto expr = exp(leaf(x) - row_reduce_max(x)) / row_reduce_sum(exp(leaf(x) - row_reduce_max(x)));
     auto [spec, inputs] = to_expr_spec(expr);

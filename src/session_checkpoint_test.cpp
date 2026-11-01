@@ -39,7 +39,7 @@ std::filesystem::path scratch_dir()
 nn::ModelSpec tiny_spec()
 { return nn::make_gpt_spec(VOCAB, D_MODEL, SEQ_LEN, HEADS, D_FF, LAYERS); }
 
-std::vector<nn::Scalar> snapshot(nn::CpuEngine& e, nn::Model& m)
+std::vector<nn::Scalar> snapshot(nn::ComputeEngine& e, nn::Model& m)
 {
     std::vector<nn::Scalar> out;
     for (auto& t : m.parameters())
@@ -91,7 +91,7 @@ nn::TextTrainState sample_domain_state()
 // ── [1][2][4][5] 保存 → 恢复 → 续训 ──────────────────────────────────────
 void test_roundtrip()
 {
-    auto engine_r = nn::CpuEngine::create();
+    auto engine_r = nn::create_cpu_engine();
     auto& engine = *engine_r;
     const auto path = (scratch_dir() / "roundtrip.nnckpt").string();
 
@@ -245,7 +245,7 @@ void test_roundtrip()
 // ── [3] 配方不一致（非域字段）也应 fail-fast ──────────────────────────────
 void test_recipe_mismatch()
 {
-    auto engine_r = nn::CpuEngine::create();
+    auto engine_r = nn::create_cpu_engine();
     auto& engine = *engine_r;
     const auto path = (scratch_dir() / "recipe.nnckpt").string();
 

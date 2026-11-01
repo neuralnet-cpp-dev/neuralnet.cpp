@@ -37,6 +37,7 @@
 #include "compute_layer_base.hpp"
 #include "compute_tensor.hpp"
 #include "expr_dsl.hpp"
+#include "ternary_pack.hpp"                // 打包布局/编解码（引擎 .so 化后不再传递包含）
 #include <neuralnet.cpp/precision.hpp>
 
 namespace nn

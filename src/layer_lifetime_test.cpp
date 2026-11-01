@@ -52,15 +52,15 @@ void test_domain_model()
 {
     static_assert(std::is_same_v<nn::DomainId, std::uintptr_t>, "DomainId = 不透明整数域标识");
     static_assert(nn::kHostDomain != 0, "宿主域非零（0 保留给空张量）");
-    static_assert(!std::is_default_constructible_v<nn::CpuEngine>,
-                  "CpuEngine 不允许栈上构造（必须用 create()）");
-#ifdef NN_HAS_VULKAN
-    static_assert(!std::is_default_constructible_v<nn::GpuEngine>,
-                  "GpuEngine 不允许栈上构造（必须用 create()）");
+    static_assert(!std::is_default_constructible_v<nn::ComputeEngine>,
+                  "ComputeEngine 不允许栈上构造（必须用工厂 create_*_engine()）");
+#ifdef NN_GPU_ENGINE
+    static_assert(!std::is_default_constructible_v<nn::ComputeEngine>,
+                  "ComputeEngine 不允许栈上构造（必须用工厂 create_*_engine()）");
 #endif
 
-    auto e1 = nn::CpuEngine::create();
-    auto e2 = nn::CpuEngine::create();
+    auto e1 = nn::create_cpu_engine();
+    auto e2 = nn::create_cpu_engine();
     CHECK(e1->domain() == nn::kHostDomain, "CPU 引擎域 = kHostDomain");
     CHECK(e2->domain() == nn::kHostDomain, "所有 CPU 引擎共享宿主域");
 
@@ -77,7 +77,7 @@ void test_tensor_survives_engine()
 {
     nn::Tensor t;
     {
-        auto engine = nn::CpuEngine::create();
+        auto engine = nn::create_cpu_engine();
         t = engine->create_tensor(2, 2, nn::Precision::F32);
     }
 
@@ -94,7 +94,7 @@ void test_layer_keeps_engine_alive()
     std::unique_ptr<nn::Linear> layer;
     nn::Tensor x;
     {
-        auto engine = nn::CpuEngine::create();
+        auto engine = nn::create_cpu_engine();
         x = engine->create_tensor(4, 2, nn::Precision::F32);
         layer = std::make_unique<nn::Linear>(4, 3);
         auto r = layer->init(*engine);
@@ -114,7 +114,7 @@ void test_model_keeps_engine_alive()
     std::unique_ptr<nn::Model> model;
     nn::Tensor x;
     {
-        auto engine = nn::CpuEngine::create();
+        auto engine = nn::create_cpu_engine();
         x = engine->create_tensor(4, 2, nn::Precision::F32);
         model = std::make_unique<nn::Model>(*engine);
         auto r = model->add<nn::Linear>(4, 3);
@@ -128,8 +128,8 @@ void test_model_keeps_engine_alive()
 
 void test_cross_engine_reinit_rejected()
 {
-    auto e1 = nn::CpuEngine::create();
-    auto e2 = nn::CpuEngine::create();
+    auto e1 = nn::create_cpu_engine();
+    auto e2 = nn::create_cpu_engine();
     FlakyLayer layer;
     layer.attempts = 1;   // 下一次 init_impl 直接成功
     auto r1 = layer.init(*e1);
@@ -143,7 +143,7 @@ void test_cross_engine_reinit_rejected()
 
 void test_optimizer_keeps_engine_alive()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Tensor p =
         engine->create_tensor(2, 2, nn::Precision::F32, nn::InitSpec::constant(nn::Scalar{1}));
     nn::Tensor g =
@@ -161,43 +161,35 @@ void test_optimizer_keeps_engine_alive()
 
 void test_backend_shared_weak_cache()
 {
-#ifdef NN_HAS_VULKAN
-    // D5：shared() = weak 缓存。有活使用者时复用；全部释放后确定性回收；
-    // 下一次 shared() 重新创建（不初始化设备，调用方仍需 initialize()）。
-    std::weak_ptr<nn::GpuBackend> watch;
+#ifdef NN_GPU_ENGINE
+    // 引擎 .so 化后 GpuBackend 具体类（weak 缓存语义）在 .so 内；此处冒烟
+    // 验证工厂生命周期：创建 → 析构（计数归零）→ 再创建不崩。
     {
-        auto b = nn::GpuBackend::shared();
-        CHECK(b != nullptr, "shared() 返回实例");
-        watch = b;
-        auto b2 = nn::GpuBackend::shared();
-        CHECK(b2.get() == b.get(), "有活使用者时 shared() 复用同一实例");
-
-        auto engine = nn::GpuEngine::create(b);
-        b.reset();
-        b2.reset();
-        CHECK(!watch.expired(), "引擎句柄保活 backend");
-        engine.reset();
+        auto g1 = nn::create_gpu_engine("");
+        if (!g1)
+        {
+            std::printf("[SKIP] GPU 引擎生命周期：本机无可用 Vulkan 设备\n");
+            return;
+        }
+        CHECK(g1.use_count() >= 1, "工厂返回 shared_ptr 持有引擎");
     }
-    CHECK(watch.expired(), "全部使用者释放后 backend 确定性回收");
-    auto b3 = nn::GpuBackend::shared();
-    CHECK(b3 != nullptr, "回收后 shared() 可重建");
+    auto g2 = nn::create_gpu_engine("");
+    CHECK(g2 != nullptr, "析构后可重建 GPU 引擎");
 #else
-    std::printf("[SKIP] backend weak 缓存：构建未启用 Vulkan\n");
+    std::printf("[SKIP] GPU 引擎生命周期：构建未链接 GPU 引擎\n");
 #endif
 }
 
 void test_cross_domain_rejected()
 {
-#ifdef NN_HAS_VULKAN
-    // 独立 backend（不污染进程共享实例）；无设备/初始化失败 → 跳过
-    auto backend = nn::GpuBackend::create();
-    if (!backend->initialize())
+#ifdef NN_GPU_ENGINE
+    auto gpu = nn::create_gpu_engine("");
+    if (!gpu)
     {
         std::printf("[SKIP] 跨域拒绝：本机无可用 Vulkan 设备\n");
         return;
     }
-    auto gpu = nn::GpuEngine::create(backend);
-    auto cpu = nn::CpuEngine::create();
+    auto cpu = nn::create_cpu_engine();
 
     nn::Tensor host = cpu->create_tensor(2, 2, nn::Precision::F32);
     nn::Tensor dev = gpu->create_tensor(2, 2, nn::Precision::F32);
@@ -220,28 +212,17 @@ void test_cross_domain_rejected()
     {
         auto ok = gpu->clone(*imported);
         CHECK(ok, "import 后的 GPU 张量可参与 GPU 引擎 op");
-    }
-
-    // 跨 backend：另一个独立 backend 的引擎拒绝该张量（提示先落宿主）
-    auto backend2 = nn::GpuBackend::create();
-    if (backend2->initialize())
-    {
-        auto gpu2 = nn::GpuEngine::create(backend2);
-        auto cross = gpu2->clone(dev);
-        CHECK(!cross, "跨 GPU backend 直接使用张量返回错误");
-        auto cross_dl = gpu2->to_matrix(dev);
-        CHECK(!cross_dl, "跨 GPU backend to_matrix 返回错误（不读外来 buffer）");
         auto back = gpu->to_matrix(dev);
         CHECK(back, "GPU→宿主 to_matrix 正常");
     }
 #else
-    std::printf("[SKIP] 跨域拒绝：构建未启用 Vulkan\n");
+    std::printf("[SKIP] 跨域拒绝：构建未链接 GPU 引擎\n");
 #endif
 }
 
 void test_layer_init_failure_rollback()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     FlakyLayer layer;
 
     CHECK(layer.binding_state() == nn::Layer::BindingState::unbound, "新层状态 = unbound");

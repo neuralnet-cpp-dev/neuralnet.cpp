@@ -28,7 +28,7 @@ int g_fail = 0;
         }                                                                                 \
     } while (0)
 
-#ifdef NN_HAS_VULKAN
+#ifdef NN_GPU_ENGINE
 namespace
 {
 
@@ -43,13 +43,13 @@ nn::Result<nn::Model> make_conv_model(nn::ComputeEngine& eng)
 }
 
 } // namespace
-#endif // NN_HAS_VULKAN
+#endif // NN_GPU_ENGINE
 
 int main()
 {
     // [1] CPU 透传
     {
-        auto eng = nn::CpuEngine::create();
+        auto eng = nn::create_cpu_engine();
         CHECK(!eng->batch_active(), "CPU batch_active 恒 false");
         nn::InferenceScope scope(*eng);
         CHECK(scope.ok(), "CPU InferenceScope 应 ok");
@@ -57,7 +57,7 @@ int main()
         CHECK(!eng->batch_active(), "CPU batch_active 仍 false");
     }
 
-#ifdef NN_HAS_VULKAN
+#ifdef NN_GPU_ENGINE
     auto engine_r = nn::cli::create_engine(nn::cli::EngineConfig{.use_gpu = true});
     if (!engine_r)
     {

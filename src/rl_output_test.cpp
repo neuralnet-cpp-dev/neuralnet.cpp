@@ -39,7 +39,7 @@ nn::TensorSchema policy_value_schema()
 void set_matrix(nn::ComputeEngine& engine, nn::Tensor& tensor, const nn::Matrix& value)
 { NN_UNWRAP(engine.copy_from(tensor, value)); }
 
-auto make_bundle_model(nn::CpuEngine& engine, const nn::TensorSchema& schema)
+auto make_bundle_model(nn::ComputeEngine& engine, const nn::TensorSchema& schema)
     -> nn::Result<nn::Model>
 {
     nn::Model model(engine);
@@ -77,7 +77,7 @@ auto make_bundle_model(nn::CpuEngine& engine, const nn::TensorSchema& schema)
     return model;
 }
 
-std::vector<nn::Matrix> snapshot(nn::CpuEngine& engine, std::vector<nn::TensorRef> refs)
+std::vector<nn::Matrix> snapshot(nn::ComputeEngine& engine, std::vector<nn::TensorRef> refs)
 {
     std::vector<nn::Matrix> out;
     out.reserve(refs.size());
@@ -132,7 +132,7 @@ protected:
     [[nodiscard]] nn::Result<void> init_impl(nn::ComputeEngine&) override { return {}; }
 };
 
-nn::Result<ObjectiveGrads> make_objective_grads(nn::CpuEngine& engine,
+nn::Result<ObjectiveGrads> make_objective_grads(nn::ComputeEngine& engine,
                                                 const nn::TensorSchema& schema,
                                                 const nn::NamedTensorSet& output)
 {
@@ -165,8 +165,8 @@ nn::Result<ObjectiveGrads> make_objective_grads(nn::CpuEngine& engine,
 
 void test_named_and_packed()
 {
-    auto owner = nn::CpuEngine::create();
-    nn::CpuEngine& engine = *owner;
+    auto owner = nn::create_cpu_engine();
+    nn::ComputeEngine& engine = *owner;
     const nn::TensorSchema schema = policy_value_schema();
 
     auto named_model_r = make_bundle_model(engine, schema);
@@ -228,8 +228,8 @@ void test_named_and_packed()
 
 void test_negative_paths()
 {
-    auto owner = nn::CpuEngine::create();
-    nn::CpuEngine& engine = *owner;
+    auto owner = nn::create_cpu_engine();
+    nn::ComputeEngine& engine = *owner;
     const nn::TensorSchema schema = policy_value_schema();
 
     auto bad_order = nn::RowBandPacking::create(schema, {"policy", "policy"});

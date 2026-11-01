@@ -878,8 +878,8 @@ int main()
 
     // CPU（始终运行；任意 DSL 表达式不受 AOT 闭合世界约束）
     {
-        auto cpu_owner = nn::CpuEngine::create();
-        nn::CpuEngine& cpu = *cpu_owner;
+        auto cpu_owner = nn::create_cpu_engine();
+        nn::ComputeEngine& cpu = *cpu_owner;
         nn::ComputeEngine& adapter = cpu; // P-1：原 PrecisionEngine 已下沉
         run_suite("cpu", cpu, adapter, /*allow_arbitrary_expr=*/true);
         if (env_flag("NN_F16_DEBUG"))
@@ -889,15 +889,13 @@ int main()
         }
     }
 
-#ifdef NN_HAS_VULKAN
+#ifdef NN_GPU_ENGINE
     // GPU（可选；设备不可用则跳过 GPU 部分而不是失败）
     {
-        auto backend_owner = nn::GpuBackend::shared();
-        nn::GpuBackend& backend = *backend_owner;
-        if (backend.initialize())
+        auto gpu_owner = nn::create_gpu_engine("");
+        if (gpu_owner)
         {
-            auto gpu_owner = nn::GpuEngine::create(backend);
-            nn::GpuEngine& gpu = *gpu_owner;
+            nn::ComputeEngine& gpu = *gpu_owner;
             nn::ComputeEngine& adapter = gpu; // P-1：原 PrecisionEngine 已下沉
             run_suite("gpu", gpu, adapter, /*allow_arbitrary_expr=*/false);
         }

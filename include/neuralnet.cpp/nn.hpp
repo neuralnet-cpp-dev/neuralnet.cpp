@@ -24,17 +24,17 @@
 #include "algebra_matrix.hpp"
 
 // L2 计算层 — 引擎化
+// 引擎具体实现（CpuEngine/GpuEngine）自 2026-11 起编进独立 .so（libnn-cpu.so /
+// libnn-gpu.so，LGPL）：本聚合头只含抽象层接口 + 工厂声明
+// （nn::create_cpu_engine / nn::create_gpu_engine / nn::last_error，
+// 见 engine.hpp 头注释与 docs/internal/34 §10）。
 #include "compute_tensor.hpp"
 #include "tensor_schema.hpp"
 #include "named_tensor_set.hpp"
 #include "expr_spec.hpp"
 #include "compute_engine.hpp"
 #include "expr_dsl.hpp"
-#include "compute_cpu_engine.hpp"
-#ifdef NN_HAS_VULKAN
-#include "compute_gpu_engine.hpp"
-#endif
-// 多精度适配层（f16 边界 cast：把 CpuEngine/GpuEngine 包装成支持 f16 存储的引擎）
+// 多精度适配层（f16 边界 cast：把引擎包装成支持 f16 存储的引擎）
 #include "compute_layer.hpp"
 #include "compute_loss.hpp"
 #include "compute_optimizer.hpp"

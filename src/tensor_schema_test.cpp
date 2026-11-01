@@ -124,7 +124,7 @@ void test_decode_bounds()
 
 void test_named_tensor_set()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     const nn::TensorSchema schema = output_schema();
     nn::Tensor policy = make_tensor(*owner, 4, 3, 0.1f, 0.01f);
     nn::Tensor value = make_tensor(*owner, 1, 3, 0.2f, 0.01f);
@@ -171,7 +171,7 @@ void test_named_tensor_set()
 
 void test_optional_and_gradients()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     const nn::TensorSchema schema = output_schema(/*value_optional=*/true);
     nn::Tensor policy = make_tensor(*owner, 5, 2, 0.3f, 0.01f);
 

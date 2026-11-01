@@ -36,7 +36,7 @@ std::vector<nn::Scalar> table_row(nn::ComputeEngine& eng, nn::Layer& emb, std::s
 
 void test_forward_gather()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Embedding emb(10, 4);
     CHECK(emb.init(*engine).has_value(), "init");
     // ids (2,3)：batch>1 覆盖（flat 遍历 = 列主序索引）
@@ -69,7 +69,7 @@ void test_forward_gather()
 
 void test_backward_scatter()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Embedding emb(6, 3);
     CHECK(emb.init(*engine).has_value(), "init");
     // ids 含重复：id 2 出现两次 → 梯度应为两次之和
@@ -126,7 +126,7 @@ void test_backward_scatter()
 
 void test_padding()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Embedding emb(5, 3, /*padding_idx=*/1);
     CHECK(emb.init(*engine).has_value(), "init");
     // [6] padding 行初值恒零
@@ -172,7 +172,7 @@ void test_padding()
 
 void test_forward_ids()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Embedding emb(8, 2);
     CHECK(emb.init(*engine).has_value(), "init");
     const std::size_t ids[3] = {7, 4, 0};
@@ -197,7 +197,7 @@ void test_forward_ids()
 
 void test_param_protocol()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Embedding emb(4, 2);
     CHECK(!emb.grad_buffers_allocated(), "[6] init 前无梯度缓冲（F2）");
     CHECK(emb.init(*engine).has_value(), "[6] init");

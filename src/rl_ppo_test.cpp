@@ -105,7 +105,7 @@ nn::Tensor make_old_logp(nn::ComputeEngine& engine, const nn::Tensor& new_logp,
 
 void test_policy_clip_branches()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto logits = matrix_tensor(*owner, 3, 2, {1, 0, 0, 2, -1, 0});
     auto actions = matrix_tensor(*owner, 1, 2, {0, 1});
     auto mask = matrix_tensor(*owner, 1, 2, {1, 1});
@@ -183,7 +183,7 @@ void test_policy_clip_branches()
 
 void test_negative_off_policy_gradient()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     const std::vector<float> base{1, 0, 0, 2, -1, 0};
     auto logits =
         matrix_tensor(*owner, 3, 2, {base[0], base[1], base[2], base[3], base[4], base[5]});
@@ -248,7 +248,7 @@ void test_negative_off_policy_gradient()
 
 void test_value_clip()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto actions = matrix_tensor(*owner, 1, 2, {0, 0});
     auto mask = matrix_tensor(*owner, 1, 2, {1, 1});
     auto advantage = matrix_tensor(*owner, 1, 2, {0, 0});
@@ -269,7 +269,7 @@ void test_value_clip()
 
 void test_preset_matches_manual()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto logits = matrix_tensor(*owner, 3, 2, {1, 0, 0, 2, -1, 0});
     auto actions = matrix_tensor(*owner, 1, 2, {0, 1});
     auto mask = matrix_tensor(*owner, 1, 2, {1, 1});
@@ -329,7 +329,7 @@ void test_preset_matches_manual()
 
 void test_missing_old_fields()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto actions = matrix_tensor(*owner, 1, 1, {0});
     auto mask = matrix_tensor(*owner, 1, 1, {1});
     auto advantage = matrix_tensor(*owner, 1, 1, {1});

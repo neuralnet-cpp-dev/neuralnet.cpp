@@ -44,8 +44,8 @@ int run_test()
     const std::size_t d_ff = 128;
     const std::size_t num_layers = 6;
 
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
 
     std::cout << "========================================\n";
     std::cout << "  GPT 梯度检查点一致性测试 (L1)\n";

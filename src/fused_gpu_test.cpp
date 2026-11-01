@@ -41,7 +41,7 @@ int main()
 #else
 #include <neuralnet.cpp/backend/compute_vk_backend.hpp>
 
-using nn::CpuEngine;
+using nn::ComputeEngine;
 using nn::GpuBackend;
 using nn::GpuEngine;
 using nn::Matrix;

@@ -24,6 +24,7 @@
 
 #include <neuralnet.cpp/core_config.hpp>
 #include <neuralnet.cpp/core_file.hpp>    // 二进制 POD 读写（cast 边界收敛点）
+#include "ternary_pack.hpp"               // 三值打包编解码（引擎 .so 化后不再传递包含）
 #include <neuralnet.cpp/core_sha256.hpp>  // 整文件校验和（P2-1）
 #include "model_spec.hpp"
 #include <neuralnet.cpp/model_keyvalue_record.hpp>

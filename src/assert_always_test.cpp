@@ -173,8 +173,8 @@ int main(int argc, char* argv[])
             // 未 init(engine) 的层 → engine_ref() → NN_FATAL（Release 下旧行为是
             // NN_ASSERT 为空、随后 `return *engine_` 空解引用）
             nn::Linear lin(3, 2);
-            auto eng_owner = nn::CpuEngine::create();
-            nn::CpuEngine& eng = *eng_owner;
+            auto eng_owner = nn::create_cpu_engine();
+            nn::ComputeEngine& eng = *eng_owner;
             nn::Tensor x = eng.create_tensor(3, 1);
             const auto y = lin.forward(x);   // Result<Tensor>（失败即已终止）
             std::printf("不应到达 %zux%zu\n", y->rows(), y->cols());

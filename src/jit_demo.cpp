@@ -23,24 +23,26 @@
 
 using nn::Scalar;
 
-static double ms(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b)
+[[maybe_unused]] static double ms(std::chrono::steady_clock::time_point a,
+                                  std::chrono::steady_clock::time_point b)
 {
     return std::chrono::duration<double, std::milli>(b - a).count();
 }
 
 int main()
 {
-    auto cpu = nn::CpuEngine::create();
+    auto cpu = nn::create_cpu_engine();
 
-    auto backend = nn::GpuBackend::shared();
-    auto init = backend->initialize("");   // 空 = 自动选卡（NN_VULKAN_DEVICE 可显式）
-    if (!init)
+#ifdef NN_GPU_ENGINE
+    auto gpu = nn::create_gpu_engine("");   // 空 = 自动选卡（NN_VULKAN_DEVICE 可显式）
+    if (!gpu)
     {
-        std::printf("[SKIP] 无可用 GPU 设备：%s\n", init.error().message.c_str());
+        const char* err = nn::last_error();
+        std::printf("[SKIP] 无可用 GPU 设备：%s\n", err ? err : "(无错误信息)");
         return 77;
     }
-    auto gpu = nn::GpuEngine::create(*backend);
-    std::printf("GPU: %s\n\n", backend->device().device_name().c_str());
+    std::printf("GPU: %s\n\n", gpu->describe().device.c_str());
+
 
     // 演示干净起点：清空缓存文件（验证"空缓存 → JIT → 落盘"全过程）
     const std::string cpath = nn::fused::kernel_cache_path();
@@ -118,4 +120,8 @@ int main()
     const bool ok = maxerr1 < 1e-4f && maxerr2 < 1e-4f;
     std::printf("\n%s\n", ok ? "JIT 演示通过：现编成功、缓存命中、结果与 CPU 一致" : "JIT 演示失败");
     return ok ? 0 : 1;
+#else
+    std::printf("[SKIP] 本构建未链接 GPU 引擎（NN_ENABLE_GPU=OFF / 无 Vulkan）\n");
+    return 77;
+#endif
 }

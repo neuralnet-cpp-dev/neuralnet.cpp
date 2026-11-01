@@ -391,8 +391,8 @@ int main(int argc, char* argv[])
     }
     else
     {
-        auto eng_owner = nn::CpuEngine::create();
-        nn::CpuEngine& eng = *eng_owner;
+        auto eng_owner = nn::create_cpu_engine();
+        nn::ComputeEngine& eng = *eng_owner;
         test_write_entries(eng, "CPU");
         test_bitlinear_cache(eng, "CPU");
         test_lazy_grads(eng, "CPU");

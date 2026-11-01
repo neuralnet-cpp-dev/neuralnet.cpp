@@ -7,7 +7,7 @@
 #include <cstdio>
 #include <iostream>
 
-#ifndef NN_HAS_VULKAN
+#ifndef NN_GPU_ENGINE
 int main()
 {
     std::cout << "[SKIP] 此程序需要 Vulkan SDK 支持。\n";
@@ -43,4 +43,4 @@ int main()
     return failures != 0 ? 1 : 0;
 }
 
-#endif // NN_HAS_VULKAN
+#endif // NN_GPU_ENGINE

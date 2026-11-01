@@ -30,7 +30,7 @@ int g_fail = 0;
 
 int main()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
 
     // [1] F32 往返逐位一致
     {

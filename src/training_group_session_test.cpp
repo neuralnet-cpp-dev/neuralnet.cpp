@@ -27,7 +27,7 @@ nn::TensorSchema role_schema(std::string name)
     return std::move(*r);
 }
 
-nn::Result<nn::Model> make_model(nn::CpuEngine& engine, std::string role, std::size_t in = 3,
+nn::Result<nn::Model> make_model(nn::ComputeEngine& engine, std::string role, std::size_t in = 3,
                                  std::size_t out = 2)
 {
     nn::Model model(engine);
@@ -36,7 +36,7 @@ nn::Result<nn::Model> make_model(nn::CpuEngine& engine, std::string role, std::s
     return model;
 }
 
-nn::Result<nn::TrainingSession> make_session(nn::CpuEngine& engine, std::string role)
+nn::Result<nn::TrainingSession> make_session(nn::ComputeEngine& engine, std::string role)
 {
     NN_TRY(model, make_model(engine, std::move(role)));
     nn::TrainingConfig cfg;
@@ -73,7 +73,7 @@ void train_one_microstep(nn::TrainingSession& session)
 
 void test_roles_and_lifecycle()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     auto actor = make_session(*engine, "actor");
     auto critic = make_session(*engine, "critic");
     auto reference = make_model(*engine, "reference");
@@ -117,7 +117,7 @@ void test_roles_and_lifecycle()
 
 void test_rejections()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     auto actor = make_session(*engine, "actor");
     CHECK(actor.has_value(), "rejection actor");
     if (!actor) return;
@@ -132,7 +132,7 @@ void test_rejections()
     CHECK(blank.has_value(), "blank source session");
     if (blank) CHECK(!group.add_training_role("", std::move(*blank)), "empty role rejected");
 
-    auto other_engine = nn::CpuEngine::create();
+    auto other_engine = nn::create_cpu_engine();
     auto other = make_session(*other_engine, "other");
     CHECK(other.has_value(), "other-engine session");
     if (other)

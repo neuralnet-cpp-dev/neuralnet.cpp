@@ -46,7 +46,7 @@ template <typename R> nn::Tensor must(R&& r, const char* what)
 }
 
 // 推导路径 (2/3 参) 与显式路径 (4/5 参) 的形状必须一致
-void check_same_shape(nn::CpuEngine&, const nn::Tensor& a, const nn::Tensor& b, const char* what)
+void check_same_shape(nn::ComputeEngine&, const nn::Tensor& a, const nn::Tensor& b, const char* what)
 {
     const bool ok = (a.rows() == b.rows() && a.cols() == b.cols());
     std::printf("[%s] %s: inferred %zux%zu vs explicit %zux%zu\n", ok ? " OK " : "FAIL", what,
@@ -55,7 +55,7 @@ void check_same_shape(nn::CpuEngine&, const nn::Tensor& a, const nn::Tensor& b, 
 }
 
 // 两条路径的数值必须**逐位**一致（同一表达式、同一形状来源不同）
-void check_same_values(nn::CpuEngine& eng, const nn::Tensor& a, const nn::Tensor& b,
+void check_same_values(nn::ComputeEngine& eng, const nn::Tensor& a, const nn::Tensor& b,
                        const char* what)
 {
     if (a.rows() != b.rows() || a.cols() != b.cols())
@@ -93,8 +93,8 @@ template <typename R> void check_infer_error(R&& r, const char* what)
 // ── [1][2] 表达式族：推导 == 显式（形状 + 逐位值）─────────────────────────
 void test_infer_matches_explicit()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
 
     auto t = [&](std::size_t r, std::size_t c, float base)
     { return make_tensor(eng, r, c, base, 0.01f); };
@@ -219,8 +219,8 @@ void test_infer_matches_explicit()
 // ── [3] 显式 P 的 3 参重载 ────────────────────────────────────────────────
 void test_explicit_precision()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     nn::Tensor a = make_tensor(eng, 4, 3, 0.25f, 0.01f);
     nn::Tensor b = make_tensor(eng, 4, 3, 0.5f, 0.02f);
     auto e = nn::dsl::leaf(a) + nn::dsl::leaf(b);
@@ -239,8 +239,8 @@ void test_explicit_precision()
 // ── [4] compute_reduce 的无形状重载 ───────────────────────────────────────
 void test_compute_reduce_infer()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     nn::Tensor x = make_tensor(eng, 4, 3, 0.2f, 0.01f);
     auto e = nn::dsl::row_reduce_sum(x);            // 归约视图根
     nn::Tensor inf = must(nn::dsl::compute_reduce(eng, e), "reduce inferred");
@@ -255,8 +255,8 @@ void test_compute_reduce_infer()
 // ── [5] 负例：不猜形状 ────────────────────────────────────────────────────
 void test_negative_cases()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     // 形状冲突（4x3 与 2x3：行维既不等、又都不为 1）
     {
         nn::Tensor a = make_tensor(eng, 4, 3, 0.1f, 0.01f);

@@ -31,7 +31,7 @@
 #include <vector>
 
 #include <neuralnet.cpp/compute_tensor.hpp>
-#include <neuralnet.cpp/compute_cpu_engine.hpp>
+#include <neuralnet.cpp/engine.hpp>
 #include <neuralnet.cpp/expr_fold.hpp>
 #include <neuralnet.cpp/compute_layer_attention.hpp> // 注意力 fold 构造（定义于 Layer：表达式文本只写在 Layer）
 #include "test_common.hpp" // M1：upload/download（库外经引擎进出张量）
@@ -54,8 +54,8 @@ int test_expr_fold()
         return std::isfinite(diff) ? std::fmax(err, diff) : std::numeric_limits<Scalar>::infinity();
     };
 
-    auto engine_owner = nn::CpuEngine::create();
-    nn::CpuEngine& engine = *engine_owner;
+    auto engine_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& engine = *engine_owner;
     std::mt19937 rng(20260923);
     std::uniform_real_distribution<Scalar> dist(-2.0f, 2.0f);
     constexpr Scalar kTol = Scalar{1e-4};

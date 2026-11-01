@@ -22,7 +22,7 @@
 #include <neuralnet.cpp/compute_tensor.hpp>
 #include <neuralnet.cpp/expr_dsl.hpp>
 #include <neuralnet.cpp/expr_spec.hpp>
-#include <neuralnet.cpp/compute_cpu_engine.hpp>
+#include <neuralnet.cpp/engine.hpp>
 #include "test_common.hpp"
 
 // 测试写在全局作用域（非 namespace nn），避免 ADL 把匹配拉进 nn 命名空间。
@@ -39,8 +39,8 @@ int g_fail = 0;
 // ── 测试 1：归约视图——按行求和广播 x / row_sum ─────────────────────────
 void test_row_sum_broadcast()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     const std::size_t R = 4, C = 5;
     nn::Tensor x = make_tensor(eng, R, C, 0.5f, 0.03f);
 
@@ -66,8 +66,8 @@ void test_row_sum_broadcast()
 // ── 测试 2：归约视图——按行 max 平移 x - row_max ────────────────────────
 void test_row_max_shift()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     const std::size_t R = 4, C = 6;
     nn::Tensor x = make_tensor(eng, R, C, -1.0f, 0.07f);
 
@@ -94,8 +94,8 @@ void test_row_max_shift()
 //   row_max 用归约视图（输入直接归约）；分母 row_sum 用归约指令（对 exp 结果归约）
 void test_softmax_mixed()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     const std::size_t R = 3, C = 7;
     nn::Tensor x = make_tensor(eng, R, C, -0.8f, 0.11f);
 
@@ -125,8 +125,8 @@ void test_softmax_mixed()
 // ── 测试 4：归约指令——输出即归约结果（广播）row_sum(exp(x)) ───────────
 void test_reduce_instr_output()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     const std::size_t R = 4, C = 4;
     nn::Tensor x = make_tensor(eng, R, C, 0.1f, 0.05f);
 
@@ -152,8 +152,8 @@ void test_reduce_instr_output()
 // ── 测试 5：列归约 max 广播 x * col_max ─────────────────────────────────
 void test_col_max_broadcast()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     const std::size_t R = 5, C = 3;
     nn::Tensor x = make_tensor(eng, R, C, 0.2f, 0.09f);
 
@@ -178,8 +178,8 @@ void test_col_max_broadcast()
 // ── 测试 6：归约指令叠加归约视图——row_sum(col_sum(x)) = 全局和 ─────────
 void test_reduce_of_reduce_view()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     const std::size_t R = 3, C = 4;
     nn::Tensor x = make_tensor(eng, R, C, 1.0f, 0.02f);
 
@@ -202,8 +202,8 @@ void test_reduce_of_reduce_view()
 // ── 测试 7：归约与标量混合（均值平移）x - row_mean ─────────────────────
 void test_reduce_with_scalar()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     const std::size_t R = 4, C = 5;
     nn::Tensor x = make_tensor(eng, R, C, -2.0f, 0.13f);
     const float inv = 1.0f / static_cast<float>(C);
@@ -232,8 +232,8 @@ void test_reduce_with_scalar()
 // ── 测试 8：to_expr_spec 折叠结构正确性 ─────────────────────────────────
 void test_fold_structure()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     nn::Tensor x = eng.create_tensor(4, 5);
 
     // x / row_reduce_sum(x)：2 输入（Linear + RowReduceSum 视图），1 条 Div 指令
@@ -332,8 +332,8 @@ void test_validation()
 // ── 测试 10：规范 key 确定性 ────────────────────────────────────────────
 void test_key_determinism()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     nn::Tensor x = eng.create_tensor(4, 5);
 
     auto key_row = nn::expr_spec_key(to_expr_spec(dsl::leaf(x) / dsl::row_reduce_sum(x)).first);

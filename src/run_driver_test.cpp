@@ -43,13 +43,13 @@ namespace
 // ── 最小域：一个 4→3→2 的 MLP Session ──────────────────────────────────
 struct Fixture
 {
-    std::shared_ptr<nn::CpuEngine> engine;   // CpuEngine::create() 返回 shared_ptr
+    std::shared_ptr<nn::ComputeEngine> engine;   // CpuEngine::create() 返回 shared_ptr
     std::unique_ptr<nn::TrainingSession> session;
 
     static Fixture make()
     {
         Fixture f;
-        f.engine = nn::CpuEngine::create();
+        f.engine = nn::create_cpu_engine();
         nn::Model model(*f.engine);
         (void)model.add<nn::Linear>(4, 3);
         (void)model.add<nn::ReLU>();

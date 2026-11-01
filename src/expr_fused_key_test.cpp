@@ -15,7 +15,7 @@
 #include <string>
 #include <type_traits>
 
-#include <neuralnet.cpp/compute_cpu_engine.hpp>
+#include <neuralnet.cpp/engine.hpp>
 #include <neuralnet.cpp/compute_tensor.hpp>
 #include <neuralnet.cpp/expr_dsl.hpp>
 #include <neuralnet.cpp/expr_opt.hpp>
@@ -44,8 +44,8 @@ void fk_eq(const char* name, const std::string& a, const std::string& b, const c
 
 int main()
 {
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     // 真实实例的操作数（形状/精度都真实）
     const nn::Tensor x = eng.create_tensor(8, 4, nn::Precision::F32);
     const nn::Tensor w = eng.create_tensor(5, 8, nn::Precision::F32);

@@ -136,14 +136,13 @@ bool finite(nn::ComputeEngine& engine, const nn::Tensor& tensor)
 int main()
 {
     std::puts("=== RL Vulkan smoke ===");
-#ifdef NN_HAS_VULKAN
-    auto backend = nn::GpuBackend::create();
-    if (!backend || !backend->initialize())
+#ifdef NN_GPU_ENGINE
+    auto engine = nn::create_gpu_engine("");
+    if (!engine)
     {
         std::puts("[SKIP] 无可用 Vulkan 设备");
         return 77;
     }
-    auto engine = nn::GpuEngine::create(backend);
     run_smoke(*engine);
     if (g_fail == 0) std::puts("All RL GPU smoke checks passed.");
     else std::printf("%d RL GPU smoke check(s) failed.\n", g_fail);

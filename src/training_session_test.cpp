@@ -24,7 +24,7 @@ int g_fail = 0;
 namespace
 {
 
-std::vector<nn::Scalar> snapshot_params(nn::CpuEngine& eng, nn::Model& model)
+std::vector<nn::Scalar> snapshot_params(nn::ComputeEngine& eng, nn::Model& model)
 {
     std::vector<nn::Scalar> out;
     for (auto& t : model.parameters())
@@ -48,7 +48,7 @@ double l1_move(const std::vector<nn::Scalar>& a, const std::vector<nn::Scalar>& 
 
 void test_create_and_train()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Model model(*engine);
     CHECK(model.add<nn::Linear>(4, 3), "add Linear(4,3)");
     CHECK(model.add<nn::ReLU>(), "add ReLU");
@@ -131,7 +131,7 @@ void test_create_and_train()
 void test_accumulation_and_session_state()
 {
     // docs/internal/30：Session 内部累积；未到边界不更新，移动后状态仍有效。
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Model model(*engine);
     CHECK(model.add<nn::Linear>(4, 3), "state: add");
     nn::TrainingConfig cfg;
@@ -159,7 +159,7 @@ void test_accumulation_and_session_state()
 
 void test_global_batch_normalization()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
 
     auto make_zero_model = [&]()
     {
@@ -203,7 +203,7 @@ void test_global_batch_normalization()
 
 void test_force_update()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Model model(*engine);
     CHECK(model.add<nn::Linear>(4, 3), "force: add");
     nn::TrainingConfig cfg;
@@ -221,7 +221,7 @@ void test_force_update()
 
 void test_before_update_abort()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Model model(*engine);
     CHECK(model.add<nn::Linear>(4, 3), "abort: add");
     nn::TrainingConfig cfg;
@@ -261,7 +261,7 @@ void test_before_update_abort()
 
 void test_move_session_keeps_refs_valid()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Model model(*engine);
     CHECK(model.add<nn::Linear>(4, 3), "add Linear(4,3)");
     CHECK(model.add<nn::Linear>(3, 2), "add Linear(3,2)");
@@ -296,7 +296,7 @@ void test_move_session_keeps_refs_valid()
 
 void test_inference_without_session()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Model model(*engine);
     CHECK(model.add<nn::Linear>(3, 2), "独立 Model::add");
     const auto x = make_tensor(*engine, 3, 2, 0.5f, 0.1f);
@@ -306,7 +306,7 @@ void test_inference_without_session()
 
 void test_precision_passthrough()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Model model(*engine);
     model.set_default_precision_profile(nn::profile_f16());
     CHECK(model.add<nn::Linear>(4, 3), "f16 Linear");
@@ -344,7 +344,7 @@ void test_precision_passthrough()
 
 void test_errors()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Model model(*engine);
     CHECK(model.add<nn::Linear>(3, 2), "add");
 
@@ -370,7 +370,7 @@ void test_destroy_order()
 {
     // ASan 下验证：Session 作用域结束时 optimizer 先于 Model 析构，
     // 不会在析构/最后一步踩已销毁的 Tensor 成员。
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::Model model(*engine);
     CHECK(model.add<nn::Linear>(4, 3), "add");
     {

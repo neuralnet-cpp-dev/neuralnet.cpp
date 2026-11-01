@@ -71,7 +71,7 @@ nn::Result<nn::TensorRecord> grpo_record(nn::Tensor actions, nn::Tensor mask, nn
 
 void test_grpo_multiple_groups()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto logits =
         matrix_tensor(*owner, 3, 6, {1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0});
     auto actions = matrix_tensor(*owner, 1, 6, {0, 1, 2, 0, 1, 2});
@@ -139,7 +139,7 @@ void test_grpo_multiple_groups()
 
 void test_grpo_zero_variance_and_missing_old()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto logits = matrix_tensor(*owner, 2, 3, {0, 0, 0, 0, 0, 0});
     auto actions = matrix_tensor(*owner, 1, 3, {0, 0, 0});
     auto mask = matrix_tensor(*owner, 1, 3, {1, 1, 1});

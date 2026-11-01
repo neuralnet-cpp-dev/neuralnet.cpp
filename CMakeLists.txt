@@ -334,7 +334,13 @@ endif()
 # ── 公共 INTERFACE 库：所有目标共享 include 目录和链接库 ──────────────
 # 通过 INTERFACE 库消除 7 个目标的重复设置
 add_library(nn_core INTERFACE)
+# 引擎抽象层（submodule engine/abstraction，MIT）排在**主仓库 include 之前**：
+# 主仓库已删除与抽象层重复的接口/值类型头（algebra_* / compute_engine /
+# compute_tensor / core_* / expr_spec 等），同名头一律解析到抽象层 —— 与
+# libnn-cpu.so / libnn-gpu.so（LGPL）按同一份头编译，跨界 ABI 一致。
 target_include_directories(nn_core INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(nn_core INTERFACE Threads::Threads)
 if(NN_STACKTRACE_LIB)
@@ -404,23 +410,6 @@ target_compile_options(neuralnet_cpp INTERFACE
 
 add_library(neuralnet::nn ALIAS neuralnet_cpp)
 
-# ── libnn.so：link 阶段（Phase 3；docs/internal/34）───────────────────────
-# 消费方经 C ABI（nn_api.h）调具体引擎 + 原语；模板面（dsl/Layer）仍 header-only。
-# 链门面 neuralnet_cpp：CPU 构建 = 纯 CPU 引擎（nnn_engine_create_gpu 返回
-# NNN_NO_GPU）；Vulkan 构建 = 自动带上 NN_HAS_VULKAN + generated/ + Vulkan::Vulkan
-# （INTERFACE 属性跨目标解析，GPU 块后续补挂的门面属性在生成期生效）。
-add_library(nn_api SHARED src/nn_api.cpp)
-target_link_libraries(nn_api PRIVATE neuralnet_cpp)
-set_target_properties(nn_api PROPERTIES
-    OUTPUT_NAME nn
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib)
-install(TARGETS nn_api LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(FILES include/neuralnet.cpp/nn_api.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/neuralnet.cpp)
-install(DIRECTORY include/neuralnet.cpp
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-    FILES_MATCHING PATTERN "*.hpp")
-
-
 # ── 预编译头（PCH）：本项目编译时间的最大头 ──────────────────────────────
 # 库是 header-only，每个 TU 都要把 `nn.hpp`（→ 全部 Layer/Loss/Optimizer/
 # Engine + 构建期嵌入的 36 份原语 SPIR-V + AOT 融合注册表，合计 ~7MB 头文本）
@@ -489,15 +478,19 @@ message(STATUS "C++ modules (import nn.<domain>): "
 # ── 各域头文件闭包（nn_add_module 的 DEPENDS；跨域头改动触发对应 BMI 重编）──
 # 闭包 = 模块单元文本包含的全部 nn 头（含传递）。宁多勿少：多列只会偶发
 # 重编，少列会在头改动后**静默用旧 BMI**（比编译慢更糟）。
+# ⚠ 引擎 .so 化后 core_*（除 core_file/core_sha256）与 precision 位于
+#   submodule 抽象层（engine/abstraction/include）——闭包路径须指向实际位置。
+#   nn_add_module 会把 HEADERS 拼到 ${NN_LIB_SOURCE_DIR}/ 前 → 这里用相对路径。
+set(NN_ABST_INC engine/abstraction/include/neuralnet.cpp)
 set(NN_MOD_CORE_HEADERS
-    include/neuralnet.cpp/core_assert.hpp
-    include/neuralnet.cpp/core_config.hpp
-    include/neuralnet.cpp/core_errors.hpp
+    ${NN_ABST_INC}/core_assert.hpp
+    ${NN_ABST_INC}/core_config.hpp
+    ${NN_ABST_INC}/core_errors.hpp
     include/neuralnet.cpp/core_file.hpp
-    include/neuralnet.cpp/core_parallel.hpp
+    ${NN_ABST_INC}/core_parallel.hpp
     include/neuralnet.cpp/core_sha256.hpp
-    include/neuralnet.cpp/core_threadpool.hpp
-    include/neuralnet.cpp/precision.hpp)
+    ${NN_ABST_INC}/core_threadpool.hpp
+    ${NN_ABST_INC}/precision.hpp)
 # kvrecord 闭包 = 自身 + core（model_keyvalue_record → core_errors）
 set(NN_MOD_KVRECORD_HEADERS
     include/neuralnet.cpp/model_keyvalue_record.hpp
@@ -508,7 +501,7 @@ set(NN_MOD_DATASET_HEADERS
     include/neuralnet.cpp/dataset.hpp
     include/neuralnet.cpp/dataset_format.hpp
     include/neuralnet.cpp/model_keyvalue_record.hpp
-    include/neuralnet.cpp/core_errors.hpp
+    ${NN_ABST_INC}/core_errors.hpp
     include/neuralnet.cpp/core_file.hpp
     include/neuralnet.cpp/core_sha256.hpp)
 # tokenizer 闭包 = 4 分词器头 + base 的传递（core_errors/core_parallel/
@@ -519,12 +512,12 @@ set(NN_MOD_TOKENIZER_HEADERS
     include/neuralnet.cpp/domain_tokenizer_base.hpp
     include/neuralnet.cpp/domain_tokenizer_bpe.hpp
     include/neuralnet.cpp/domain_tokenizer_charbpe.hpp
-    include/neuralnet.cpp/core_errors.hpp
-    include/neuralnet.cpp/core_parallel.hpp
-    include/neuralnet.cpp/core_threadpool.hpp
-    include/neuralnet.cpp/core_config.hpp
-    include/neuralnet.cpp/core_assert.hpp
-    include/neuralnet.cpp/precision.hpp
+    ${NN_ABST_INC}/core_errors.hpp
+    ${NN_ABST_INC}/core_parallel.hpp
+    ${NN_ABST_INC}/core_threadpool.hpp
+    ${NN_ABST_INC}/core_config.hpp
+    ${NN_ABST_INC}/core_assert.hpp
+    ${NN_ABST_INC}/precision.hpp
     include/neuralnet.cpp/dataset_format.hpp
     include/neuralnet.cpp/model_keyvalue_record.hpp)
 
@@ -555,7 +548,9 @@ function(nn_add_module modname source)
         -fno-exceptions -Wall -Wextra -Wpedantic -Werror
         -fexperimental-library -Wno-pass-failed
         ${_opt}
-        -I "${NN_LIB_SOURCE_DIR}/include")
+        -I "${NN_LIB_SOURCE_DIR}/include"
+        -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include"
+        -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp")
     if(NN_ENABLE_PROBES)
         list(APPEND _flags -DNN_ENABLE_PROBES=1)
     endif()
@@ -649,20 +644,10 @@ set(NN_TEST_TARGETS "")
 set(NN_EXECUTABLE_TARGETS "")   # 所有经 nn_add_executable 创建的可执行目标
 set(NN_BENCH_TARGETS "")   # 性能基准已移除（bench 工具不注册 ctest 且无法在 -Werror 下编译）
 
-# ── libnn.so 外部消费者验证（Phase 3-A；docs/internal/34）───────────────
-# 链 libnn.so（非 header-only 引擎），本 TU 只 include C ABI + IR 头
-# （kernel_cache.hpp/expr_spec.hpp），**不编译引擎** → 证明"引擎在 .so、
-# 模板/IR 在 header"的拆分可用（LGPL 可替换库二进制前提）。刻意用 plain
-# add_executable（不经 nn_add_executable），不进 NN_EXECUTABLE_TARGETS，
-# 避免被 GPU 块挂上 NN_HAS_VULKAN（本 TU 不需要 GPU 编译面）。
-if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
-    add_executable(nn_consumer_test src/nn_consumer_test.cpp)
-    target_include_directories(nn_consumer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-    target_link_libraries(nn_consumer_test PRIVATE nn_api)
-    set_target_properties(nn_consumer_test PROPERTIES
-        BUILD_RPATH ${CMAKE_CURRENT_BINARY_DIR}/lib)  # 运行期找 libnn.so
-    list(APPEND NN_TEST_TARGETS nn_consumer_test)
-endif()
+# ── libnn.so 外部消费者验证（旧 C ABI 门面）已随引擎 .so 化移除 ─────────
+# 新架构（docs/internal/34 §10）：双引擎 .so（libnn-cpu.so / libnn-gpu.so）
+# C++ 直出（nn::create_cpu_engine / create_gpu_engine），旧 nn_api C ABI 门面
+# 与其验证目标 nn_consumer_test 一并删除（src/nn_api.cpp / src/nn_consumer_test.cpp）。
 
 # ── 应用 / 探针 / 基准目标（NN_BUILD_APPS，默认 = 是否顶层工程）───────────
 # 嵌入消费方（add_subdirectory）默认 OFF：只拿库目标（neuralnet::nn），
@@ -705,8 +690,8 @@ if(NN_BUILD_APPS)
     # 文档里引用它们的复现步骤须先配置 NN_ENABLE_PROBES=ON。
     if(NN_ENABLE_PROBES)
         # 运行时显存分项探针（双池采样 + nvidia-smi + 逻辑分项归因）
-        nn_add_executable(mem_probe src/mem_probe.cpp)
-        list(APPEND NN_APP_TARGETS mem_probe)
+        # ⚠ mem_probe 依赖引擎实现头（已被引擎 .so 化移除），已随迁新仓库
+        # （compute.neuralnet.cpp）——需要时在新仓库构建。
 
         # CPU f16 组件级诊断探针（A-I 阶段定位发散；NN_F16_DEBUG=1 开逐中间量扫描）
         nn_add_executable(f16_cpu_probe src/f16_cpu_probe.cpp)
@@ -750,17 +735,14 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     # ══════════════════════════════════════════════════════════════════════
 
     # ── GPU 集成测试（需要 Vulkan）────────────────────────────────────────
-    nn_add_executable(gpu_test src/gpu_test.cpp)
-    list(APPEND NN_TEST_TARGETS gpu_test)
+    # ⚠ gpu_test 等引擎实现级测试（gpu_test / gpu_f16_test / scan_bitwise_test /
+    #   gpt/rapt_offload_test / expr_graph_test / fused_gpu_test）已随引擎 .so 化
+    #   迁往 compute.neuralnet.cpp（新仓库 tests/）——主仓库不再编引擎实现头。
 
     # ── GPU f16 参数写回回归（issue #13 P0-②：MSVC 下权重冻结）───────────
     # 复用 app 目标 f16_writeback_probe（已在 NN_APP_TARGETS 构建）：
     # 断言 in-place f16 写回值正确 + 8 步 Adam 后参数必须移动（防"静默冻结"）
     list(APPEND NN_TEST_TARGETS f16_writeback_probe)
-
-    # ── GPU f16 能力检查 + cast/matmul 验证 ──────────────────────────────
-    nn_add_executable(gpu_f16_test src/gpu_f16_test.cpp)
-    list(APPEND NN_TEST_TARGETS gpu_f16_test)
 
     # ── 多精度类型系统（f16 转换 / 舍入 / 张量精度 / f16 计算）──────────
     nn_add_executable(precision_test src/precision_test.cpp)
@@ -827,18 +809,6 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     nn_add_executable(sampling_test src/sampling_test.cpp)
     list(APPEND NN_TEST_TARGETS sampling_test)
 
-    # ── RLA 扫描原语的**逐位**回归（CPU 参考 ↔ GPU；P4-2b 改写的前提）──────
-    # 无 GPU 时自身打印 77 = ctest SKIP（与 gpu_test 同约定）。
-    nn_add_executable(scan_bitwise_test src/scan_bitwise_test.cpp)
-    list(APPEND NN_TEST_TARGETS scan_bitwise_test)
-
-    # ── Activation Offload（原语往返 + GPT/RAPT 模型级一致性）──────────
-    # 模型级 offload 一致性（GPU-only：无 Vulkan 构建时自身返回 77 = SKIP）
-    nn_add_executable(gpt_offload_test src/gpt_offload_test.cpp)
-    list(APPEND NN_TEST_TARGETS gpt_offload_test)
-    nn_add_executable(rapt_offload_test src/rapt_offload_test.cpp)
-    list(APPEND NN_TEST_TARGETS rapt_offload_test)
-
     # ── 文档感知注意力（端到端不变性 + 灵敏度/跨样本隔离对照；掩码构建
     #    单测已随 build_attention_mask 删除）────────────────────────────────
     nn_add_executable(doc_attn_test src/doc_attn_test.cpp)
@@ -855,11 +825,6 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     nn_add_executable(expr_cpu_test src/expr_cpu_test.cpp)
     list(APPEND NN_TEST_TARGETS expr_cpu_test)
 
-    # ── 图 IR + 融合分析（IR-C，纯 CPU：链融合/边界/确定性/matmul 参与）──
-    # 历史归档见 docs/history/history.md「IR-C 定位修正与恢复立项」
-    nn_add_executable(expr_graph_test src/expr_graph_test.cpp)
-    list(APPEND NN_TEST_TARGETS expr_graph_test)
-
     # ── 表达式/IR GPU（图融合端到端 + AOT shader 验证 + 表达式求值）────
     nn_add_executable(expr_gpu_test src/expr_gpu_test.cpp)
     list(APPEND NN_TEST_TARGETS expr_gpu_test)
@@ -869,16 +834,6 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     # 显式 P 透传、负例（冲突 / 无网格贡献者 → 明确报错、不猜形状）
     nn_add_executable(dsl_shape_infer_test src/dsl_shape_infer_test.cpp)
     list(APPEND NN_TEST_TARGETS dsl_shape_infer_test)
-
-    # ── 融合 shader **逐形态** GPU 对拍（rope/swiglu/gelu/softmax/matmul/
-    #    matmul+reduce/norm/reduce_consts/fold v1/fold attn/回退）──────────
-    # ⚠ 此前该文件**未被任何 CMake 目标引用**（未编译、未注册）——它是融合
-    #    shader 逐形态的回归面，重新接入。
-    # 覆盖口径：**V0（全 f32）**逐形态对拍（该文件无 f16/精度引用）。
-    # V1（`key#x` 运行期精度分派）的覆盖在 `f16_precision_test`（NN_PREC_TRACE
-    # 实测 20 条 #x / 4 条 #a）；本测试不覆盖 V1。
-    nn_add_executable(fused_gpu_test src/fused_gpu_test.cpp)
-    list(APPEND NN_TEST_TARGETS fused_gpu_test)
 
     # ── ModelSpec 架构校验（load_model 文件头 vs 模型规格比对）──────────
     nn_add_executable(model_spec_validation_test src/model_spec_validation_test.cpp)
@@ -1175,473 +1130,51 @@ if(NN_ENABLE_TESTS)
     endforeach()
 endif()
 
-# ── Vulkan GPU 加速（NN_ENABLE_GPU = AUTO/ON/OFF，见文件头） ───────────────
-if(NN_ENABLE_GPU STREQUAL "OFF")
-    message(STATUS "Vulkan: disabled (NN_ENABLE_GPU=OFF); pure CPU build")
-    set(Vulkan_FOUND OFF)
-elseif(NN_ENABLE_GPU STREQUAL "ON")
-    # 强制模式：缺 Vulkan 直接配置失败（fail-fast，不静默降级 CPU）
-    find_package(Vulkan REQUIRED)
-else()
-    find_package(Vulkan QUIET)
-endif()
-if(Vulkan_FOUND)
-    message(STATUS "Vulkan found: ${Vulkan_LIBRARY}")
+# ══════════════════════════════════════════════════════════════════════════
+#  引擎 .so（submodule engine/，LGPL）：libnn-cpu.so / libnn-gpu.so
+# ══════════════════════════════════════════════════════════════════════════
+# 引擎实现（CpuEngine/GpuEngine + 原语 + Vulkan backend + shader + AOT 融合 +
+# kernelgen JIT）全部编进 compute.neuralnet.cpp（submodule）的两个 .so，经 MIT
+# 抽象层接口（abstraction/include/neuralnet.cpp/compute_engine.hpp）C++ 直出
+# （nn::create_cpu_engine / nn::create_gpu_engine / nn::last_error）。
+# 本仓（MIT）只保留模板面（Layer/DSL/训练/数据集/分词器 + cli 业务），所有
+# 可执行目标链接 .so；不再自编引擎、不再生成 shader / fused_registry、不再
+# 需要 Vulkan SDK（GPU 能力全部经 libnn-gpu.so）。
+#
+# NN_ENABLE_GPU 语义（与旧版一致，直接透传给 submodule）：
+#   OFF  = 纯 CPU：不编 libnn-gpu.so（cli --gpu 链接不到 → 明确报错）
+#   AUTO / ON = 编 libnn-gpu.so（submodule 内部 find Vulkan，缺则跳过并提示；
+#               ON 的"强制要求"语义由 submodule 自行处理）
+# submodule 自带测试（consumer_test / gpu_consumer_test / kernelgen_smoke）
+# 不并入本仓 ctest（NN_BUILD_TESTS=OFF）；需要时在新仓库单独构建。
+set(NN_BUILD_TESTS OFF CACHE BOOL "Build compute.neuralnet.cpp self-tests" FORCE)
+add_subdirectory(engine)
 
-    # 查找 SPIR-V 编译器（Vulkan SDK 自带）
-    find_program(GLSLC glslc HINTS ${Vulkan_GLSLC_EXECUTABLE})
-    if(NOT GLSLC AND NN_ENABLE_GPU STREQUAL "ON")
-        # ON = 强制模式：缺 glslc 同样 fail-fast（否则 GPU 静默降级 CPU）
-        message(FATAL_ERROR "NN_ENABLE_GPU=ON but glslc not found. Install the Vulkan SDK "
-                            "or use NN_ENABLE_GPU=AUTO/OFF.")
+# 所有可执行目标（应用 + 测试）统一链接引擎 .so：
+#   nn_cpu 恒有；nn_gpu 仅 Vulkan 可用时存在（if(TARGET) 守卫）。
+# 模板面（Layer/DSL）在本仓 TU 展开，原语执行落在 .so 虚方法分派。
+# NN_GPU_ENGINE 宏 = 本构建链接了 GPU 引擎（cli_engine_factory 据此决定
+# 是否引用 create_gpu_engine 符号；GPU OFF 时引用会链接失败）。
+foreach(TARGET ${NN_EXECUTABLE_TARGETS})
+    target_link_libraries(${TARGET} PRIVATE nn_cpu)
+    if(TARGET nn_gpu)
+        target_link_libraries(${TARGET} PRIVATE nn_gpu)
     endif()
-
-    # ── libnn-kernelgen.so：运行期 JIT 算子生成器（内嵌 GlslEmitter + shaderc）──
-    # 引擎在 .nnk 缓存 miss 时调用它现编 SPIR-V。shaderc（内嵌 glslang）来自
-    # Vulkan SDK；链接为单一版本化 .so（单份共享、懒加载），避免链进每个可执行
-    # 文件（体积爆炸）或依赖系统 glslc（版本漂移/缺失）。见 docs/internal/33 §4。
-    find_path(SHADERC_INCLUDE_DIR shaderc/shaderc.h HINTS ${Vulkan_INCLUDE_DIRS})
-    # Vulkan_LIBRARY_DIR（FindVulkan）只指向 Vulkan loader 所在目录（SDK 的
-    # VulkanLoader/lib），shaderc_shared.so 在 SDK 主 lib/（Vulkan_INCLUDE_DIR 的
-    # ../lib）——只 HINTS 前者会漏找 → kernelgen.so 未构建 → JIT 不可用。
-    set(_NNK_SHADERC_HINTS ${Vulkan_LIBRARY_DIR})
-    if(Vulkan_INCLUDE_DIR)
-        list(APPEND _NNK_SHADERC_HINTS "${Vulkan_INCLUDE_DIR}/../lib")
-    endif()
-    find_library(SHADERC_LIBRARY NAMES shaderc_shared HINTS ${_NNK_SHADERC_HINTS})
-    if(SHADERC_INCLUDE_DIR AND SHADERC_LIBRARY)
-        add_library(nn_kernelgen SHARED src/kernelgen/kernelgen.cpp)
-        target_include_directories(nn_kernelgen PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/include ${SHADERC_INCLUDE_DIR})
-        target_link_libraries(nn_kernelgen PRIVATE nn_core ${SHADERC_LIBRARY})
-        target_compile_features(nn_kernelgen PRIVATE cxx_std_26)
-        set_target_properties(nn_kernelgen PROPERTIES
-            OUTPUT_NAME nn_kernelgen
-            LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib)
-        # 安装到 ${prefix}/lib（bin/ 的 cli 后续 Phase 3 install 规则统一；见 docs/internal/33 §4.3）
-        install(TARGETS nn_kernelgen LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
-        message(STATUS "nn_kernelgen: libnn-kernelgen.so（JIT 算子生成器）已启用")
-    else()
-        message(STATUS "nn_kernelgen: shaderc 未找到（运行期 JIT 算子生成器禁用）")
-    endif()
-
-    # ── 铁律：原语 shader 永不含任何算法 ──────────────────────────────
-    # 原语 shader 只做 op-level 计算（矩阵乘、逐元素、归约、广播、搬移）。
-    # ReLU/GeLU/Softmax/LayerNorm/Attention/RoPE/SwiGLU 等算法一律来自
-    # Layer（组合原语）或 DSL（nn::dsl，见下），绝不写进原语 shader。
-    set(GPU_SHADERS
-        matmul
-        matmul_tiled
-        batched_matmul
-        rearrange_3d
-        elementwise_v2
-        transpose
-        gather
-        scatter_add
-        im2col
-        col2im
-        group_reduce
-        scan_prefix_outer
-        scan_suffix_outer
-        scan_prefix_outer_gen
-        scan_suffix_outer_gen
-        outer_col
-        trit_pack
-        matmul_q
-        cast)
-    # 融合 shader：构建期从 Layer 内联表达式自动合成（**单步**）──────────
-    # 表达式**文本只出现在 Layer**（compute / compute_reduce / compute_into）。
-    # scan_exprs 同进程内完成：收集折叠出的 ExprSpec 结构（锚点自登记 + dry-run
-    # + 模型 pass + 显式登记，按 key 去重）→ glsl_gen → glslc → 内联 SPIR-V
-    # → fused_registry.hpp（key=expr_spec_key[#x|#a] → 融合 shader）。
-    # 不经 .bin 中间序列化（原独立工具 gen_fused 已并入 tools/fused_generate.hpp）。
-    # 运行时按 key 精确匹配 dispatch；未命中硬报错（闭合世界）。
-    set(GPU_SHADER_HPPS "")
-
-    # 便捷函数：glslc → .spv → embed_spirv.cmake → C++ 头文件
-    # 可选附加 glslc 参数走 ARGN（如 --target-env=...；不传则保持默认，
-    # 现有 shader 的编译参数完全不变）
-    # ⚠ 函数体内用 CMAKE_CURRENT_SOURCE_DIR/CMAKE_CURRENT_BINARY_DIR（= 本仓
-    #   源/构建根，add_subdirectory 嵌入时自动指向 3rd_party 子树），不能用
-    #   CMAKE_SOURCE_DIR/CMAKE_BINARY_DIR（嵌入时会指到消费方工程的根）。
-    #   本函数只在本文件作用域内被调用，故两变量在定义/调用期同值。
-    function(nn_embed_shader SHADER_NAME SRC_FILE)
-        set(SPV ${CMAKE_CURRENT_BINARY_DIR}/${SHADER_NAME}.spv)
-        set(HPP ${CMAKE_CURRENT_BINARY_DIR}/generated/${SHADER_NAME}_spv.hpp)
-        set(FUNC "nn_${SHADER_NAME}_spirv_bytecode")
-        set(GPU_SHADER_SPVS ${GPU_SHADER_SPVS} ${SPV} PARENT_SCOPE)
-        set(GPU_SHADER_HPPS ${GPU_SHADER_HPPS} ${HPP} PARENT_SCOPE)
-
-        # 编译 GLSL → SPIR-V
-        #   -I shaders：手写 shader 的 #include "nn_f16_rne.glsl"（f16 写出的
-        #   RNE 预舍入，见该文件头注释）；所有 shader 都依赖它 → 改动时全量重编。
-        add_custom_command(
-            OUTPUT ${SPV}
-            COMMAND ${GLSLC} -I ${CMAKE_CURRENT_SOURCE_DIR}/shaders ${ARGN} -o ${SPV} ${SRC_FILE}
-            DEPENDS ${SRC_FILE} ${CMAKE_CURRENT_SOURCE_DIR}/shaders/nn_f16_rne.glsl
-            COMMENT "[GPU] Compiling ${SHADER_NAME}.comp → ${SHADER_NAME}.spv"
-        )
-
-        # 嵌入 SPIR-V → C++ 头文件
-        add_custom_command(
-            OUTPUT ${HPP}
-            COMMAND ${CMAKE_COMMAND}
-                -DSPV_INPUT=${SPV}
-                -DHPP_OUTPUT=${HPP}
-                -DFUNC_NAME=${FUNC}
-                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_spirv.cmake
-            DEPENDS ${SPV} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_spirv.cmake
-            COMMENT "[GPU] Embedding ${SHADER_NAME} SPIR-V into C++ header"
-        )
-    endfunction()
-
-    # 1. 普通（手写）纯原语 shader
-    foreach(SHADER_NAME ${GPU_SHADERS})
-        nn_embed_shader(${SHADER_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/shaders/${SHADER_NAME}.comp)
-    endforeach()
-
-    # 1b. 小 N GEMV（matmul_gemv）：用 subgroup 归约（GL_KHR_shader_subgroup_*）
-    #     需 SPIR-V ≥1.3 → 显式 --target-env=vulkan1.2（与 gen_fused 一致）；
-    #     其余 shader 编译参数不变。
-    nn_embed_shader(matmul_gemv ${CMAKE_CURRENT_SOURCE_DIR}/shaders/matmul_gemv.comp --target-env=vulkan1.2)
-
-    # 1b'. 三值打包权重的窄 N GEMV（P2/F3）：与 matmul_gemv 同骨（subgroup
-    #      归约）→ 同样需 SPIR-V ≥1.3 的 --target-env=vulkan1.2。
-    nn_embed_shader(matmul_q_gemv ${CMAKE_CURRENT_SOURCE_DIR}/shaders/matmul_q_gemv.comp --target-env=vulkan1.2)
-
-    # 1c. reduce：行列归约用 subgroup 蝶式（GL_KHR_shader_subgroup_*，与
-    #     DSL 融合归约同配方）→ 同样需 SPIR-V ≥1.3 → --target-env=vulkan1.2
-    nn_embed_shader(reduce ${CMAKE_CURRENT_SOURCE_DIR}/shaders/reduce.comp --target-env=vulkan1.2)
-
-    # 1d. 精度变体（Phase 2 in-kernel f16）：**同一份原语 shader** 用
-    #     -DNN_SHADER_F16=1 编出第二份 SPIR-V（缓冲声明 float16_t + 别名槽
-    #     uvec2/unpackHalf2x16，f32 累加，f16 写出）。后端按操作数精度选
-    #     pipeline；设备无 storageBuffer16BitAccess 时不创建（回退 f32 边界
-    #     cast，正确性不变）。f32 分支文本逐字未改 → 零回归。
-    nn_embed_shader(batched_matmul_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/batched_matmul.comp -DNN_SHADER_F16=1)
-    nn_embed_shader(matmul_tiled_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/matmul_tiled.comp -DNN_SHADER_F16=1)
-    # P0 wgrad 网格饥饿：同一份 matmul_tiled 用 -DNN_MM_FINE=1 编 16×16
-    # 输出块变体（4×4 线程）。后端在 64-tile 网格工作组数低于
-    # EXPR_MATMUL_FINE_MIN_WGS 时选它（逐输出元素 K 累加序不变 → 逐位一致）。
-    nn_embed_shader(matmul_tiled_fine ${CMAKE_CURRENT_SOURCE_DIR}/shaders/matmul_tiled.comp -DNN_MM_FINE=1)
-    # C2e：小 N GEMV 的 f16 变体（n_out≤8 推理热路径；subgroup → vulkan1.2）
-    nn_embed_shader(matmul_gemv_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/matmul_gemv.comp --target-env=vulkan1.2 -DNN_SHADER_F16=1)
-    # C2f：RLA 扫描原语的 f16 存储变体（输入输出均 half；输出 (·,seq) 全
-    # 尺寸——消灭适配层 scan 的全尺寸 f32 副本；scratch St 仍 f32）。
-    nn_embed_shader(scan_prefix_outer_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scan_prefix_outer.comp -DNN_SHADER_F16=1)
-    nn_embed_shader(scan_suffix_outer_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scan_suffix_outer.comp -DNN_SHADER_F16=1)
-    # P4-2b：前缀扫描的"窄共享"变体（dk ≤ 32）——同一份源码，只是把共享足迹宏
-    # 压到 32：A/B 从 33.3KB 降到 8.5KB ⇒ Maxwell 每 SM 驻留的 workgroup 从 1 个
-    # 提到 6 个。C++ 侧按 dk ≤ 32 选它，缺它时自动回落宽变体（同数值、只是慢）。
-    nn_embed_shader(scan_prefix_outer_d32 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scan_prefix_outer.comp -DNN_SCAN_DK_MAX=32)
-    nn_embed_shader(scan_prefix_outer_d32_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scan_prefix_outer.comp -DNN_SCAN_DK_MAX=32 -DNN_SHADER_F16=1)
-    nn_embed_shader(scan_prefix_outer_gen_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scan_prefix_outer_gen.comp -DNN_SHADER_F16=1)
-    nn_embed_shader(scan_suffix_outer_gen_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scan_suffix_outer_gen.comp -DNN_SHADER_F16=1)
-    nn_embed_shader(outer_col_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/outer_col.comp -DNN_SHADER_F16=1)
-
-    # 1e. Phase C1 op-level f16 变体（消灭边界 cast 的搬运大头）：
-    #     transpose / rearrange_3d / gather 的 f16 存储版（纯位拷贝零算术）。
-    #     - gather：indices 保持 float（行号整数值 > f16 精度，禁转）；
-    #     - transpose：shared float16_t → SPIR-V Float16 capability →
-    #       运行时要求 shaderFloat16（否则后端跳过该 pipeline，回退边界 cast）；
-    #     - rearrange_3d：仅 StorageBuffer16BitAccess。
-    #     与 matmul 同款：f32 分支逐字未改 → 零回归。
-    nn_embed_shader(transpose_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/transpose.comp -DNN_SHADER_F16=1)
-    nn_embed_shader(rearrange_3d_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/rearrange_3d.comp -DNN_SHADER_F16=1)
-    nn_embed_shader(gather_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gather.comp -DNN_SHADER_F16=1)
-    # C1b：add_inplace/scale_inplace/accumulate 的 f16 存储变体
-    # （归因表 (256,8192)/(64,8192)/(2048,256) inplace 大头；仅需16位存储）
-    nn_embed_shader(elementwise_v2_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/elementwise_v2.comp -DNN_SHADER_F16=1)
-    # C2：行列归约的 f16 存储变体（归因 L756 大头：Linear::backward grad_bias
-    # 直调 row_reduce_sum 的 (64,8192)×38 + (256,8192)×8 = 140MB；输入直读
-    # f16、输出归约向量保持 float）。subgroup → 同 reduce 需 vulkan1.2。
-    nn_embed_shader(reduce_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/reduce.comp --target-env=vulkan1.2 -DNN_SHADER_F16=1)
-    # C2b：embedding 梯度原子累加的 f16 存储变体（dst 打包 half CAS、
-    # grad half 直读、indices 保持 float）——归因 L518/521 (8208,64)×2 +
-    # (8192,64)×4；仅需 16bit 存储（CAS 对 uint word，无 f16 原子）。
-    nn_embed_shader(scatter_add_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scatter_add.comp -DNN_SHADER_F16=1)
-    # C2c：分组归约的 f16 存储变体（CNN 池化路径：输入 half 直读、输出
-    # float——调用方 P=F32；仅需 16bit 存储）
-    nn_embed_shader(group_reduce_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/group_reduce.comp -DNN_SHADER_F16=1)
-    # C2d：卷积窗口展开/伴随散射的 f16 存储变体（数据搬运，in/out 均 half）
-    nn_embed_shader(im2col_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/im2col.comp -DNN_SHADER_F16=1)
-    nn_embed_shader(col2im_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/col2im.comp -DNN_SHADER_F16=1)
-    # P2/F3：三值打包 GEMM 的 f16 存储变体（B/C 为 half；打包字恒 uint）。
-    # 训练时激活是 f16 → 不带类型的边界 cast 会为每个 BitLinear 层物化
-    # (K,batch)+(M,batch) 两份 f32 临时量（比权重带宽还大），故必须有此变体。
-    nn_embed_shader(matmul_q_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/matmul_q.comp -DNN_SHADER_F16=1)
-    # 同上：窄 N 打包 GEMV 的 f16 存储变体（解码路的主路径：激活 f16）
-    nn_embed_shader(matmul_q_gemv_f16 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/matmul_q_gemv.comp --target-env=vulkan1.2 -DNN_SHADER_F16=1)
-
-    # 2. AOT 融合 shader：scan_exprs（**单步** = 收集 + 生成）
-    #    收集：FusedAnchor/FoldAnchor 自登记（按表达式类型 / 由 fold 定义方挂锚）
-    #          + dry-run + 模型 pass（fold 结构全部来自自登记，P4-4 ①）
-    #    生成：expr_emitter（默认 GLSL）→ glslc → 内联 SPIR-V → fused_registry.hpp
-    #    原 gen_fused 已并入 scan_exprs 的生成阶段（tools/fused_generate.hpp），
-    #    不再经 expr_specs.bin 中间文件。
-    set(NN_FUSED_REGISTRY_HPP ${CMAKE_CURRENT_BINARY_DIR}/generated/fused_registry.hpp)
-
-    set(SCAN_SRC      ${CMAKE_CURRENT_SOURCE_DIR}/tools/scan_exprs.cpp)
-    set(FUSED_GEN_SRC ${CMAKE_CURRENT_SOURCE_DIR}/tools/fused_generate.hpp)
-    add_executable(scan_exprs ${SCAN_SRC})
-    target_include_directories(scan_exprs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/neuralnet.cpp)
-    target_link_libraries(scan_exprs PRIVATE nn_core Vulkan::Vulkan)
-    add_custom_command(
-        OUTPUT ${NN_FUSED_REGISTRY_HPP}
-        # scan_exprs 是原生可执行文件，直接写文件、不会自建目录。
-        # Ninja 会自动创建自定义命令的输出目录，但 Makefiles 生成器不会，
-        # 全新构建时 generated/ 尚未存在会写入失败（见 08-pitfalls）。
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
-        COMMAND scan_exprs ${CMAKE_CURRENT_BINARY_DIR}/generated ${GLSLC}
-        DEPENDS scan_exprs ${SCAN_SRC} ${FUSED_GEN_SRC}
-        COMMENT "[GPU] Scan + synthesize fused shaders (scan_exprs) → fused_registry.hpp"
-    )
-
-    list(APPEND GPU_SHADER_HPPS ${NN_FUSED_REGISTRY_HPP})
-
-    # ── 库自带的融合能力：为**任意目标**收集 + 生成它自己的 fused_registry.hpp ──
-    # 用法：nn_enable_gpu_fusion(<target> MAIN <含 main 的源文件> [OUT_DIR <目录>])
-    #
-    # 语义（对应"写 dsl::compute 之后只跑构建即可"）：
-    #   收集器 = 库内收集逻辑（`tools/scan_exprs.cpp`：锚点自登记 + dry-run +
-    #   模型 pass + 显式登记）+ **本目标的全部 TU**（用 -DNN_EXPR_SCAN 编，
-    #   让使用者的 `dsl::compute` 调用点在静态初始化期自登记）。
-    #   产物目录只作为该目标的私有 include 目录——"`fused_registry.hpp` 在
-    #   include path 上即生效"这一既有机制不变。
-    #
-    # ⚠ 收集器**必须保留库内收集逻辑**：实测 84 个结构里只有 13 个来自
-    #   编译期锚点，71 个来自 dry-run/模型 pass（见 docs/history/history.md 与
-    #   docs/internal/02）。纯锚点收集器会漏掉库自身的结构。
-    #
-    # ── 树外可用性（CMake 函数作用域）────────────────────────────────────
-    # CMake 函数体在**调用方作用域**求值：消费方在自己的 CMakeLists 里调用
-    # 本函数时，CMAKE_SOURCE_DIR/CMAKE_BINARY_DIR/SCAN_SRC 等都会解析到
-    # **消费方**的目录（实测报错）。因此函数体内一律用：
-    #   NN_LIB_SOURCE_DIR / NN_LIB_BINARY_DIR —— 本仓路径，configure 期
-    #     写入 CACHE（INTERNAL 隐含 FORCE，每次配置刷新；全局可见）。
-    #   GLSLC —— find_program 的结果本身是 CACHE 变量，天然全局可见。
-    #   neuralnet::nn —— 收集器只链**门面目标**（见下方链接处的两作用说明）。
-    #     ⚠ 不能在函数体内直接写 Vulkan::Vulkan：IMPORTED 目标**不可跨目录
-    #     直接引用**（实测消费方作用域报 "target was not found"）；而门面是
-    #     普通/ALIAS 目标（全局可见，实测可用），其 INTERFACE 里的
-    #     Vulkan::Vulkan 条目在**定义侧**解析（实测可用，见探针）。
-    function(nn_enable_gpu_fusion target)
-        cmake_parse_arguments(NNF "" "MAIN;OUT_DIR" "" ${ARGN})
-        if(NOT TARGET compile_gpu_shaders)
-            message(FATAL_ERROR
-                "nn_enable_gpu_fusion: GPU 构建不可用（未找到 Vulkan/glslc，"
-                "或 NN_ENABLE_GPU=OFF）。该函数只在 GPU 启用时有定义。")
-        endif()
-        if(NOT TARGET ${target})
-            message(FATAL_ERROR "nn_enable_gpu_fusion: 目标 ${target} 不存在")
-        endif()
-        if(TARGET ${target}_nnfusion_collect)
-            message(FATAL_ERROR
-                "nn_enable_gpu_fusion: 目标 ${target} 已调用过（${target}_nnfusion_collect 已存在）")
-        endif()
-        if(NOT NNF_OUT_DIR)
-            set(NNF_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/nn_fusion/${target}")
-        endif()
-        if(NNF_MAIN)
-            get_filename_component(NNF_MAIN "${NNF_MAIN}" ABSOLUTE)
-        endif()
-        get_target_property(_nnf_srcs ${target} SOURCES)
-        set(_nnf_inputs "")
-        set(_nnf_main_found FALSE)
-        foreach(_s IN LISTS _nnf_srcs)
-            if(_s MATCHES "^\\$<")          # 生成器表达式源（跳过，罕见）
-                continue()
-            endif()
-            get_filename_component(_abs "${_s}" ABSOLUTE)
-            if(NNF_MAIN AND _abs STREQUAL NNF_MAIN)
-                set(_nnf_main_found TRUE)
-                continue()                 # 收集器自带 main（SCAN_SRC），排除目标的
-            endif()
-            list(APPEND _nnf_inputs "${_abs}")
-        endforeach()
-        # MAIN 拼写/路径不一致会让目标的 main 进入收集器 → 链接期 duplicate main。
-        # 静默通过不了（链接会报），但报错点离根因很远，这里提前拦住。
-        if(NNF_MAIN AND NOT _nnf_main_found)
-            message(FATAL_ERROR
-                "nn_enable_gpu_fusion: MAIN=${NNF_MAIN} 不在 ${target} 的源文件列表里")
-        endif()
-        set(_nnf_scan_src  "${NN_LIB_SOURCE_DIR}/tools/scan_exprs.cpp")
-        set(_nnf_gen_src   "${NN_LIB_SOURCE_DIR}/tools/fused_generate.hpp")
-        set(_nnf_lib_inc   "${NN_LIB_SOURCE_DIR}/include/neuralnet.cpp")
-        set(_nnf_lib_gen   "${NN_LIB_BINARY_DIR}/generated")
-        set(_nnf_reg "${NNF_OUT_DIR}/fused_registry.hpp")
-        add_executable(${target}_nnfusion_collect ${_nnf_scan_src} ${_nnf_inputs})
-        target_include_directories(${target}_nnfusion_collect
-            PRIVATE ${_nnf_lib_inc})
-        # 收集器必须按**与目标相同的编译条件**编译其 TU：使用者的层代码常在
-        # `#ifdef NN_HAS_VULKAN` / 私有 include / 自定义宏之内，条件缺失会让那些
-        # 调用点静默消失 → 收集不到 → GPU 运行期闭合世界硬报错（离根因很远）。
-        target_include_directories(${target}_nnfusion_collect PRIVATE
-            $<TARGET_PROPERTY:${target},INCLUDE_DIRECTORIES>)
-        target_compile_options(${target}_nnfusion_collect PRIVATE
-            $<TARGET_PROPERTY:${target},COMPILE_OPTIONS>)
-        target_compile_definitions(${target}_nnfusion_collect PRIVATE
-            NN_EXPR_SCAN $<TARGET_PROPERTY:${target},COMPILE_DEFINITIONS>)
-        # 链门面目标（而非 nn_core）——两个作用：
-        # ① 消费方目标的 NN_HAS_VULKAN/generated/ 等是经 neuralnet::nn 的
-        #   **INTERFACE** 传入的，`$<TARGET_PROPERTY:...,COMPILE_DEFINITIONS>`
-        #   只取目标**自身**属性、拿不到 INTERFACE 项（实测缺口）；收集器直接
-        #   链门面即可拿到同款条件——否则使用者 `#ifdef NN_HAS_VULKAN` 里的
-        #   层代码在收集器 TU 中被编译掉 → 收集不到 → GPU 运行期闭合世界硬报错。
-        # ② include 顺序：收集器**自身**目录（含 NNF_OUT_DIR，经上一行属性
-        #   复制）先于门面 INTERFACE 目录（库 generated/），注册表解析优先级
-        #   正确（实测：自身目录恒先于 INTERFACE 目录）。
-        # 库内目标不受影响：NN_HAS_VULKAN 本就经其自身属性复制进来，链门面
-        # 只是同值重复（编译器对重复 -D 同值无警告）。
-        target_link_libraries(${target}_nnfusion_collect PRIVATE
-            neuralnet::nn)
-        add_custom_command(
-            OUTPUT ${_nnf_reg}
-            COMMAND ${CMAKE_COMMAND} -E make_directory ${NNF_OUT_DIR}
-            COMMAND ${target}_nnfusion_collect ${NNF_OUT_DIR} ${GLSLC}
-            DEPENDS ${target}_nnfusion_collect ${_nnf_scan_src} ${_nnf_gen_src} ${_nnf_inputs}
-            COMMENT "[nn] 为 ${target} 收集 + 合成融合 shader → ${_nnf_reg}")
-        add_custom_target(${target}_nnfusion_registry DEPENDS ${_nnf_reg})
-        # ⚠ include 顺序有意义：本目标自己的 `fused_registry.hpp` 必须排在
-        #   库的 `generated` **之前**——后者含库自身的注册表（不含使用者的
-        #   自定义结构）与手写原语 shader 的嵌入头。放在前面才能让
-        #   `__has_include("fused_registry.hpp")`（见 backend/compute_vk_backend.hpp）
-        #   解析到本目标专属的那一份。
-        # **必须用 BEFORE**：CMake 的 INCLUDE_DIRECTORIES 属性对重复项保留
-        #   首次出现的位置，若目标此前已（由 GPU 统一启用循环）拿到
-        #   `generated`，普通 append 会把它排在前面，顺序语义反而失效。
-        # 实测顺序：目标自身目录（BEFORE 置前）**全部先于** INTERFACE 传入的
-        # 目录，故消费方经 neuralnet::nn 拿到的库 generated/ 也排在本目录之后。
-        target_include_directories(${target} BEFORE PRIVATE
-            ${NNF_OUT_DIR} ${_nnf_lib_gen})
-        add_dependencies(${target} ${target}_nnfusion_registry compile_gpu_shaders)
-    endfunction()
-
-    if(NOT GLSLC)
-        message(WARNING "No SPIR-V compiler found (glslc). "
-                        "GPU acceleration disabled. Install Vulkan SDK.")
-        set(Vulkan_FOUND OFF)
-    endif()
-
-    if(Vulkan_FOUND)
-        set(NN_GPU_ENABLED ON)   # 供文件末尾的共享 PCH 目标对齐编译条件
-        add_custom_target(compile_gpu_shaders DEPENDS ${GPU_SHADER_HPPS})
-
-        # ── 门面目标的 GPU 使用需求（消费方只链 neuralnet::nn 即得全部）──────
-        # ① NN_HAS_VULKAN 宏：门控 nn.hpp 里的 GPU 引擎编译；
-        # ② generated/ 目录：36 份原语 SPIR-V 嵌入头 + 库自身 fused_registry.hpp
-        #    （nn.hpp 靠 `__has_include` 探测，目录必须在 include path 上）；
-        # ③ Vulkan::Vulkan：imported 目标在**本目录作用域**内链入 INTERFACE 属性
-        #    ——实测消费方经传递链接可正常解析（与直接 target_link_libraries
-        #    到消费方目标不同，后者会报 target not found）；
-        # ④ add_dependencies 到 compile_gpu_shaders：实测 INTERFACE 库的依赖
-        #    **传递挂到消费方目标的编译边**（cmake_object_order_depends_target_*），
-        #    保证 generated/ 头先于消费方 TU 编译生成。
-        target_compile_definitions(neuralnet_cpp INTERFACE NN_HAS_VULKAN)
-        target_include_directories(neuralnet_cpp INTERFACE
-            ${CMAKE_CURRENT_BINARY_DIR}/generated)
-        target_link_libraries(neuralnet_cpp INTERFACE Vulkan::Vulkan)
-        add_dependencies(neuralnet_cpp compile_gpu_shaders)
-
-        # 为所有实际构建的目标启用 Vulkan。名单来自 nn_add_executable 的
-        # 创建点本身（应用 + 探针 + 测试），**不按 NN_ENABLE_TESTS 拼**：
-        # 测试目标在默认 Release（NN_BUILD_APPS=ON / NN_ENABLE_TESTS=OFF）
-        # 下同样会被编译，漏挂宏/链接会让 gpu_f16_test 等目标在链接期报
-        # `undefined reference to vk*`（详见 nn_add_executable 处注释）。
-        foreach(TARGET ${NN_EXECUTABLE_TARGETS})
-            target_compile_definitions(${TARGET} PRIVATE NN_HAS_VULKAN)
-            target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
-            target_link_libraries(${TARGET} PRIVATE Vulkan::Vulkan)
-            add_dependencies(${TARGET} compile_gpu_shaders)
-        endforeach()
-
-        # ── A2 验收样例：一个「库外使用者」形态的目标 ──────────────────────
-        # 它有自己的自研融合层（examples/fusion_custom_layer.hpp），**不使用**
-        # 库内 build/generated 的注册表，而是靠 nn_enable_gpu_fusion 生成自己
-        # 的那一份 —— 证明"写 dsl::compute + 一行 CMake 即可"。
-        # 只在 NN_ENABLE_TESTS 下构建：它的收集器会为 ~85 个库内结构各跑一遍
-        # glslc（三份变体），是纯验收成本，不该加到默认构建上。
-        # ⚠ 存在性守卫：样例源文件在 652c53d「易用性审查」中随 examples/ 目录
-        #    一并删除（roadmap X6 计划以新样例补齐），但上面的样例块仍引用旧路径
-        #    → 「Vulkan 可用 + NN_ENABLE_TESTS=ON」组合会在**配置期**直接失败
-        #    （add_executable: No SOURCES given）。守卫让该组合重新可用；样例源
-        #    文件回来时自动恢复（无需再改这里）。
-        if(NN_ENABLE_TESTS AND EXISTS
-           ${CMAKE_CURRENT_SOURCE_DIR}/examples/fusion_custom_layer_main.cpp)
-            nn_add_executable(fusion_custom_layer_example
-                examples/fusion_custom_layer_main.cpp
-                examples/fusion_custom_layer.cpp)
-            target_compile_definitions(fusion_custom_layer_example PRIVATE NN_HAS_VULKAN)
-            target_link_libraries(fusion_custom_layer_example PRIVATE Vulkan::Vulkan)
-            nn_enable_gpu_fusion(fusion_custom_layer_example
-                MAIN ${CMAKE_CURRENT_SOURCE_DIR}/examples/fusion_custom_layer_main.cpp)
-
-            # 注册为**常驻 ctest**（注册循环在 Vulkan 探测之前跑，故此处手工注册，
-            # 口径与循环一致：输出目录 + SKIP_RETURN_CODE 77 = 无设备时 skip）。
-            # 这是"库外使用者写 dsl::compute + 一行 CMake → GPU 能跑"的唯一自动
-            # 门禁（含 f16 运行期精度分派 `key#x` 路径与归一化形态）。
-            set_target_properties(fusion_custom_layer_example PROPERTIES
-                RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/test)
-            add_test(NAME fusion_custom_layer_example
-                     COMMAND fusion_custom_layer_example)
-            set_tests_properties(fusion_custom_layer_example
-                PROPERTIES SKIP_RETURN_CODE 77)
-
-            # ── IR-C 图融合 GPU 端到端（begin_expr/end_expr 录制闭环）──────
-            # begin_expr/end_expr 录制 → fuse_expr_graph 融合 → 复合 kernel
-            # 写回 tail 占位的闭环验证。走 nn_enable_gpu_fusion 专属 registry：
-            # 测试 TU 的 NN_EXPR_SCAN 静态初始化 dry-run 把录制段的复合 spec
-            # 登记进 global_registry（与运行期同跑 fuse_expr_graph，闭合世界
-            # 两端一致）。手工注册原因同上（注册循环早于 Vulkan 探测）。
-            nn_add_executable(expr_fuse_test src/expr_fuse_test.cpp src/expr_fuse_shapes.cpp)
-            target_compile_definitions(expr_fuse_test PRIVATE NN_HAS_VULKAN)
-            target_link_libraries(expr_fuse_test PRIVATE Vulkan::Vulkan)
-            nn_enable_gpu_fusion(expr_fuse_test
-                MAIN ${CMAKE_CURRENT_SOURCE_DIR}/src/expr_fuse_test.cpp)
-            set_target_properties(expr_fuse_test PROPERTIES
-                RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/test)
-            add_test(NAME expr_fuse_test COMMAND expr_fuse_test)
-            set_tests_properties(expr_fuse_test PROPERTIES SKIP_RETURN_CODE 77)
-        endif()
-
-        message(STATUS "GPU acceleration enabled (Vulkan compute)")
-    endif()
-else()
-    message(STATUS "Vulkan not found. GPU acceleration disabled.")
-    # stub：GPU 不可用时仍定义 nn_enable_gpu_fusion，让消费方调用得到一句
-    # 指向根因的报错，而不是难定位的 "Unknown CMake command"。
-    function(nn_enable_gpu_fusion target)
-        message(FATAL_ERROR
-            "nn_enable_gpu_fusion 需要 GPU 构建，但本次配置 Vulkan 不可用"
-            "（未找到 Vulkan/glslc，或 NN_ENABLE_GPU=OFF）。安装 Vulkan SDK "
-            "或改用 -DNN_ENABLE_GPU=ON 强制要求。")
-    endfunction()
+endforeach()
+if(TARGET nn_gpu)
+    target_compile_definitions(nn_core INTERFACE NN_GPU_ENGINE=1)
 endif()
 
 # ══════════════════════════════════════════════════════════════════════════
 #  PCH 落地（所有目标创建完、编译条件定型之后再挂）
 # ══════════════════════════════════════════════════════════════════════════
-# 候选目标的编译条件逐项相同（nn_core 的 include + NN_HAS_VULKAN +
-# generated/ + Vulkan include），因此**一份 PCH 全目标共享**（REUSE_FROM）。
-# 代价对比（本机 Debug 全量构建）：31 份逐目标 PCH ≈ 780s CPU → 1 份。
-# ⚠ 例外：`fusion_custom_layer_example` / `expr_fuse_test` 经
-#   `nn_enable_gpu_fusion` 多出自己的产物目录（BEFORE include），条件不匹配
-#   → 各自单独一份，不能 REUSE。
+# 候选目标的编译条件逐项相同（nn_core 的 include：主仓库 include/ +
+# submodule abstraction/），因此**一份 PCH 全目标共享**（REUSE_FROM）。
+# 引擎 .so 化后 nn.hpp 不再含引擎实现/shader 嵌入头 → PCH 体积大幅缩小。
+# 代价对比（本机 Debug 全量构建，旧版）：31 份逐目标 PCH ≈ 780s CPU → 1 份。
 if(NN_ENABLE_PCH AND NN_PCH_CANDIDATES)
     add_library(nn_pch OBJECT ${CMAKE_CURRENT_SOURCE_DIR}/cmake/nn_pch_stub.cpp)
     target_link_libraries(nn_pch PRIVATE nn_core)
-    if(NN_GPU_ENABLED)
-        target_compile_definitions(nn_pch PRIVATE NN_HAS_VULKAN)
-        target_include_directories(nn_pch PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
-        target_link_libraries(nn_pch PRIVATE Vulkan::Vulkan)
-        # ⚠ 必须等 `compile_gpu_shaders`（手写原语 SPIR-V 嵌入头 + fused_registry）
-        #   生成完再编 PCH：nn.hpp 里那 44 个 `#if __has_include("..._spv.hpp")`
-        #   与 `#if __has_include("fused_registry.hpp")` 是在**编 PCH 那一刻**求值
-        #   的——早于生成完成就会整块落空，且从此不再重新求值（没 include 就没
-        #   depfile 记录），表现为运行期 "matmul SPIR-V bytecode not embedded" /
-        #   融合闭合世界硬报错。逐目标 PCH 天然带目标依赖，共享 PCH 必须显式补。
-        add_dependencies(nn_pch compile_gpu_shaders)
-    endif()
     target_precompile_headers(nn_pch PRIVATE [["neuralnet.cpp/nn.hpp"]])
 
     # ── ccache × PCH 的第三项要求：`-fno-pch-timestamp` ────────────────────
@@ -1665,12 +1198,7 @@ if(NN_ENABLE_PCH AND NN_PCH_CANDIDATES)
     set(NN_PCH_OWN_TARGETS "")
     foreach(_pch_tgt IN LISTS NN_PCH_CANDIDATES)
         target_compile_options(${_pch_tgt} PRIVATE ${NN_PCH_COMPAT_OPTIONS})
-        if(_pch_tgt STREQUAL "fusion_custom_layer_example" OR _pch_tgt STREQUAL "expr_fuse_test")
-            target_precompile_headers(${_pch_tgt} PRIVATE [["neuralnet.cpp/nn.hpp"]])
-            list(APPEND NN_PCH_OWN_TARGETS ${_pch_tgt})
-        else()
-            target_precompile_headers(${_pch_tgt} REUSE_FROM nn_pch)
-        endif()
+        target_precompile_headers(${_pch_tgt} REUSE_FROM nn_pch)
     endforeach()
     list(LENGTH NN_PCH_CANDIDATES _nn_pch_n)
     list(LENGTH NN_PCH_OWN_TARGETS _nn_pch_own)

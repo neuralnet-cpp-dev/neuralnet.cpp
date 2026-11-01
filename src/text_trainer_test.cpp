@@ -111,7 +111,7 @@ std::string make_dataset(const nn::BPETokenizer& tok, const std::string& path,
 
 struct Fixture
 {
-    std::shared_ptr<nn::CpuEngine> engine;
+    std::shared_ptr<nn::ComputeEngine> engine;
     nn::ModelSpec spec;
     std::string dataset_path;
 };
@@ -119,7 +119,7 @@ struct Fixture
 [[nodiscard]] Fixture make_fixture(const std::string& dir)
 {
     Fixture f;
-    f.engine = nn::CpuEngine::create();
+    f.engine = nn::create_cpu_engine();
     nn::BPETokenizer::Config tcfg;
     tcfg.vocab_size = 320;
     tcfg.min_freq = 1;

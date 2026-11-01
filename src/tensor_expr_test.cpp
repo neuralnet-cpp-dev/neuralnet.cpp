@@ -22,7 +22,7 @@
 #include <string>
 
 using nn::ComputeEngine;
-using nn::CpuEngine;
+using nn::ComputeEngine;
 using nn::Matrix;
 using nn::Scalar;
 using nn::Tensor;
@@ -114,9 +114,9 @@ void ref_binary(Matrix& out, const Matrix& a, const Matrix& b, char op)
 
 int main()
 {
-    auto engine_owner = CpuEngine::create();
-    CpuEngine& engine = *engine_owner;
-    ComputeEngine& eng = engine;
+    auto engine_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& engine = *engine_owner;
+    nn::ComputeEngine& eng = engine;
 
     std::cout << "========================================\n"
               << "  统一表达式 DSL 求值测试（CPU）\n"

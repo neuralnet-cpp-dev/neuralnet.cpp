@@ -120,7 +120,7 @@ struct Fixture
     nn::PolicyBatchView view;
 };
 
-nn::Result<Fixture> make_fixture(nn::CpuEngine& engine, nn::Tensor logits, nn::Tensor actions,
+nn::Result<Fixture> make_fixture(nn::ComputeEngine& engine, nn::Tensor logits, nn::Tensor actions,
                                  nn::Tensor mask, nn::Tensor advantage, nn::Tensor returns,
                                  nn::Tensor old_value, nn::Tensor old_log_prob)
 {
@@ -146,7 +146,7 @@ bool reinforce_loss_unsupported(nn::ComputeEngine& engine, const nn::Tensor& log
 
 void test_distribution()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto logits = matrix_tensor(*owner, 3, 2, {1, 0, 0, 2, -1, 0});
     auto actions = matrix_tensor(*owner, 1, 2, {0, 1});
     nn::CategoricalDistribution dist;
@@ -209,7 +209,7 @@ void test_distribution()
 
 void test_reinforce()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto logits = matrix_tensor(*owner, 3, 2, {1, 0, 0, 2, -1, 0});
     auto actions = matrix_tensor(*owner, 1, 2, {0, 1});
     auto mask = matrix_tensor(*owner, 1, 2, {1, 1});
@@ -273,7 +273,7 @@ void test_reinforce()
 
 void test_value_and_kl()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto logits = matrix_tensor(*owner, 3, 2, {1, 0, 0, 2, -1, 0});
     auto actions = matrix_tensor(*owner, 1, 2, {0, 1});
     auto mask = matrix_tensor(*owner, 1, 2, {1, 1});
@@ -311,7 +311,7 @@ bool reinforce_loss_unsupported(nn::ComputeEngine& engine, const nn::Tensor& log
 
 void test_entropy_finite_difference()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     const std::vector<float> base_values{1, 0, 0, 2, -1, 0};
     auto logits = matrix_tensor(*owner, 3, 2,
                                 {base_values[0], base_values[1], base_values[2], base_values[3],
@@ -361,7 +361,7 @@ void test_entropy_finite_difference()
 
 void test_policy_shape_validation()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto logits = matrix_tensor(*owner, 2, 2, {0, 0, 0, 0});
     auto actions = matrix_tensor(*owner, 1, 2, {0, 1});
     auto bad_row = matrix_tensor(*owner, 1, 1, {1});

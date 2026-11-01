@@ -26,7 +26,7 @@
 
 using nn::ActivationType;
 using nn::ComputeEngine;
-using nn::CpuEngine;
+using nn::ComputeEngine;
 using nn::FeedForward;
 using nn::Matrix;
 using nn::Scalar;

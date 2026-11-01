@@ -47,8 +47,8 @@ void test_mha_consistency()
 {
     // 两个独立引擎：创建序号各自从 0 起 → 同 seed 混流后投影权重逐位一致
     //（同引擎内两层的创建序号不同 → 权重不同，故不能共引擎对拍）
-    auto engine = nn::CpuEngine::create();
-    auto engine2 = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
+    auto engine2 = nn::create_cpu_engine();
     const std::size_t d_model = 16, heads = 2, seq = 4, batch = 2;
     nn::MultiHeadAttention mha(d_model, heads, seq);
     nn::CrossAttention xattn(d_model, heads, seq, /*seq_kv_len=*/seq);
@@ -115,7 +115,7 @@ void test_mha_consistency()
 // [2] 矩形形状（seq_q=3, seq_kv=5, batch=2）：形状 + 有限性
 void test_rectangular()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     const std::size_t d_model = 8, heads = 2, seq_q = 3, seq_kv = 5, batch = 2;
     nn::CrossAttention xattn(d_model, heads, seq_q, seq_kv);
     CHECK(xattn.init(*engine).has_value(), "[2] init");
@@ -150,7 +150,7 @@ void test_rectangular()
 // [3] 双输入独立性：batch 一致但两侧序列长不同 → 与 [2] 同构但内存不同值
 void test_dual_input_independence()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     const std::size_t d_model = 8, heads = 2, seq_q = 2, seq_kv = 4, batch = 3;
     nn::CrossAttention xattn(d_model, heads, seq_q, seq_kv);
     CHECK(xattn.init(*engine).has_value(), "[3] init");
@@ -170,7 +170,7 @@ void test_dual_input_independence()
 // [4] 单输入协议 fail-fast
 void test_single_input_guard()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     nn::CrossAttention xattn(8, 2, 3, 4);
     CHECK(xattn.init(*engine).has_value(), "[4] init");
     auto x = make_tensor(*engine, 8, 3, 0.01f, 0.01f);
@@ -184,7 +184,7 @@ void test_single_input_guard()
 //     分别扰动 q / m 的条目，对照 backward_pair 的两路解析梯度。
 void test_gradcheck()
 {
-    auto engine = nn::CpuEngine::create();
+    auto engine = nn::create_cpu_engine();
     const std::size_t d_model = 4, heads = 2, seq_q = 2, seq_kv = 3, batch = 1;
     const nn::Scalar eps = 1e-2f, tol = 2e-2f;
     nn::CrossAttention xattn(d_model, heads, seq_q, seq_kv);

@@ -471,8 +471,8 @@ int main(int argc, char* argv[])
 
     // CPU 对照（始终跑）
     {
-        auto cpu_owner = nn::CpuEngine::create();
-        nn::CpuEngine& cpu = *cpu_owner;
+        auto cpu_owner = nn::create_cpu_engine();
+        nn::ComputeEngine& cpu = *cpu_owner;
         nn::ComputeEngine& padapter = cpu;   // P-1：原 PrecisionEngine 已下沉
         std::printf("── CPU ──\n");
         probe_cast_rounding(padapter, "cpu");
@@ -481,20 +481,18 @@ int main(int argc, char* argv[])
         probe_decay_writeback(padapter, "cpu");
     }
 
-#ifdef NN_HAS_VULKAN
+#ifdef NN_GPU_ENGINE
     {
-        auto backend_owner = nn::GpuBackend::shared();
-        nn::GpuBackend& backend = *backend_owner;
-        auto init_r = backend.initialize(gpu_device);
-        if (!init_r)
+        auto gpu_owner = nn::create_gpu_engine(gpu_device.c_str());
+        if (!gpu_owner)
         {
-            std::fprintf(stderr, "GPU 初始化失败: %s\n", init_r.error().message.c_str());
+            const char* err = nn::last_error();
+            std::fprintf(stderr, "GPU 初始化失败: %s\n", err ? err : "(无错误信息)");
             return 77;  // ctest SKIP
         }
-        auto gpu_owner = nn::GpuEngine::create(backend);
-        nn::GpuEngine& gpu = *gpu_owner;
+        nn::ComputeEngine& gpu = *gpu_owner;
         nn::ComputeEngine& adapter = gpu;   // P-1：原 PrecisionEngine 已下沉
-        std::printf("── GPU（%s）──\n", backend.device().device_name().c_str());
+        std::printf("── GPU（%s）──\n", gpu.describe().device.c_str());
         probe_cast_rounding(adapter, "gpu");
         probe_inplace(adapter, "gpu", true);
         probe_optimizer_steps(adapter, "gpu", true);

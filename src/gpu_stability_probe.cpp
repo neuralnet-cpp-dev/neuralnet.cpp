@@ -100,23 +100,22 @@ nn::Result<std::shared_ptr<nn::ComputeEngine>> make_engine(bool gpu)
     std::shared_ptr<nn::ComputeEngine> eng;
     if (gpu)
     {
-#ifdef NN_HAS_VULKAN
-        auto backend_owner = nn::GpuBackend::shared();
-        nn::GpuBackend& backend = *backend_owner;
-        // 修复（16 §7-2 根因）：shared() 只建 backend，Vulkan 设备要
-        // initialize() 才建立——本探针原先漏调，首个 vkCreateBuffer 拿到
-        // VK_NULL_HANDLE 即 "Invalid device" 崩溃。与 cli_engine_factory
-        // 及全部 GPU 测试入口同法。无显式 selector 时 initialize() 内部
-        // 仍按 "显式 > NN_VULKAN_DEVICE 环境变量 > 自动打分" 读设备选择。
-        NN_TRY(ir, backend.initialize());
-        eng = nn::GpuEngine::create(backend);
+#ifdef NN_GPU_ENGINE
+        // 设备选择语义（NN_VULKAN_DEVICE 环境变量 / 自动打分）由引擎 .so
+        // 内部 create_gpu_engine 处理；失败经 last_error 查询。
+        eng = nn::create_gpu_engine("");
+        if (!eng)
+        {
+            const char* err = nn::last_error();
+            NN_FAIL(std::string("GPU 引擎创建失败: ") + (err ? err : "(无错误信息)"));
+        }
 #else
-        NN_FAIL("built without Vulkan (NN_HAS_VULKAN)");
+        NN_FAIL("built without GPU engine (NN_GPU_ENGINE)");
 #endif
     }
     else
     {
-        eng = nn::CpuEngine::create();
+        eng = nn::create_cpu_engine();
     }
     return eng;
 }

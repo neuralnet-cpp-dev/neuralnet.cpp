@@ -18,7 +18,7 @@
 
 #include "neuralnet.cpp/precision.hpp"
 #include "neuralnet.cpp/compute_tensor.hpp"
-#include "neuralnet.cpp/compute_cpu_engine.hpp"
+#include "neuralnet.cpp/engine.hpp"
 #define NN_TEST_COUNTER g_failures
 #include "test_common.hpp"
 
@@ -235,8 +235,8 @@ void test_f16_data_roundtrip(nn::ComputeEngine& eng)
 int main()
 {
     std::printf("tensor_precision_test (D3: Tensor precision + engine I/O roundtrip, M1)\n");
-    auto eng_owner = nn::CpuEngine::create();
-    nn::CpuEngine& eng = *eng_owner;
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
     test_default_tensor();
     test_f32_cpu_tensor(eng);
     test_f16_cpu_tensor(eng);

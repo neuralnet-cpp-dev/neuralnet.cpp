@@ -64,7 +64,7 @@ void test_experience_schema_and_view()
     CHECK(schema.group_id().has_value(), "group id standard field registered");
     CHECK(schema.schema().fields().back().name == "custom_score", "custom field appended");
 
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto action = make_tensor(*owner, 2, 2, 0.0f, 1.0f);
     auto mask = matrix_tensor(*owner, 2, 2, {1, 1, 1, 0});
     auto custom = make_tensor(*owner, 2, 2, 0.5f, 0.1f);
@@ -93,7 +93,7 @@ void test_experience_schema_and_view()
 
 void test_gae_hand_calculation()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto reward = matrix_tensor(*owner, 3, 1, {1, 2, 3});
     auto value = matrix_tensor(*owner, 3, 1, {0.5f, 0.5f, 0.5f});
     auto done = matrix_tensor(*owner, 3, 1, {0, 0, 1});
@@ -110,7 +110,7 @@ void test_gae_hand_calculation()
 
 void test_gae_done_mask_and_bootstrap()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto reward = matrix_tensor(*owner, 3, 1, {1, 2, 3});
     auto value = matrix_tensor(*owner, 3, 1, {0, 0, 0});
     auto done = matrix_tensor(*owner, 3, 1, {0, 1, 0});
@@ -146,7 +146,7 @@ void test_gae_done_mask_and_bootstrap()
 
 void test_returns_and_normalization()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto reward = matrix_tensor(*owner, 3, 1, {1, 2, 3});
     nn::MonteCarloReturn mc(0.5f);
     auto returns = mc.apply(*owner, reward);
@@ -177,7 +177,7 @@ void test_returns_and_normalization()
 
 void test_group_advantage()
 {
-    auto owner = nn::CpuEngine::create();
+    auto owner = nn::create_cpu_engine();
     auto returns = matrix_tensor(*owner, 6, 1, {1, 2, 3, 10, 10, 10});
     const std::vector<nn::GroupSpan> spans{
         nn::GroupSpan{.first_row = 0, .row_count = 3},

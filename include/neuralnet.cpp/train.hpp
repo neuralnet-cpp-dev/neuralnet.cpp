@@ -13,7 +13,7 @@
 // 用法（完整训练循环骨架，签名细节见 AGENTS.md §8）：
 //     #include <neuralnet.cpp/train.hpp>
 //
-//     auto engine = nn::CpuEngine::create();      // 或 nn::GpuEngine::create(backend)
+//     auto engine = nn::create_cpu_engine();      // 或 nn::GpuEngine::create(backend)
 //     nn::Model model(*engine);
 //     NN_UNWRAP(model.add<nn::Linear>(784, 256));
 //     NN_UNWRAP(model.add<nn::ReLU>());
