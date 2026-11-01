@@ -440,6 +440,21 @@ struct KernelCache
 
     // 当前 rec 序列化（供写盘持久化）
     [[nodiscard]] std::string serialize() const { return rec.serialize_v2(); }
+
+    // 合并另一份 rec 里本 rec 没有的 kernel 字段（进程锁写盘前，把并发进程中
+    // 其它进程已 JIT 并落盘的 kernel 合进来，避免 lost-update）。hot 不更新
+    // （hit() 懒加载自 rec，合进来的条目后续按需进 hot）。
+    [[nodiscard]] Result<void> merge_kernels_from(const KeyValueRecord& other)
+    {
+        for (const std::string& key : other.string_keys_with_prefix(kKernelFieldPrefix))
+        {
+            std::string v;
+            if (!other.get(key, v)) continue;
+            std::string mine;
+            if (!rec.get(key, mine)) rec.set(key, v);
+        }
+        return {};
+    }
 };
 
 } // namespace nn::fused

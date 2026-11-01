@@ -127,6 +127,7 @@ KeyValueRecord v2:
 - 库/使用者提供 `model_warmup()`（层级/表达式/模型预热）：跑一遍代表性 forward，把用到的表达式现编进缓存。
 - **无注册、无构建期闭合世界**：`scan_exprs` 的 `FusedAnchor` 自登记 + dry-run + 模型 pass + `NN_EXPR_SCAN` + glslc 构建步 + `nn_enable_gpu_fusion` 收集器**全部可拆**。
 - 首次调用/预热命中编译（延迟），之后所有 app 共享缓存秒命中。
+- **落地（2026-11-01）**：`nn::model_warmup(Model&, const Tensor&)`（`model_container.hpp`）——调用方按自己架构构造代表性输入（MLP: `(input_dim, batch)`；GPT: `(d_model, batch*seq)`…），跑一遍 forward 即把该模型用到的表达式现编进 `.nnk` 缓存。对无内嵌注册表（消费方未跑 scan）的构建，这是消除首用 JIT 延迟的机制。
 - 严格模式（可选 `NN_STRICT_CLOSED_WORLD`）保留为 opt-in 看门狗，非默认契约。
 
 ## 6. 分阶段落地
@@ -147,7 +148,7 @@ KeyValueRecord v2:
 - [x] 文档同步 + `python scripts/doc_audit.py` 全绿。
 
 > **Phase 1 实施进度**：✅ Phase 1 全部完成 = KVRecord v2 容器 + `K` 编码（版本进 key）+ 版本失效 + 懒加载热缓存 + 系统缓存目录定位 + env 覆盖 + 测试。
-> **Phase 2 进度**：✅ libnn-kernelgen.so 生成器（C ABI `ExprSpec(序列化)→SPIR-V`，内嵌 GlslEmitter + shaderc，CMake 目标 `nn_kernelgen` + install 到 `lib/`，已实测产出有效 SPIR-V magic 0x07230203）。✅ 引擎 JIT miss 路径（2026-11-01）：派发 miss（内嵌注册表 + 后端 pipeline 均无）→ 引擎懒 dlopen `libnn-kernelgen.so` → `nnk_generate_spirv` 现编 → 后端懒建 pipeline（`ensure_fused_kernel`）→ 执行 → `.nnk` 追加持久化（temp+rename 原子写）。`nnk_generate_spirv` 扩展 out `nnk_kernel_meta`；meta 单一来源 = `nn::fused_kernel_meta_of`（引擎与生成器同函数，vec_width 不漂移）；`pc_base_fixed` 走库侧 `fused_pc_base_fixed`（AOT 预建与 JIT 同源）。内嵌注册表降级为预热加速器，`NN_STRICT_CLOSED_WORLD=1` 为 opt-in 硬报错。**850M 实测**：`fused_gpu_test` 的 `run_fallback` 从"未扫描表达式硬报错"改为"JIT 现编成功且与 CPU 一致"——`x*y+3`（不在内嵌注册表）JIT 后逐位/容差内一致，`.nnk` 落盘含该 kernel。⏳ 待做 = `model_warmup()` 预热钩子 + 多进程并发写进程锁（temp+rename 已做）。
+> **Phase 2 进度**：✅ libnn-kernelgen.so 生成器（C ABI `ExprSpec(序列化)→SPIR-V`，内嵌 GlslEmitter + shaderc，CMake 目标 `nn_kernelgen` + install 到 `lib/`，已实测产出有效 SPIR-V magic 0x07230203）。✅ 引擎 JIT miss 路径（2026-11-01）：派发 miss（内嵌注册表 + 后端 pipeline 均无）→ 引擎懒 dlopen `libnn-kernelgen.so` → `nnk_generate_spirv` 现编 → 后端懒建 pipeline（`ensure_fused_kernel`）→ 执行 → `.nnk` 追加持久化（temp+rename 原子写）。`nnk_generate_spirv` 扩展 out `nnk_kernel_meta`；meta 单一来源 = `nn::fused_kernel_meta_of`（引擎与生成器同函数，vec_width 不漂移）；`pc_base_fixed` 走库侧 `fused_pc_base_fixed`（AOT 预建与 JIT 同源）。内嵌注册表降级为预热加速器，`NN_STRICT_CLOSED_WORLD=1` 为 opt-in 硬报错。✅ 进程锁（2026-11-01）：`.nnk` 落盘改 flock 排他锁 + 锁内重读盘上缓存合并并发进程已 JIT 的 kernel（防 lost-update），再原子替换。✅ `model_warmup()`（2026-11-01，`model_container.hpp`）：跑一遍代表性 forward 现编进缓存。**850M 实测**：`fused_gpu_test` 的 `run_fallback` 从"未扫描表达式硬报错"改为"JIT 现编成功且与 CPU 一致"——`x*y+3`（不在内嵌注册表）JIT 后容差内一致，`.nnk` 落盘含该 kernel；锁文件 + merge 不破坏路径；fused_gpu/expr_gpu/ce_fusion 无回归。Phase 2 除"严格模式看门狗默认关闭"外完成。
 > **Phase 3**：⏳ 引擎 link 阶段 + C ABI + 完整 install 布局（bin/ + lib/）。
 
 ## 8. 风险与取舍

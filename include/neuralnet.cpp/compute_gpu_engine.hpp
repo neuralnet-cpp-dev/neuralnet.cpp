@@ -47,6 +47,9 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <fcntl.h>       // open/O_CREAT（.nnk 缓存进程锁）
+#include <sys/file.h>    // flock
+#include <unistd.h>      // close / rename
 #endif
 
 #include "compute_engine.hpp"
@@ -1481,10 +1484,68 @@ public:
         return {};
     }
 
-    // 原子写盘（temp+rename）：进程锁留作 T6 后续（miss 罕见，单进程写为当前语义）。
+    // 原子写盘（temp+rename）+ 进程锁（flock，POSIX）：锁内重读盘上缓存并合并
+    // 并发进程已 JIT 落盘的 kernel（防 lost-update），再原子替换。Windows 侧暂
+    // 只做原子替换（LockFileEx 留后续）。miss 罕见，写放大可接受（doc §8）。
     [[nodiscard]] Result<void> persist_cache_() const
     {
         if (!kernel_cache_) return {};
+#ifndef _WIN32
+        // 进程锁：同一缓存路径的 .lock 文件上排他 flock；不同进程串行写。
+        const std::string& path = nn::fused::kernel_cache_path();
+        const std::string lockpath = path + ".lock";
+        const int lfd = ::open(lockpath.c_str(), O_CREAT | O_RDWR, 0644);
+        if (lfd < 0) NN_FAIL("无法打开 .nnk 锁文件：" + lockpath);
+        struct ::flock lk;
+        lk.l_type = F_WRLCK;
+        lk.l_whence = SEEK_SET;
+        lk.l_start = 0;
+        lk.l_len = 0;
+        if (::fcntl(lfd, F_SETLKW, &lk) != 0)
+        {
+            ::close(lfd);
+            NN_FAIL("无法获取 .nnk 缓存写锁（fcntl）：" + lockpath);
+        }
+        // 锁内重读盘上缓存，合并其它进程已写入的 kernel
+        {
+            std::string disk_bytes;
+            if (std::ifstream f(path, std::ios::binary); f)
+            {
+                std::ostringstream ss;
+                ss << f.rdbuf();
+                disk_bytes = ss.str();
+            }
+            if (!disk_bytes.empty())
+            {
+                auto disk = nn::KeyValueRecord::parse(disk_bytes);
+                if (disk)
+                {
+                    std::string dgen;
+                    const std::string ogen =
+                        disk->get("generator_version", dgen)
+                            ? dgen
+                            : std::string(nn::fused::kKernelCacheGeneratorVersion);
+                    if (ogen == kernel_cache_->generator_version)
+                        NN_TRY_CHECK(kernel_cache_->merge_kernels_from(*disk));
+                }
+            }
+        }
+        const std::string data = kernel_cache_->serialize();
+        const std::string tmp = path + ".tmp";
+        {
+            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+            if (!f)
+            {
+                ::close(lfd);
+                NN_FAIL("无法写 .nnk 缓存临时文件：" + tmp);
+            }
+            f.write(data.data(), static_cast<std::streamsize>(data.size()));
+        }
+        const bool renamed = (std::rename(tmp.c_str(), path.c_str()) == 0);
+        ::close(lfd);
+        if (!renamed) NN_FAIL("无法原子替换 .nnk 缓存：" + path);
+        return {};
+#else
         const std::string data = kernel_cache_->serialize();
         const std::string& path = nn::fused::kernel_cache_path();
         const std::string tmp = path + ".tmp";
@@ -1493,13 +1554,10 @@ public:
             if (!f) NN_FAIL("无法写 .nnk 缓存临时文件：" + tmp);
             f.write(data.data(), static_cast<std::streamsize>(data.size()));
         }
-#ifdef _WIN32
         if (!MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
             NN_FAIL("无法原子替换 .nnk 缓存：" + path);
-#else
-        if (std::rename(tmp.c_str(), path.c_str()) != 0) NN_FAIL("无法原子替换 .nnk 缓存：" + path);
-#endif
         return {};
+#endif
     }
 
     // 编译（或缓存命中）得到某 key 的 SPIR-V；miss → 生成器现编 → 内存缓存 insert

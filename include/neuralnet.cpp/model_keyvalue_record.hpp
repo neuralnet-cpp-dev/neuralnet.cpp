@@ -199,6 +199,8 @@ public:
     [[nodiscard]] bool get(const std::string& key, std::string& out) const;
     [[nodiscard]] bool get(const std::string& key, std::vector<uint64_t>& out) const;
     [[nodiscard]] bool get(const std::string& key, KeyValueRecord& out) const;
+    // 收集所有**字符串类型**且 key 以 prefix 开头的字段键（按字段序；cache merge 用）
+    [[nodiscard]] std::vector<std::string> string_keys_with_prefix(const std::string& prefix) const;
 
 private:
     struct Field
@@ -629,6 +631,14 @@ inline bool KeyValueRecord::get(const std::string& key, KeyValueRecord& out) con
         return true;
     }
     return false;
+}
+
+inline std::vector<std::string> KeyValueRecord::string_keys_with_prefix(const std::string& prefix) const
+{
+    std::vector<std::string> out;
+    for (const auto& f : fields_)
+        if (f.type == Type::Str && f.key.rfind(prefix, 0) == 0) out.push_back(f.key);
+    return out;
 }
 
 }  // namespace nn
