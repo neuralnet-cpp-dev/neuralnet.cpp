@@ -45,6 +45,11 @@ struct GptConfig
     bool subln = false;          // SubLN（BitNet 2B4T 子层归一化，docs 22 §3.1）
     std::size_t n_head_kv = 0;   // GQA 的 KV 头数（0 = num_heads = MHA，docs 22 §3.2）
     bool tie_embeddings = false; // head 复用 token embedding（docs 22 §3.3）
+    // 部署构建（免 latent 构建根治，2026-11）：true = 三值层按部署形态构建
+    // （BitLinear init 不分配 f32 latent，权重由载入的打包字 + τ 接管）。
+    // 推理入口（text_infer）在载入 role=Model 的 .nnmodel 时置位，消除
+    // "先建 GB 级 latent 再被部署条目丢弃"的载入期瞬时峰值。
+    bool inference_only = false;
 };
 
 // ── 构建 GPT 模型（GptConfig 版本，推荐使用） ────────────────────────────
@@ -64,7 +69,8 @@ struct GptConfig
         auto r =
             model.add<GPTModel>(cfg.vocab_size, cfg.d_model, cfg.seq_len, cfg.num_heads, cfg.d_ff,
                                 cfg.num_layers, cfg.pos_enc, cfg.activation, cfg.norm_type,
-                                cfg.precision, cfg.subln, cfg.n_head_kv, cfg.tie_embeddings);
+                                cfg.precision, cfg.subln, cfg.n_head_kv, cfg.tie_embeddings,
+                                WeightQuant::None, cfg.inference_only);
         NN_TRY_CHECK(r);
     }
     return model;
@@ -80,11 +86,13 @@ build_gpt_model(ComputeEngine& engine, std::size_t vocab_size = GPT_VOCAB_SIZE,
                 ActivationType activation = ActivationType::GeLU,
                 NormType norm_type = NormType::LayerNorm,
                 PrecisionProfile precision = PrecisionProfile{}, bool subln = false,
-                std::size_t n_head_kv = 0, bool tie_embeddings = false)
+                std::size_t n_head_kv = 0, bool tie_embeddings = false,
+                bool inference_only = false)
 {
     return build_gpt_model(engine, GptConfig{vocab_size, d_model, seq_len, num_heads, d_ff,
                                              num_layers, pos_enc_type, activation, norm_type,
-                                             precision, subln, n_head_kv, tie_embeddings});
+                                             precision, subln, n_head_kv, tie_embeddings,
+                                             inference_only});
 }
 
 // ── 从 ModelSpec 构建 GPT 模型 ──────────────────────────────────────────
@@ -93,7 +101,8 @@ build_gpt_model(ComputeEngine& engine, std::size_t vocab_size = GPT_VOCAB_SIZE,
 // 因此无需为 ALiBi 单独提供构建函数。
 [[nodiscard]] inline Result<Model>
 build_gpt_model_from_spec(ComputeEngine& engine, const ModelSpec& spec,
-                          PrecisionProfile precision = PrecisionProfile{})
+                          PrecisionProfile precision = PrecisionProfile{},
+                          bool inference_only = false)
 {
     // 接受 GPT 类型（含 ALiBi/RoPE 变体；旧 ALiBi_GPT 数值 type 同归 GptSpec）
     const auto* g = spec.as<GptSpec>();
@@ -105,7 +114,7 @@ build_gpt_model_from_spec(ComputeEngine& engine, const ModelSpec& spec,
     auto model =
         build_gpt_model(engine, g->vocab_size, g->d_model, g->seq_len, g->num_heads, g->d_ff,
                         g->num_layers, g->pos_encoding, g->activation, g->norm_type, precision,
-                        g->subln, g->n_head_kv, g->tie_embeddings);
+                        g->subln, g->n_head_kv, g->tie_embeddings, inference_only);
     if (model) model->set_spec(spec);  // 记录架构规格，供 load_model 校验
     return model;
 }

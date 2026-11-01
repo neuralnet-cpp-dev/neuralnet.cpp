@@ -768,6 +768,11 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     nn_add_executable(ternary_gemm_test src/ternary_gemm_test.cpp)
     list(APPEND NN_TEST_TARGETS ternary_gemm_test)
 
+    # ── int8 激活量化（W1.58A8，P3，docs 21 §4.16）：quantize/unpack/matmul_q_i8
+    #    + BitLinear int8-act 接线（前向界 / backward STE / 端到端收敛）──
+    nn_add_executable(int8_act_test src/int8_act_test.cpp)
+    list(APPEND NN_TEST_TARGETS int8_act_test)
+
     # ── 模型文件角色（v7：.nnmodel / .nnckpt）+ 参数形态协议 ──
     nn_add_executable(model_roles_test src/model_roles_test.cpp)
     list(APPEND NN_TEST_TARGETS model_roles_test)
@@ -775,6 +780,11 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     # ── 量化状态优化器 AdamWQuant（F5 第一步，docs 21 §4.13）──
     nn_add_executable(adam_quant_test src/adam_quant_test.cpp)
     list(APPEND NN_TEST_TARGETS adam_quant_test)
+
+    # ── int8 打包状态优化器 AdamWInt8（docs 21 §4.19）：融合原语逐位对拍 +
+    #    收敛 A/B + 状态账 + save/load 往返 ──
+    nn_add_executable(adam_int8_test src/adam_int8_test.cpp)
+    list(APPEND NN_TEST_TARGETS adam_int8_test)
 
     # ── Embedding 层（issue #32：查表 / 伴随散射 / padding / 整数入口）──
     nn_add_executable(embedding_test src/embedding_test.cpp)
@@ -1119,10 +1129,21 @@ if(NN_ENABLE_TESTS)
         add_test(NAME ternary_gemm_test_gpu COMMAND ternary_gemm_test --gpu)
         set_tests_properties(ternary_gemm_test_gpu PROPERTIES SKIP_RETURN_CODE 77)
     endif()
+    # int8 激活量化 GEMM 的 GPU 变体（quantize_i8/matmul_q_i8 设备侧 pipeline +
+    # 2B4T 量级形状对拍）。无设备 → 77。
+    if(TARGET int8_act_test)
+        add_test(NAME int8_act_test_gpu COMMAND int8_act_test --gpu)
+        set_tests_properties(int8_act_test_gpu PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
     # 量化状态优化器的 GPU 变体（状态读写全在设备侧；GPU 上表达式须命中闭合世界）。
     if(TARGET adam_quant_test)
         add_test(NAME adam_quant_test_gpu COMMAND adam_quant_test --gpu)
         set_tests_properties(adam_quant_test_gpu PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+    # int8 状态优化器的 GPU 变体（quantized_adamw_step 设备侧 pipeline）。无设备 → 77。
+    if(TARGET adam_int8_test)
+        add_test(NAME adam_int8_test_gpu COMMAND adam_int8_test --gpu)
+        set_tests_properties(adam_int8_test_gpu PROPERTIES SKIP_RETURN_CODE 77)
     endif()
     foreach(TARGET ${NN_BENCH_TARGETS})
         set_target_properties(${TARGET} PROPERTIES

@@ -131,6 +131,7 @@ struct Fixture
 {
     if (name == "sgd") return 0;
     if (name == "adamwquant") return 4;   // m16/v16 载荷 + sm/sv 尺度
+    if (name == "adamwint8") return 4;    // m_packed/v_packed 容器 + sm/sv 尺度
     if (name == "adam" || name == "adamw") return 2;
     return 1;                              // sgd_momentum / muon
 }
@@ -164,8 +165,8 @@ void test_state_presence()
             CHECK(false, "有状态优化器不得导出空状态（新优化器必须实现 save_state）");
 
         // 步计数器：Adam 家族非零；无状态优化器恒 0
-        const bool adam_family =
-            meta.name == "adam" || meta.name == "adamw" || meta.name == "adamwquant";
+        const bool adam_family = meta.name == "adam" || meta.name == "adamw" ||
+                                 meta.name == "adamwquant" || meta.name == "adamwint8";
         CHECK(opt->state_step() == (adam_family ? 3u : 0u),
               ("state_step: " + std::string(meta.name)).c_str());
 

@@ -245,7 +245,12 @@ int main(int argc, char* argv[])
     auto engine = std::move(*engine_res);
 
     // ── 构建模型（绑定引擎） ─────────────────────────────────
-    auto build_result = nn::build_mnist_model_from_spec(*engine, spec);
+    // 免 latent 构建（2026-11）：role=Model（.nnmodel）→ 三值层按部署形态构建
+    // （BitLinear 不分配 f32 latent，权重由载入的打包字 + τ 接管；与 text_infer
+    // 同款开关，消除"先建 latent 再被部署条目丢弃"的载入期瞬时峰值）。
+    const bool inference_only = (*role_r == nn::ModelRole::Model);
+    auto build_result = nn::build_mnist_model_from_spec(*engine, spec, nn::PrecisionProfile{},
+                                                       inference_only);
     NN_EXIT(build_result, 1, "构建模型失败: ");
     auto model = std::move(*build_result);
 
@@ -255,6 +260,8 @@ int main(int argc, char* argv[])
         std::cout << "模型已加载（角色: " << nn::model_role_name(*role_r)
                   << "）: " << cfg.model_path << "\n"
                   << std::endl;
+        // 载入期的解码/中转底材已无活跃引用 → 归还整块空闲池底材
+        NN_EXIT(engine->release_idle_pool_blocks(), 1, "显存回收失败: ");
     }
 
     // 推理模式：BatchNorm 使用保存的 running 统计量（batch 可能为 1，不能算 batch 统计）

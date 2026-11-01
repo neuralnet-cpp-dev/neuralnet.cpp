@@ -59,7 +59,7 @@ ARCH_OPTIONS = ["mlp", "transformer", "cnn"]
 # 单独维护这份名单：向对应 CLI 取一次 --help 并解析（按可执行名缓存），取不到
 # （未构建 / 平台无该进程）时退回 _OPTIMIZER_FALLBACK —— bench/gui_cli_audit.py
 # 的 [4] 节会断言退回名单与 CLI 声明逐项一致，故"改了表忘了改 GUI"不会静默通过。
-_OPTIMIZER_FALLBACK = ["sgd", "sgd_momentum", "adam", "adamw", "adamwquant", "muon"]
+_OPTIMIZER_FALLBACK = ["sgd", "sgd_momentum", "adam", "adamw", "adamwquant", "adamwint8", "muon"]
 _OPTIMIZER_CACHE: Dict[str, List[str]] = {}
 _OPTIMIZER_RE = re.compile(r"优化器:([a-z0-9_/]+)")
 

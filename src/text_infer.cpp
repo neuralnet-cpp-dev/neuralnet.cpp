@@ -439,9 +439,16 @@ int main(int argc, char* argv[])
     std::cout << "\n";
 
     nn::Result<nn::Model> model_result;
+    // 免 latent 构建（2026-11）：role=Model（.nnmodel）→ 三值层按部署形态构建
+    // （BitLinear 不分配 f32 latent，权重由载入的打包字 + τ 接管）——消除
+    // "先按规格建出全部 latent 再被部署条目丢弃"的载入期瞬时峰值
+    // （docs/internal/21 §4.15 的 P2 残差）。role=Checkpoint（.nnckpt）走正常
+    // 构建（参数是 latent 形态，仍需要 latent 张量）。
+    const bool inference_only = (*role_r == nn::ModelRole::Model);
     if (spec.is_rapt()) model_result = nn::build_rapt_model_from_spec(*engine, spec);
     else  // 统一的 GPTModel 通过 pos_encoding 区分 Learned/Sinusoidal/ALiBi
-        model_result = nn::build_gpt_model_from_spec(*engine, spec);
+        model_result = nn::build_gpt_model_from_spec(*engine, spec, nn::PrecisionProfile{},
+                                                    inference_only);
     NN_EXIT(model_result, 1, "构建模型失败: ");
     auto model = std::move(*model_result);
 
@@ -454,6 +461,9 @@ int main(int argc, char* argv[])
         NN_EXIT(load_result, 1, "加载模型失败: ");
         embedded_vocab = std::move(*load_result);
         std::cout << "模型已加载（角色: " << nn::model_role_name(*role_r) << "）" << std::endl;
+        // 载入期的解码/中转底材已无活跃引用 → 归还整块空闲池底材，让驱动可见
+        // 显存回落到推理足迹（训练路径每块结束也这么做，见 text_trainer）。
+        NN_EXIT(engine->release_idle_pool_blocks(), 1, "显存回收失败: ");
     }
 
     // ── 加载 tokenizer（按模型版本分派：v5=JSON / v6=.nnvocab kvrec）──

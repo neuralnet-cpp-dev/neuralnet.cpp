@@ -50,14 +50,15 @@ public:
     FeedForward(std::size_t d_model, std::size_t d_ff,
                 ActivationType activation = ActivationType::GeLU, bool subln = false,
                 NormType subln_norm_type = NormType::LayerNorm,
-                WeightQuant weight_quant = WeightQuant::None)
+                WeightQuant weight_quant = WeightQuant::None, bool inference_only = false)
         : fc1_(make_linear_layer(
               d_model,
               (activation == ActivationType::SwiGLU || activation == ActivationType::ReLU2)
                   ? 2 * d_ff
                   : d_ff,
-              weight_quant)),
-          fc2_(make_linear_layer(d_ff, d_model, weight_quant)), weight_quant_(weight_quant),
+              weight_quant, inference_only)),
+          fc2_(make_linear_layer(d_ff, d_model, weight_quant, inference_only)),
+          weight_quant_(weight_quant),
           swiglu_(d_ff), relu2glu_(d_ff), use_swiglu_(activation == ActivationType::SwiGLU),
           use_relu2_(activation == ActivationType::ReLU2)
     {

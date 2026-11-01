@@ -1160,11 +1160,16 @@ private:
 // 用**运行期开关**选线性层类型，成员类型统一为 `std::unique_ptr<Layer>`。
 // BitLinear 与 Linear 的参数形状/顺序完全一致（(out,in) 权重 + (out,1) 偏置），
 // 因此序列化与优化器侧零改动。
+// `inference_only`（2026-11，免 latent 构建根治）：true 时 BitLinear 按部署形态
+// 构建（init 不分配 f32 latent，权重由载入的打包字 + τ 接管）——推理入口载入
+// `.nnmodel` 不再先冲一份 GB 级瞬时 latent。
 [[nodiscard]] inline std::unique_ptr<Layer> make_linear_layer(std::size_t in_features,
                                                               std::size_t out_features,
-                                                              WeightQuant quant = WeightQuant::None)
+                                                              WeightQuant quant = WeightQuant::None,
+                                                              bool inference_only = false)
 {
-    if (quant == WeightQuant::T1_58) return std::make_unique<BitLinear>(in_features, out_features);
+    if (quant == WeightQuant::T1_58)
+        return std::make_unique<BitLinear>(in_features, out_features, inference_only);
     return std::make_unique<Linear>(in_features, out_features);
 }
 } // namespace nn

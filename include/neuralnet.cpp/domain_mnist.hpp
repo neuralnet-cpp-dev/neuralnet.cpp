@@ -100,7 +100,8 @@ inline const std::vector<std::size_t> MNIST_LAYER_DIMS = {MNIST_INPUT_DIM,  512,
 //     "层 ReLU 不支持 param=t1_58" 拦下，属误报）。
 [[nodiscard]] inline Result<Model> build_mnist_mlp_model(
     ComputeEngine& engine, const std::vector<std::size_t>& layer_dims = MNIST_LAYER_DIMS,
-    NormType norm_type = NormType::LayerNorm, PrecisionProfile precision = PrecisionProfile{})
+    NormType norm_type = NormType::LayerNorm, PrecisionProfile precision = PrecisionProfile{},
+    bool inference_only = false)
 {
     if (layer_dims.size() < 2) NN_FAIL("MLP layer_dims must have at least 2 elements");
     const bool ternary = (precision.param == Precision::T1_58);
@@ -116,8 +117,10 @@ inline const std::vector<std::size_t> MNIST_LAYER_DIMS = {MNIST_INPUT_DIM,  512,
 
         if (ternary)
         {
-            // BitLinear 需要 param=T1_58 → 显式注入完整 precision（跳过 default）
-            auto r = model.add_layer(std::make_unique<BitLinear>(in_dim, out_dim), precision);
+            // BitLinear 需要 param=T1_58 → 显式注入完整 precision（跳过 default）；
+            // inference_only = 部署构建（免 latent，权重由载入的打包字 + τ 接管）
+            auto r = model.add_layer(std::make_unique<BitLinear>(in_dim, out_dim, inference_only),
+                                     precision);
             NN_TRY_CHECK(r);
         }
         else
@@ -210,10 +213,14 @@ inline const std::vector<std::size_t> MNIST_LAYER_DIMS = {MNIST_INPUT_DIM,  512,
 }
 
 // ── 从 ModelSpec 构建模型 ─────────────────────────────────────────────────
-// 用于从二进制文件加载时自动还原架构（支持 MLP 和 Transformer）
+// 用于从二进制文件加载时自动还原架构（支持 MLP 和 Transformer）。
+// `inference_only`（免 latent 构建根治）：载入 role=Model 的部署文件时置位，
+// 三值层（BitLinear）不分配 f32 latent（权重由打包字 + τ 接管，见 domain_gpt.hpp
+// 同款开关）。
 [[nodiscard]] inline Result<Model>
 build_mnist_model_from_spec(ComputeEngine& engine, const ModelSpec& spec,
-                            PrecisionProfile precision = PrecisionProfile{})
+                            PrecisionProfile precision = PrecisionProfile{},
+                            bool inference_only = false)
 {
     // ── 三值（T1_58）权重由**规格**决定（不是 CLI 参数）───────────────
     // 保存过的三值模型必须还原成 BitLinear（参数形状相同、语义不同）：
@@ -234,7 +241,8 @@ build_mnist_model_from_spec(ComputeEngine& engine, const ModelSpec& spec,
 
     if (const auto* m = spec.as<MlpSpec>())
     {
-        auto model = build_mnist_mlp_model(engine, m->layer_dims, m->norm_type, precision);
+        auto model = build_mnist_mlp_model(engine, m->layer_dims, m->norm_type, precision,
+                                           inference_only);
         if (model) model->set_spec(spec);  // 记录架构规格，供 load_model 校验
         return model;
     }

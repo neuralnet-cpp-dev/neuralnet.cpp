@@ -30,6 +30,7 @@
 #include "compute_layer_base.hpp"  // Layer 基类 / clone_tensor 等工具
 #include "compute_tensor.hpp"
 #include "expr_dsl.hpp"
+#include "int8_pack.hpp"   // AdamWInt8：int8 打包状态的布局/编解码（1 B/元素）
 
 namespace nn
 {
@@ -624,9 +625,10 @@ public:
 //
 // **与 bitsandbytes 8-bit Adam 的差别（诚实记录）**：它是 int8 payload + 每块
 // 紧凑 absmax（1 B/状态，需融合按块内核）；本版是 f16 payload + 有界尺度
-// （2 B/状态，零新原语）。再往下的增量是"int8 payload + 打包"：需要 DSL 的
-// `round` 算子（docs 21 §5 的 P3 前置）+ 打包容器（1 字节存储 = M7，或用 f16
-// 容器位打包）。
+// （2 B/状态，零新原语）。再往下的增量（int8 payload + 打包）已由 `AdamWInt8`
+// 落地（docs 21 §4.19）：打包状态 DSL 读不了 → **融合引擎原语**
+// `quantized_adamw_step`（解码/编码与更新单内核，否则 f32 临时量比省掉的还多；
+// 不是本注释早年设想的"DSL round 算子"路线），~2 B/权重。
 //
 // 超参与 AdamW 一致（β1/β2/eps/weight decay 解耦）；`--optimizer adamwquant`。
 // ══════════════════════════════════════════════════════════════════════════
@@ -806,6 +808,180 @@ public:
     [[nodiscard]] std::size_t steps() const noexcept { return t_; }
     [[nodiscard]] const std::vector<Tensor>& moment_state() const noexcept { return m16_; }
     [[nodiscard]] const std::vector<Tensor>& variance_state() const noexcept { return v16_; }
+    [[nodiscard]] const std::vector<Tensor>& moment_scales() const noexcept { return sm_; }
+    [[nodiscard]] const std::vector<Tensor>& variance_scales() const noexcept { return sv_; }
+};
+
+// ══════════════════════════════════════════════════════════════════════════
+// AdamWInt8 — int8 打包状态的 AdamW（训练显存优化，docs 21 §4.13 的 int8 增量）
+//
+// **动机**：AdamWQuant（f16 payload，4 B/权重）再往下的增量是 int8 payload
+// （1 B/状态）：状态账 8 → **~2.03 B/权重**（int8 打包 1 B/元素 + 每行 f32 尺度
+// 2×4/cols ≈ 0.016 B，cols=512）。代价 = 8 bit 相对精度（AdamWQuant 的 f16
+// 11 bit 更好 —— 这是用精度换字节，与 bitsandbytes 8-bit Adam 同量级）。
+//
+// **做法（有界尺度 + int8 打包 payload）**：与 AdamWQuant 完全同构，只是
+// payload 从 f16 换成 int8 打包容器（`int8_pack.hpp` 布局，1 B/元素）：
+//   m_packed = quantize(m_real / sm)（qm ∈ [-127,127]；|m_real| ≤ sm ⇒ 无溢出）
+// 尺度前进（sm_new = max(β1·sm + (1-β1)·row_max(|g|)·1.02, 1e-24)）仍在 DSL
+// 完成（与 AdamWQuant 相同表达式，逐位一致）；**融合状态写回 + 参数更新**走
+// 引擎领域原语 `quantized_adamw_step` —— int8 打包状态 DSL 读不了，必须单内核
+// 内 解码→更新→编码→参数更新（否则 f32 全尺寸临时量 4 B/状态 ×2 比省掉的还多）。
+//
+// 超参与 AdamW 一致；`--optimizer adamwint8`。
+// ══════════════════════════════════════════════════════════════════════════
+class AdamWInt8 : public Optimizer
+{
+    Scalar lr_;
+    Scalar beta1_;
+    Scalar beta2_;
+    Scalar eps_;
+    Scalar wd_;
+    std::size_t t_ = 0;
+    std::vector<Tensor> m_packed_;  // (rows, ceil(cols/4)) f32 容器：int8 打包一阶矩
+    std::vector<Tensor> v_packed_;  // 二阶矩
+    std::vector<Tensor> sm_;        // (rows,1) f32：|m| 的上界
+    std::vector<Tensor> sv_;        // (rows,1) f32：v 的上界
+    std::size_t state_bytes_ = 0;   // 诊断/实测：状态实际占用（含尺度）
+
+    // 上界安全系数与尺度下限（与 AdamWQuant 同口径）
+    static constexpr Scalar kSafety = Scalar{1.02};
+    static constexpr Scalar kScaleFloor = Scalar{1e-24};
+
+    [[nodiscard]] Result<void> init_state_()
+    {
+        m_packed_.reserve(params_.size());
+        v_packed_.reserve(params_.size());
+        sm_.reserve(params_.size());
+        sv_.reserve(params_.size());
+        for (auto& p : params_)
+        {
+            const std::size_t rows = p.get().rows(), cols = p.get().cols();
+            const std::size_t wpr = nn::i8_pack::words_per_row(cols);
+            auto m = engine_.create_tensor(rows, wpr, Precision::F32, InitSpec::zero());
+            if (!m.valid()) NN_FAIL("AdamWInt8: 一阶矩状态分配失败");
+            auto v = engine_.create_tensor(rows, wpr, Precision::F32, InitSpec::zero());
+            if (!v.valid()) NN_FAIL("AdamWInt8: 二阶矩状态分配失败");
+            auto sm = engine_.create_tensor(rows, 1, Precision::F32, InitSpec::zero());
+            if (!sm.valid()) NN_FAIL("AdamWInt8: 一阶矩尺度分配失败");
+            auto sv = engine_.create_tensor(rows, 1, Precision::F32, InitSpec::zero());
+            if (!sv.valid()) NN_FAIL("AdamWInt8: 二阶矩尺度分配失败");
+            // 容器 = f32 张量承载原始字：rows·wpr·4 B/行 = cols B/行（1 B/元素）
+            state_bytes_ += rows * wpr * 4u + rows * wpr * 4u + rows * 4u * 2u;
+            m_packed_.push_back(std::move(m));
+            v_packed_.push_back(std::move(v));
+            sm_.push_back(std::move(sm));
+            sv_.push_back(std::move(sv));
+        }
+        return {};
+    }
+
+    [[nodiscard]] Result<void> update_one_(std::size_t i, Scalar inv_bc1, Scalar inv_bc2)
+    {
+        const Tensor& g = grads_[i];
+        const std::size_t rows = g.rows(), cols = g.cols();
+        const Scalar one_m_b1 = Scalar{1} - beta1_;
+        const Scalar one_m_b2 = Scalar{1} - beta2_;
+
+        // ── 尺度前进（上界；与 AdamWQuant 同一 DSL 表达式，逐位一致）──────
+        NN_TRY(gabs, dsl::compute_reduce(engine_, dsl::row_reduce_max(dsl::abs(dsl::leaf(g))), rows,
+                                         cols, Precision::F32));
+        NN_TRY(gmax, dsl::compute_reduce(engine_, dsl::row_reduce_max(dsl::leaf(g) * dsl::leaf(g)),
+                                         rows, cols, Precision::F32));
+        auto sm_new = dsl::compute(engine_,
+                                   dsl::max(dsl::leaf(sm_[i]) * dsl::rparam(beta1_) +
+                                                dsl::leaf(*gabs) * dsl::rparam(one_m_b1 * kSafety),
+                                            kScaleFloor),
+                                   rows, 1, Precision::F32);
+        NN_TRY_CHECK(sm_new);
+        auto sv_new = dsl::compute(engine_,
+                                   dsl::max(dsl::leaf(sv_[i]) * dsl::rparam(beta2_) +
+                                                dsl::leaf(*gmax) * dsl::rparam(one_m_b2 * kSafety),
+                                            kScaleFloor),
+                                   rows, 1, Precision::F32);
+        NN_TRY_CHECK(sv_new);
+
+        // ── 融合状态写回 + 参数更新（领域原语：int8 打包状态必须单内核
+        //    解码/编码；数值口径见 compute_engine.hpp 公共入口）──────────────
+        NN_TRY(r, engine_.quantized_adamw_step(params_[i], g, m_packed_[i], v_packed_[i], sm_[i],
+                                               *sm_new, sv_[i], *sv_new, lr_, beta1_, beta2_, eps_,
+                                               wd_, inv_bc1, inv_bc2));
+
+        // ── 尺度提交（写回用的是新尺度，故先换再用）────────────────────────
+        sm_[i] = std::move(*sm_new);
+        sv_[i] = std::move(*sv_new);
+        return {};
+    }
+
+public:
+    AdamWInt8(ComputeEngine& engine, std::vector<TensorRef> params, std::vector<TensorRef> grads,
+              Scalar lr, Scalar beta1 = 0.9, Scalar beta2 = 0.999, Scalar eps = 1e-8,
+              Scalar weight_decay = 0.01, PrecisionProfile precision = PrecisionProfile{})
+        : Optimizer(engine, std::move(params), std::move(grads), precision), lr_(lr), beta1_(beta1),
+          beta2_(beta2), eps_(eps), wd_(weight_decay)
+    {
+        auto r = init_state_();
+        if (!r) record_init_error_(r.error());
+    }
+
+    void set_lr(Scalar lr) override { lr_ = lr; }
+
+    [[nodiscard]] Result<void> step() override
+    {
+        NN_TRY(r, check_ready_());
+        NN_TRY(r2, validate_sizes_());
+        const Scalar n = static_cast<Scalar>(t_ + 1);
+        const Scalar inv_bc1 = Scalar{1} / (Scalar{1} - std::pow(beta1_, n));
+        const Scalar inv_bc2 = Scalar{1} / (Scalar{1} - std::pow(beta2_, n));
+        for (std::size_t i = 0; i < params_.size(); ++i)
+        {
+            NN_TRY(u, update_one_(i, inv_bc1, inv_bc2));
+        }
+        ++t_;   // 全部参数成功才推进步数（与 Adam 同款）
+        return {};
+    }
+
+    // ── 断点状态（P1-2）：每参数 4 个（m/v 打包载荷 + sm/sv 逐行尺度）+ t_ ──
+    // 容器/尺度都是 f32 张量（原始字 / 上界），文件按张量记录精度，可直接往返。
+    [[nodiscard]] Result<void> save_state(std::vector<Tensor>& out) const override
+    {
+        NN_TRY(r, check_ready_());
+        for (std::size_t i = 0; i < m_packed_.size(); ++i)
+        {
+            out.push_back(m_packed_[i]);
+            out.push_back(v_packed_[i]);
+            out.push_back(sm_[i]);
+            out.push_back(sv_[i]);
+        }
+        return {};
+    }
+    [[nodiscard]] Result<void> load_state(std::span<const Tensor> in) override
+    {
+        NN_TRY(r, check_ready_());
+        if (in.size() != 4 * m_packed_.size())
+            NN_FAIL("AdamWInt8 状态张量数不匹配：期望 " + std::to_string(4 * m_packed_.size()) +
+                    "（每参数 m_packed/v_packed/sm/sv），实际 " + std::to_string(in.size()));
+        for (std::size_t i = 0; i < m_packed_.size(); ++i)
+        {
+            NN_TRY_CHECK(restore_state_tensor_(m_packed_[i], in[4 * i], "m_packed"));
+            NN_TRY_CHECK(restore_state_tensor_(v_packed_[i], in[4 * i + 1], "v_packed"));
+            NN_TRY_CHECK(restore_state_tensor_(sm_[i], in[4 * i + 2], "sm"));
+            NN_TRY_CHECK(restore_state_tensor_(sv_[i], in[4 * i + 3], "sv"));
+        }
+        return {};
+    }
+    [[nodiscard]] std::uint64_t state_step() const noexcept override
+    { return static_cast<std::uint64_t>(t_); }
+    void set_state_step(std::uint64_t step) noexcept override
+    { t_ = static_cast<std::size_t>(step); }
+
+    // ── 诊断 / 测试视图 ───────────────────────────────────────────────────
+    [[nodiscard]] std::size_t state_bytes() const noexcept { return state_bytes_; }
+    [[nodiscard]] std::size_t steps() const noexcept { return t_; }
+    [[nodiscard]] const std::vector<Tensor>& packed_moment_state() const noexcept
+    { return m_packed_; }
+    [[nodiscard]] const std::vector<Tensor>& packed_variance_state() const noexcept
+    { return v_packed_; }
     [[nodiscard]] const std::vector<Tensor>& moment_scales() const noexcept { return sm_; }
     [[nodiscard]] const std::vector<Tensor>& variance_scales() const noexcept { return sv_; }
 };
@@ -1078,6 +1254,7 @@ inline constexpr OptimizerMeta kOptimizerTable[] = {
     {"adam", "Adam", true, 2, false},
     {"adamw", "AdamW", true, 2, false},
     {"adamwquant", "AdamW（量化状态）", true, 2, true},
+    {"adamwint8", "AdamW（int8 状态）", true, 2, true},
     {"muon", "Muon", false, 1, false},
 };
 
@@ -1132,6 +1309,9 @@ create_optimizer(std::string_view name, ComputeEngine& engine, std::vector<Tenso
     if (name == "adamwquant")
         return std::make_unique<AdamWQuant>(engine, std::move(params), std::move(grads), lr, beta1,
                                             beta2, 1e-8, weight_decay, precision);
+    if (name == "adamwint8")
+        return std::make_unique<AdamWInt8>(engine, std::move(params), std::move(grads), lr, beta1,
+                                           beta2, 1e-8, weight_decay, precision);
     if (name == "muon")
         return std::make_unique<Muon>(engine, std::move(params), std::move(grads), lr, 0.95f, true,
                                       5, 1e-7f, precision);
