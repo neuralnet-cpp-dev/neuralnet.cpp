@@ -307,6 +307,29 @@ jobs:
         ctest --test-dir build-msvc-debug -C Debug --output-on-failure
         -E "^rapt_test_f16$"
 
+  # ══════════════════════════════════════════════════════════════════════
+  # 文档 / 双仓一致性（不编译；engine 子模块经 https 重写拉取）
+  #   · check_header_sync.py：主仓 include/neuralnet.cpp ↔ engine/engine/include
+  #     的层/模型头副本必须逐字一致（防双仓漂移）；
+  #   · check_env_vars.py：环境变量"代码读取点 ↔ AGENTS/docs"三方对照（死变量门禁）；
+  #   · doc_audit.py：文档↔代码对齐审计（含 [E2] AGENTS internal 索引检查）。
+  consistency:
+    name: Docs & header-sync consistency
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Rewrite submodule URL to https
+      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - name: Header sync (dual-repo copies)
+      run: python3 scripts/check_header_sync.py
+    - name: Env var three-way audit
+      run: python3 scripts/check_env_vars.py
+    - name: doc_audit
+      run: python3 scripts/doc_audit.py
+
   release:
     needs: [build, msvc-debug]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

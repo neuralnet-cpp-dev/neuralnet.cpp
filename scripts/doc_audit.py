@@ -329,6 +329,51 @@ def check_E(docs):
     return problems
 
 
+# ═══ [E2] AGENTS.md internal 索引 ↔ docs/internal/ 实际文件 ═════════════
+
+def check_AGENTS_index():
+    print('=== [E2] AGENTS.md internal 索引 ↔ docs/internal/ 实际文件 ===')
+    problems = 0
+    agents_path = os.path.join(ROOT, 'AGENTS.md')
+    internal_dir = os.path.join(ROOT, 'docs', 'internal')
+    if not os.path.isfile(agents_path) or not os.path.isdir(internal_dir):
+        print('  -- 跳过（AGENTS.md 或 docs/internal/ 缺失）\n')
+        return 0
+    with open(agents_path, encoding='utf-8') as f:
+        agents = f.read()
+    # 磁盘文件 → 编号（NN-xxx.md 的 NN）与全名
+    actual = {f for f in os.listdir(internal_dir) if f.endswith('.md')}
+    actual_nums = {f[:2] for f in actual if f[:2].isdigit()}
+    # AGENTS 引用：反引号/正文形式的 `internal/NN-slug.md` 或 `docs/internal/NN`
+    ref_names = set()
+    ref_nums = set()
+    for m in re.finditer(r'`internal/([A-Za-z0-9._-]+?)(?:\.md)?`', agents):
+        t = m.group(1)
+        ref_names.add(t + ('.md' if not t.endswith('.md') else ''))
+    for m in re.finditer(r'(?:`|docs/)internal/(\d{2})(?:-|`|\b| )', agents):
+        ref_nums.add(m.group(1))
+    for m in re.finditer(r'docs/internal/([A-Za-z0-9._-]+?)(?:\.md)?\b', agents):
+        t = m.group(1)
+        ref_names.add(t + ('.md' if not t.endswith('.md') else ''))
+
+    dangling = sorted(n for n in ref_names if n not in actual and n[:2] not in actual_nums)
+    unindexed = sorted(
+        f for f in (actual - ref_names)
+        if f != 'README.md' and f[:2] not in ref_nums
+    )
+
+    for r in dangling:
+        problems += 1
+        print(f'  -- AGENTS.md 引用 docs/internal/{r} 但文件不存在')
+    for f in unindexed:
+        problems += 1
+        print(f'  -- docs/internal/{f} 未在 AGENTS.md 索引/引用（缺登记）')
+    if not problems:
+        print('  [E2] 全绿（AGENTS 索引 ↔ 实际文件一致）')
+    print(f'  [E2] 问题 {problems} 处\n')
+    return problems
+
+
 # ═══ [F] nn:: 符号 / 测试名存在性 ════════════════════════════════════════
 
 def check_F(docs, code_text):
@@ -490,6 +535,7 @@ def main():
     check_C(docs)                      # WARN，不计入
     fails += check_D(docs, code_text)
     fails += check_E(docs)
+    fails += check_AGENTS_index()
     fails += check_F(docs, code_text)
     fails += check_G(docs, os.path.join(ROOT, 'build', 'doc_audit', 'code_examples_report.md'))
     fails += check_H(docs)
