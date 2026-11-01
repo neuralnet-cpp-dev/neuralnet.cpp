@@ -2,7 +2,7 @@
 
 > **读者**：项目开发者（改这个库的人）。本分册定位见 [`README.md`](README.md)；历史归档在 [`../history/history.md`](../history/history.md)。
 > **一句话结论**：Phase 3 把 header-only 引擎翻成可 install 的 `libnn.so`（link 阶段，兼解 LGPL 失效与编译慢），成败取决于**先定死 C ABI 边界**——`libnn.so` 只编"具体、稳定"的引擎实现 + 手写原语 + 生成器；模板重（DSL/Layer/Loss/Optimizer 组合）留 header-only 在消费方实例化。边界协议 = **不透明句柄 + 序列化载荷**（STL/模板类型永不跨 `.so`）。
-> **状态**：TODO（Phase 3 第一步 = 本边界清单已定稿；`libnn.so` 拆分尚未动代码，动代码前先据此裁决）。
+> **状态**：现行（Phase 3-A 最小闭环已实施并 850M 验证：`libnn.so` + `nn_api.h`（engine/tensor/matmul/eval_expr C ABI）+ 外部消费者测试 `nn_consumer_test`；后续 A 深化 / B–D 分期见 §6）。
 
 ## 0. 动机与前置事实
 
@@ -101,7 +101,7 @@ STL（`std::string`/`vector`/`expected`）与模板类型**永不跨 `.so` 边�
 
 | 阶段 | 内容 |
 |------|------|
-| **A** | `.so` 只编 CPU/GPU 引擎 + 原语 + 张量句柄（§3.1–3.3、§4 引擎行）——**第一步动代码从这开始**，先出 `nnn_engine/tensor/matmul/eval_expr` 最小闭环 |
+| **A** | `.so` 只编 CPU/GPU 引擎 + 原语 + 张量句柄（§3.1–3.3、§4 引擎行）——**第一步动代码从这开始**，先出 `nnn_engine/tensor/matmul/eval_expr` 最小闭环 ✅（2026-11-01） |
 | **B** | cli 改链 `libnn.so`（不再每 TU 全编引擎），install 布局落地 |
 | **C** | LGPL 可用性验证（外部消费方 link 可替换 `libnn.so`） |
 | **D**（后期，风险高） | model ABI（§3.4）——待 A–C 稳定后单独立项 |

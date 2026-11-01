@@ -12,6 +12,10 @@ cmake_minimum_required(VERSION 3.30)
 # 它只是元数据——发版时同步到最新 tag，实际版本以 git tag / gh release 为准）
 project(neuralnet.cpp VERSION 1.14.1 LANGUAGES CXX)
 
+# GNUInstallDirs：定义 CMAKE_INSTALL_LIBDIR/BINDIR/INCLUDEDIR（install 布局用，
+# docs/internal/34 §5 与 33 §4.3 的 bin/ + lib/ + include/ 干净产物）。
+include(GNUInstallDirs)
+
 # ── IDE / clangd：导出 compile_commands.json（仅顶层工程时）───────────────
 # include 路径（include/ + extern/*/include + build/generated）全部来自
 # target_include_directories，clangd 没有编译数据库就解析不到
@@ -389,6 +393,23 @@ target_compile_options(neuralnet_cpp INTERFACE
 
 add_library(neuralnet::nn ALIAS neuralnet_cpp)
 
+# ── libnn.so：link 阶段（Phase 3；docs/internal/34）───────────────────────
+# 消费方经 C ABI（nn_api.h）调具体引擎 + 原语；模板面（dsl/Layer）仍 header-only。
+# 链门面 neuralnet_cpp：CPU 构建 = 纯 CPU 引擎（nnn_engine_create_gpu 返回
+# NNN_NO_GPU）；Vulkan 构建 = 自动带上 NN_HAS_VULKAN + generated/ + Vulkan::Vulkan
+# （INTERFACE 属性跨目标解析，GPU 块后续补挂的门面属性在生成期生效）。
+add_library(nn_api SHARED src/nn_api.cpp)
+target_link_libraries(nn_api PRIVATE neuralnet_cpp)
+set_target_properties(nn_api PROPERTIES
+    OUTPUT_NAME nn
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib)
+install(TARGETS nn_api LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES include/neuralnet.cpp/nn_api.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/neuralnet.cpp)
+install(DIRECTORY include/neuralnet.cpp
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES_MATCHING PATTERN "*.hpp")
+
+
 # ── 预编译头（PCH）：本项目编译时间的最大头 ──────────────────────────────
 # 库是 header-only，每个 TU 都要把 `nn.hpp`（→ 全部 Layer/Loss/Optimizer/
 # Engine + 构建期嵌入的 36 份原语 SPIR-V + AOT 融合注册表，合计 ~7MB 头文本）
@@ -616,6 +637,21 @@ set(NN_APP_TARGETS "")
 set(NN_TEST_TARGETS "")
 set(NN_EXECUTABLE_TARGETS "")   # 所有经 nn_add_executable 创建的可执行目标
 set(NN_BENCH_TARGETS "")   # 性能基准已移除（bench 工具不注册 ctest 且无法在 -Werror 下编译）
+
+# ── libnn.so 外部消费者验证（Phase 3-A；docs/internal/34）───────────────
+# 链 libnn.so（非 header-only 引擎），本 TU 只 include C ABI + IR 头
+# （kernel_cache.hpp/expr_spec.hpp），**不编译引擎** → 证明"引擎在 .so、
+# 模板/IR 在 header"的拆分可用（LGPL 可替换库二进制前提）。刻意用 plain
+# add_executable（不经 nn_add_executable），不进 NN_EXECUTABLE_TARGETS，
+# 避免被 GPU 块挂上 NN_HAS_VULKAN（本 TU 不需要 GPU 编译面）。
+if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
+    add_executable(nn_consumer_test src/nn_consumer_test.cpp)
+    target_include_directories(nn_consumer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(nn_consumer_test PRIVATE nn_api)
+    set_target_properties(nn_consumer_test PROPERTIES
+        BUILD_RPATH ${CMAKE_CURRENT_BINARY_DIR}/lib)  # 运行期找 libnn.so
+    list(APPEND NN_TEST_TARGETS nn_consumer_test)
+endif()
 
 # ── 应用 / 探针 / 基准目标（NN_BUILD_APPS，默认 = 是否顶层工程）───────────
 # 嵌入消费方（add_subdirectory）默认 OFF：只拿库目标（neuralnet::nn），
