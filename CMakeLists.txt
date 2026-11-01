@@ -999,6 +999,10 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     nn_add_executable(precision_type_test src/precision_type_test.cpp)
     list(APPEND NN_TEST_TARGETS precision_type_test)
 
+    # ── 可移植算子缓存（kernels.nnk）round-trip 逐位锁 ────────────────────
+    nn_add_executable(kernel_cache_test src/kernel_cache_test.cpp)
+    list(APPEND NN_TEST_TARGETS kernel_cache_test)
+
     # ── 并行（原 threadpool 子仓）───────────────────────────────────────────
     nn_add_executable(threadpool_test src/threadpool_test.cpp)
     list(APPEND NN_TEST_TARGETS threadpool_test)

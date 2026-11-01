@@ -100,6 +100,7 @@
 - `internal/12` / `17` / `19` / `21` / `22` / `23` — 现行设计/盘点。
 - `internal/28` / `29` / `30` — 生命周期 v3 / Session 层 / TrainingSession 单步协议（已随 `v1.10.0`/`v1.11.0` 发布）。
 - `internal/02` / `03` / `04` / `26` — 融合/IR/显存/f16 提速计划。
+- `internal/33-kernel-cache-and-engine-decouple.md` — **ComputeEngine 解耦与可移植算子缓存（`kernels.nnk`）**：AOT 融合注册表解耦为可移植数据文件，引擎运行期加载，C++/Python 共用数据契约（Phase 1 实施中）。
 - `internal/14` / `24` — 已修故障报告 / f16 训练缺陷台账。
 
 ### 总档

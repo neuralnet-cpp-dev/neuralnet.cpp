@@ -17,7 +17,7 @@
 - **允许带进度状态**（✅ 已实施 / ⏳ 待做 / ❌ 已否决），但**不写历史叙事**——
   演进过程、被否决方案的理由、旧数字一律进 `../history/history.md`。
 - **编号 = 稳定台账 ID**（文档规范见 [`../contributors/documentation-standard.md`](../contributors/documentation-standard.md) §1）：
-  **新增接当前最大号，永不重排**，缺号是历史正常痕迹（`05`–`11`、`13`、`15`、`16`、`20`、`25`、`33`
+  **新增接当前最大号，永不重排**，缺号是历史正常痕迹（`05`–`11`、`13`、`15`、`16`、`20`、`25`
   要么留在 `development/`、要么已删除/搬去 `contributors/`/并入 `history/`）。
 
 ## 分类与索引
@@ -39,6 +39,7 @@
 | 文档 | 何时读 |
 |------|--------|
 | [`17-unified-tensor-engine.md`](17-unified-tensor-engine.md) | Tensor / ComputeEngine / MemoryPool 底层总纲（M1–M6 已实施；M7 未立项）：访问不变量、InitSpec、批量读写、Matrix 降级、内存契约、`import`、Layer 删 engine 形参 |
+| [`33-kernel-cache-and-engine-decouple.md`](33-kernel-cache-and-engine-decouple.md) | **ComputeEngine 解耦与可移植算子缓存（`kernels.nnk`）**：把 AOT 融合注册表从内嵌头解耦为可移植二进制缓存，C++ 构建期生成 / 引擎运行期加载 / Python 共用同一数据契约。四阶段方案 + Phase 1（`.nnk` 契约 + 生成器 + 运行期加载）验收口径；改融合注册表消费方式前读 |
 | [`02-operator-fusion.md`](02-operator-fusion.md) | 算子融合全篇（归约语义 IR → 表达式录制 → matmul 参与融合 → 跨 kernel 自动融合）：改融合/IR 前必读 |
 | [`03-ir-optimization.md`](03-ir-optimization.md) | IR-A/B/C/D 优化链设计（IR-C = 图 IR + `begin_expr/end_expr` 融合分析） |
 | [`19-unified-dataset.md`](19-unified-dataset.md) | 统一数据集（`.nndataset` / `.nnvocab` / KVRecord v2）格式与 `nn::Dataset`；**P2b 起含样本层**（`dataset_samples.hpp`：存储单位 = doc、训练单位 = 样本/窗口，`step` 是派生量） |
