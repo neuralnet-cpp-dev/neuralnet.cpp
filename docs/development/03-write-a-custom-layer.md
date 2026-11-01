@@ -285,23 +285,49 @@ std::printf("gradcheck: max|num-an| = %.3e\n", max_err);   // 应 << 1e-3
 
 ## 4. GPU 检查清单（CPU 通过 ≠ GPU 通过）
 
-GPU 表达式 shader 是**构建期**生成的（AOT 闭合世界，铁律 #7），自定义层的新结构不在库内
-注册表里。因此：
+自定义层的新结构不在库内嵌注册表里。两条路把它跑到 GPU 上（见 docs/internal/33 Phase 2）：
 
-1. 先保证 **CPU 上通过**（含上面的数值梯度检查）；
-2. 在 CMake 里加一行，把你的表达式结构编进目标专属注册表：
-
-   ```cmake
-   nn_enable_gpu_fusion(my_app MAIN ${CMAKE_CURRENT_SOURCE_DIR}/my_app_main.cpp)
-   ```
-
-   `MAIN` 必须指向含 `main` 的源文件（收集器自带 main，需从目标源列表剔除）。
-   该函数只在 GPU 启用时可用；未启用时调用会给出指向根因的报错。
+1. **先保证 CPU 上通过**（含上面的数值梯度检查）；
+2. **两条 GPU 路径**（任选）：
+   - **AOT 注册表**（构建期枚举）：CMake 加一行，把你的表达式结构编进目标专属注册表：
+     ```cmake
+     nn_enable_gpu_fusion(my_app MAIN ${CMAKE_CURRENT_SOURCE_DIR}/my_app_main.cpp)
+     ```
+     `MAIN` 必须指向含 `main` 的源文件（收集器自带 main，需从目标源列表剔除）。
+     该函数只在 GPU 启用时可用；未启用时调用会给出指向根因的报错。
+   - **运行期 JIT**（默认兜底，无需 CMake）：不枚举也能跑——GPU `eval_expr` miss 时
+     引擎懒加载 `libnn-kernelgen.so` 现编并持久化进 `.nnk` 缓存。首次有一次性编译延迟
+     （可用 `nn::model_warmup()` 提前预热）；`NN_STRICT_CLOSED_WORLD=1` 可关闭 JIT、
+     恢复构建期闭合世界硬报错（把漏枚举变成显式失败，适合当 CI 看门狗）。
 3. 训练/推理时用 `engine.begin_batch()` / `engine.end_batch()` 包住 forward（可选，消提交开销）——
    注意**录制期引用的张量必须活到 `end_batch()` 之后**（铁律 #6）。
 
-漏掉第 2 步的现象是：**构建期不报错，运行期按 `expr_spec_key` 硬报错**。这是设计使然
-（无 eager 回退），不是 bug。
+### 4.1 GPU 表达式验证 demo 编写要点（正向清单）
+
+写一个"自定义表达式在 GPU 上对拍 CPU"的验证/演示程序时，按这些点写可一次通过：
+
+1. **引擎以 `shared_ptr` 持有，传给 `dsl::compute` 时解引用**：`auto gpu = nn::GpuEngine::create(*backend);`
+   然后 `nn::dsl::compute(*gpu, expr, rows, cols)`（`dsl::compute` 收 `ComputeEngine&`，不是 `shared_ptr`）。
+   同理 `gpu->from_matrix(...)` / `gpu->to_matrix(...)` 用箭头。
+2. **Tensor 一律经引擎创建**（铁律 #11）：输入用 `auto xg = gpu->from_matrix(m);`，不要用
+   `Tensor::from_matrix(m)` 静态构造（那是库内 I/O 层的内部通道，demo 里不可用）。
+3. **取结果数据走引擎下载**：`auto gm = gpu->to_matrix(*result);` 得到 `Matrix`，再读
+   `gm->span()` 逐元素对比；`result` 本身是 `Tensor`，不能当 `Matrix` 用。
+4. **表达式直接内联传给 `dsl::compute`**，输出形状 `rows/cols` 显式给出（无形状重载依赖
+   表达式能推导网格，验证 demo 显式给最稳）。表达式不要包进 lambda 再返回——`compute` 的
+   模板推导对直接内联的表达式最可靠；从函数返回的表达式类型可能不满足 `DslExpr` 约束。
+5. **要验证 JIT 路径时**：用一个**确定不在内嵌注册表**的结构（如 `leaf(x)*leaf(y)+3`），
+   并设 `NN_KERNELGEN_PATH` 指向 `libnn_kernelgen.so`、`NN_KERNEL_CACHE_PATH` 指向
+   **独立的临时缓存文件**做干净起点（运行前删除该文件）——这样"首次现编 → 落盘 → 命中"
+   全过程可复现；跑完读缓存文件里的 `kernel.*` 字段确认落盘。
+6. **计时口径**：首次 GPU 执行耗时**包含引擎初始化 + 一次性 JIT 编译 + 首次提交**，
+   不是该 kernel 的纯执行性能。要测执行性能，用**缓存命中后的多次执行取均值**（此时走
+   纯执行路径）。`model_warmup()` 的目的正是把编译延迟挪到启动期、让首次真实推理命中。
+7. **CPU 参考与 GPU 同表达式**：同一表达式在 `CpuEngine` 上求值，再 `to_matrix` 逐元素
+   比 `max_err`（容差按 1e-4 量级）。CPU/GPU 同表达式保证对拍语义一致。
+
+> 以上 1–4 点在 `src/jit_demo.cpp`（GPU 表达式验证演示）中已按此写法固化；5–6 点是演示
+> JIT 能力时的可复现口径（环境变量控制 + 独立缓存起点 + 命中后测执行性能）。
 
 ---
 
