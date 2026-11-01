@@ -213,9 +213,8 @@ namespace
     if (f16_storage)
     {
         std::cout << "[精度] f16 存储已启用（基类边界 cast + in-kernel f16 变体 + f16 GEMM）\n"
-                     "  [提示] 池底材粒度可用 NN_POOL_BLOCK_MB / NN_POOL_LADDER_MAX_MB 调参"
-                     "（探针/实验用），\n"
-                     "         详见 docs/development/05-mixed-precision.md §12.10。\n";
+                     "  [提示] 池底材粒度现为编译期常量（12MB/4MB，见 compute_memory_pool.hpp），\n"
+                     "         历史调参变量 NN_POOL_BLOCK_MB / NN_POOL_LADDER_MAX_MB 已删除。\n";
     }
     nn::ComputeEngine* engine = raw_engine.get();
 
