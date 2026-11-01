@@ -168,3 +168,57 @@ KeyValueRecord v2:
 - 库级角色/参数形态：`docs/internal/23-library-design-cleanup-and-model-file-roles.md`
 - 嵌入消费方指南：`docs/usage/05-consume-as-library.md`
 - 历史归档：`docs/history/history.md`
+
+## 10. 剩余开工计划（Phase 2 引擎 JIT + Phase 3 link/install 执行手册）
+
+> 本节约开工文档：剩余两块（Phase 2 引擎 JIT 集成 + warmup、Phase 3 link 阶段 + install）各是一个独立大回合。每块给"先行决策 → 具体任务 → 第一步 → 验证 → 风险"。前置已交付：KVRecord v2 缓存（§3）、libnn-kernelgen.so（§4，`nnk_generate_spirv` 已实测产出有效 SPIR-V）。
+
+### 10.1 Phase 2：引擎 JIT 集成 + warmup
+
+**先行决策（开工前定，改一处）**：三个融合来源怎么协调——当前构建期内嵌注册表（`NN_FUSED_REGISTRY_EMBEDDED`）/ 运行期 `.nnk` 缓存 / JIT。建议：
+- **预热种子**：`model_warmup()` 从内嵌注册表（已知结构）或 JIT 填充 `.nnk` 缓存。
+- **派发**：优先内存 `KernelCache`（O(1)）→ miss → JIT。
+- 内嵌注册表降级为"预热加速器"（避免 warmup 全 JIT 编译），非派发硬约束。
+
+**关键工程现实（已在代码里确认）**：
+- 派发 miss 现为硬报错（`compute_gpu_engine.hpp` 的 `eval_expr_impl` 未命中处，`NN_FUSED_REGISTRY_EMBEDDED` 门控）。JIT 模式要在这里接 `nnk_generate_spirv`。
+- **后端 pipeline 是 init 期预建**（`compute_vk_backend_destroy.inc:369` 遍历 `kFusedShaders` 建全部 pipeline）。JIT 现编的 kernel 是 init **之后**才出现 → 后端必须加**运行期懒建 pipeline**路径（按 K 缓存 JIT 建出的 pipeline，mutable map，非 init 那张只读表）。
+- 引擎要持有 `KernelCache`（系统缓存路径 §5）+ 链接/dlopen `libnn-kernelgen.so`（dlopen 更合"单份共享"——引擎不硬链 shaderc，只在 miss 时按需拉 .so）。
+
+**任务清单（顺序）**：
+1. 引擎持有 `KernelCache`（加载自 `kernel_cache_path()`）+ 懒 dlopen `libnn-kernelgen.so`。
+2. 后端加运行期懒建 pipeline 路径（`create_pipeline_from_spirv(K, spirv, meta)` + mutable cache）。
+3. 派发 miss 路径：算 K → `KernelCache.hit` → miss → dlopen `.so` → `nnk_generate_spirv(spec, sig)` → `insert` → 懒建 pipeline → 执行；去掉硬报错（严格模式 `NN_STRICT_CLOSED_WORLD` 保留为 opt-in）。
+4. `model_warmup()`：跑代表性 forward 填充缓存（层级/表达式/模型预热）。
+5. 多进程并发写：`.nnk` 落盘用 temp+rename + 进程锁（§8）。
+
+**第一步**：先把 3 的 miss 路径接通（后端懒建 pipeline + `nnk_generate_spirv` 调用），用一个**不在内嵌注册表里**的自定义表达式做 GPU 回归（850M）——验证 JIT 现编 + 执行。这是最大风险点。
+
+**验证**：GPU 融合测试在 850M 上跑，确认 (a) 已知结构 warmup 后仍命中、逐位不变；(b) 未知结构 JIT 现编并执行，结果与 CPU 参考一致。
+
+### 10.2 Phase 3：引擎 link 阶段 + C ABI + install 布局
+
+**先行决策**：header-only 引擎翻成预编译 `.so` 的范围——**引擎 + 手写原语 shader + 生成器**编成 `libnn.so`；模板重（DSL / Layer 组合）留 header-only 在消费方实例化。C ABI 边界暴露：`Engine::create` / tensor 创建 / `eval_expr` / 模型 forward 等稳定入口（`extern "C"`，序列化/句柄传参，同 §3.2 的边界协议思路）。
+
+**任务清单（顺序）**：
+1. 引擎实现（CPU/GPU + backend）抽成编译单元（非 header-only），输出 `libnn.so`。
+2. C ABI 边界头（`nn_api.h`）+ 稳定入口。
+3. `install(GNUInstallDirs)` 完整布局：`bin/`（cli）+ `lib/`（libnn.so + libnn-kernelgen.so）+ `include/`，无散落 `.o/.obj`。
+4. cli 改为链 `libnn.so`（不再是每 TU 全编引擎）。
+5. LGPL 可用性验证（消费方能 link 可替换的 `libnn.so`）。
+
+**第一步**：定 C ABI 边界（哪些函数/对象进 `.so`，模板哪些留 header）——这决定拆分的成败，先写边界清单再动代码。
+
+**验证**：一个"外部消费者"目标链 `libnn.so` 跑通训练/推理；`install` 后从安装前缀跑 cli；ctest 全绿。
+
+### 10.3 顺序与依赖
+
+- **Phase 2 先于 Phase 3**（Phase 2 在现有 header-only 上做，风险小；Phase 3 的 `.so` 拆分在 JIT 稳定后再动）。
+- Phase 2 引擎集成不需要 Phase 3；Phase 3 依赖 Phase 2 的生成器 `.so` 形态已定型。
+- 两者都是 GPU 依赖重的工作：引擎集成 + 验证需 850M（本机 `/dev/dri` 可见，可用）。
+
+### 10.4 跨块共性风险
+
+- **pipeline 懒建 vs init 预建**：Phase 2 引入的懒建路径必须与 init 预建表语义一致（binding/PC 布局逐槽同源，否则 `vkCmdPushConstants` 超 range → 假 PASS）。
+- **dlopen 生命周期**：`.so` 句柄 + 后端 pipeline 缓存的生命周期归属（backend 持 / 进程单例）。
+- **模板 vs ABI**：Phase 3 最大难点——DSL/Layer 模板无法藏进 ABI，只能在边界序列化/句柄化。
