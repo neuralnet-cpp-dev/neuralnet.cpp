@@ -514,7 +514,7 @@ provider 只固定 pipeline 自身 RNG/计数 section，消费者 buffer/replay 
 - WSL g++ 15.2/libstdc++ 与 clang 24/libc++ / Release CPU-only：均为 **67/67**，
   其中 **48 pass + 19 skip**；
 - `scan_exprs`：库内 **158 条**融合表达式，RL 的 PPO clip/value、梯度选择和 reduction
-  路径均已进入闭合世界；
+  路径均已进入注册表（预热）；
 - `rl_gpu_smoke_test` 覆盖 GAE、PPO preset、GRPO preset 的设备执行，通过。
 
 skip 均为既有条件门禁（无 GPU 构建的 GPU 用例、缺失 CLI app 的发现类用例、以及

@@ -826,7 +826,7 @@ public:
 
         // out = num / (den + ε)：与 forward 的除法（:491）**逐 token 同构**——
         // 同一个 AOT 键由 scan_exprs 的 ReLULinearAttention dry-run 覆盖，
-        // GPU 闭合世界可命中。
+        // GPU 注册表可命中。
         auto out_r = dsl::compute(engine, dsl::leaf(*num_r) / (dsl::leaf(*den_t) + Scalar{1e-4}),
                                   (*num_r).rows(), (*num_r).cols(), p_.compute);
         NN_TRY_CHECK(out_r);

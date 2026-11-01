@@ -1,4 +1,4 @@
-// ── rl_gpu_smoke_test — RL 表达式在 Vulkan 闭合世界的端到端冒烟 ──────────
+// ── rl_gpu_smoke_test — RL 表达式在 Vulkan AOT 注册表的端到端冒烟 ────────
 //
 // 覆盖 GAE、categorical distribution、PPO policy/value clip 与 GRPO preset。
 // 无 Vulkan/设备时返回 77（ctest SKIP）。数值正确性由 CPU 门禁负责；本用例

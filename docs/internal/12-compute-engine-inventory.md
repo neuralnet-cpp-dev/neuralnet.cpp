@@ -87,7 +87,7 @@ scan_suffix_outer/outer_col——顺序状态机，DSL 无此语义）、`eval_e
 注意力组合在 `compute_layer_attention.hpp`，属 AOT 设计而非旁路）、`begin_expr`（IR-C
 录制段入口：`Adam::step`/`AdamW::step` 打开图录制，`ExprSegment` 守卫收口）。
 **三值打包**（`matmul_q`/`matmul_q_t`/`trit_pack`——`BitLinear` 的打包 GEMM 与打包，
-op-level 引擎原语，不进 DSL 闭合世界、无需 scan 登记，见 `docs/internal/21` §4.12）。
+op-level 引擎原语，不进 DSL 注册表、无需 scan 登记，见 `docs/internal/21` §4.12）。
 **`from_matrix`/`to_matrix` 自 M4 起退出本列**（铁律 #12：L2+ 禁用 Matrix 型 I/O
 动词），层自算辅助数据改走 `detail::upload_span/download_span/download_vector`
 （自由函数，不进 `engine.<op>(` 统计）。）
@@ -95,7 +95,7 @@ op-level 引擎原语，不进 DSL 闭合世界、无需 scan 登记，见 `docs
 **改写 Layer 直调点 / 扩展 DSL 时的现行规则**：
 1. **scan dry-run 禁止 `(void)` 吞错**：dry-run 必须按真实参数形态调用并在失败时
    abort 带栈——**dry-run 长期绿 ≠ 覆盖存在**，吞错的 dry-run 是静默失效的闭合
-   世界（存量表达式 key 恰好处处有登记时不会暴露，新增结构立刻闭合世界硬报错）。
+   世界（存量表达式 key 恰好处处有登记时不会暴露；新增结构立刻注册表 miss，主路径 JIT 兜底）。
 2. **带 alpha 的批量 matmul 写 `dsl::matmul(...) * dsl::rparam(alpha)` 尾链**：
    CPU（累加后乘）/GPU（写出时乘）/DSL（尾指令乘）三端同序，数值等价；alpha 必须
    rparam 不能 const（值进 key 会破坏形状无关融合，与 S7 教训 1 同族）。
@@ -170,7 +170,7 @@ DSL 表达式，见 §2.1/§7.2），eager 只剩基础设施、不可约原语�
 （`execute_fused_graph`：图 → 融合分析 → kernel 序列 → AOT dispatch，kernel 输出经
 `output_override` 直接写进尾节点占位存储 + `run_graph_kernel_into_`）；CPU 普通运行
 `begin_expr/end_expr` 是 no-op，构建期收集器 `NN_EXPR_SCAN` 下 `CpuEngine::end_expr` 跑同一套
-`fuse_expr_graph` 并登记每个融合 kernel 的 spec，使扫描与运行期一致（闭合世界）。P2 还新增
+`fuse_expr_graph` 并登记每个融合 kernel 的 spec，使扫描与运行期一致（注册表两端一致）。P2 还新增
 引擎入口 `eval_expr_multi_into`（NVI + 虚 `eval_expr_multi_into_impl`）与 `ExprSpec.extras`
 （多输出写穿，≤4）。IR 流水线现状 = IR-A/B/C/D（`expr_opt.hpp`/`expr_graph.hpp`/`expr_emitter.hpp`）。
 移除记录（原 §4.2.1–§4.2.3 盘点与提交时间线）作为历史见 `docs/history/history.md`。
@@ -271,7 +271,7 @@ L3  后端     : SIMD / 线程池 / GLSL kernel
    状态扫描 / 不可约原语 / IR-C 录制段开合。
 
 好处（必须承认）：
-- **eager 是闭合世界的逃生舱**。GPU 的 DSL 未命中 AOT 就**硬报错**（`compute_gpu_engine.hpp:996`），
+- **eager 曾是闭合世界的逃生舱**（运行期 JIT 兜底落地后，主路径 miss 走现编、不再硬报错）。GPU 的 DSL 未命中 AOT 就**硬报错**（`compute_gpu_engine.hpp:996`），
   因为 shader 必须构建期枚举；而 eager 走手写 shader（`shaders/*.comp`），不需要构建期枚举。
   所以 §7.2 ③ 那批结构原语**留在 eager 侧是设计上的必需**，不是历史包袱。
 

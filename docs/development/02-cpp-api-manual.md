@@ -146,7 +146,7 @@ int main()
 门面目标 `neuralnet::nn` 传递：C++26、include 目录、线程库、GPU 宏 `NN_HAS_VULKAN`、
 SPIR-V 嵌入头目录、Vulkan 链接与 shader 生成顺序。嵌入时 `NN_BUILD_APPS` 默认 OFF、
 `NN_ENABLE_GPU` 默认 `AUTO`。自研 `nn::dsl::compute` 表达式要一行
-`nn_enable_gpu_fusion(...)` 才进 GPU 闭合世界。
+`nn_enable_gpu_fusion(...)` 才进 GPU 注册表（预热加速）。
 
 > **完整版（全部构建开关、GPU 语义、融合注册、故障排查）见 [`01-cmake-integration.md`](01-cmake-integration.md)**；
 > 消费方视角的精简版见 [`../usage/05-consume-as-library.md`](../usage/05-consume-as-library.md)。
@@ -1038,8 +1038,8 @@ nn::prof::dump(stdout);       // 进程结束前打表（stage / op / GPU / per-
 |---|---|
 | `NN_PROFILE=1` / `NN_PROFILE_TRACE=<path>` / `NN_PROFILE_EVERY=<n>` | host + 设备侧聚合计时 / Chrome trace / 每 n 次 dump 打表 |
 | `NN_F16_DEBUG` / `NN_PREC_TRACE` / `NN_NAN_TRACE` / `NN_MEM_STATS` | 精度 / NaN / 内存归因探针（探针门 `NN_ENABLE_PROBES`） |
-| `NN_VULKAN_DEVICE` / `NN_VULKAN_NO_16BIT_ALU` / `NN_VULKAN_NO_TIMELINE` | GPU 设备与特性逃生阀 |
-| `NN_POOL_BLOCK_MB` / `NN_POOL_LADDER_MAX_MB` / `NN_NO_EARLY_REAP` / `NN_CPU_PAUSE` / `NN_GPU_PROFILE` | 内存池 / 调度 A/B |
+| `NN_VULKAN_DEVICE` / `NN_VULKAN_NO_16BIT_ALU` / `NN_VULKAN_NO_16BIT_STORAGE` / `NN_VULKAN_NO_TIMELINE` / `NN_VULKAN_NO_INT8_DOT` | GPU 设备与特性逃生阀 |
+| `NN_STRICT_CLOSED_WORLD` / `NN_KERNEL_CACHE_DIR` / `NN_KERNEL_CACHE_PATH` / `NN_KERNELGEN_PATH` | 运行期 JIT 看门狗与缓存/生成器配置 |
 
 > 探针门语义（哪些算探针、默认为什么不编译）见 [`01-cmake-integration.md`](01-cmake-integration.md)。
 
@@ -1065,7 +1065,7 @@ nn::prof::dump(stdout);       // 进程结束前打表（stage / op / GPU / per-
 
 - **写自定义层**（`Layer` 子类：`init_impl` NVI、参数注册、精度槽声明、缓存契约、
   GPU checklist、梯度自检）→ [`03-write-a-custom-layer.md`](03-write-a-custom-layer.md)。
-- **给引擎加新原语**（CPU / GPU 两后端实现、shader、AOT 闭合世界注册）→
+- **给引擎加新原语**（CPU / GPU 两后端实现、shader、AOT 注册表登记）→
   [`04-compute-engine-development.md`](04-compute-engine-development.md)。
 - **多精度语义契约（写层前必读）** → [`05-mixed-precision.md`](05-mixed-precision.md)。
 - **线性注意力家族算法** → [`08-rapt-algorithm.md`](08-rapt-algorithm.md)。

@@ -28,7 +28,7 @@
 //   变化（双向可见）；因果掩码下位置 0 只见自己 → 输出逐位不变 → 失败。
 // CSA 阴性对照：同一扰动下因果层位置 0 输出必须**不变**（证明探针本身
 //   具备区分力，而非恒真）。附带 CPU/GPU forward+backward 一致性——GPU
-//   侧同时覆盖 Plain fold key 与 MHA 裸 S 重算表达式的闭合世界注册
+//   侧同时覆盖 Plain fold key 与 MHA 裸 S 重算表达式的注册表登记
 //   （miss 会硬报错）。
 static int mha_bidirectional_probe()
 {
@@ -116,7 +116,7 @@ static int mha_bidirectional_probe()
               << (csa_ok ? " ✅" : " ❌ 探针失效(扰动列未命中)") << "\n";
     if (!csa_ok) ++failures;
 
-    // ── GPU 半场（可用时）：探针 + 一致性 + backward 闭合世界 ──────────
+    // ── GPU 半场（可用时）：探针 + 一致性 + backward 注册表命中 ─────────
     nn::cli::EngineConfig gcfg;
     gcfg.use_gpu = true;
     auto gpu_res = nn::cli::create_engine(gcfg, std::cout);
@@ -179,7 +179,7 @@ static int mha_bidirectional_probe()
     if (!cons_ok) ++failures;
 
     // backward 一致性：两侧最后 forward 对齐为同一输入后反传同一梯度
-    // （GPU 侧触发 MHA 裸 S 重算表达式——scan 闭合世界注册的验针）
+    // （GPU 侧触发 MHA 裸 S 重算表达式——scan 注册表登记的验针）
     auto b1c = attn_c.forward(*t1);
     auto b1g = attn_g.forward(*g1);
     if (!b1c || !b1g)

@@ -60,6 +60,21 @@ expr_opt / expr_registry / expr_spec）「历史状态类注释」摘录。整�
 原理、契约与理由；本文件保存被移出的历史叙事（bug 根因、被否决方案、性能 A/B 过程、
 删除清单），供追溯用。
 
+## AOT 闭合世界 → 运行期 JIT 兜底（GPU 表达式执行，2026-11-01）
+
+- 类型：演进记录（架构翻转）
+- **原状**：铁律 #7「AOT 闭合世界：GPU 表达式 shader 全部构建期生成，运行时按
+  `expr_spec_key` 精确匹配，未命中硬报错，无 eager、无运行时编译」；GPU 表达式
+  miss 一律硬报错，scan_exprs 覆盖缺口的唯一出路是补登记（原位置：AGENTS.md 铁律 #7、
+  `expr_dsl.hpp` 头注释、`compute_gpu_engine.hpp` 各 eval 入口注释与错误消息）。
+- **改动**：引擎引入运行期 JIT（设计见 `docs/internal/33-kernel-cache-and-engine-decouple.md`）：
+  `eval_expr` 主路径 miss → 懒加载 `libnn-kernelgen.so` 现编 SPIR-V → 后端懒建 pipeline →
+  执行；内嵌注册表降级为**预热加速器**（非派发硬约束）；`NN_STRICT_CLOSED_WORLD=1`
+  恢复硬报错（opt-in 看门狗）。**接线边界**：fold 与 `eval_expr_reduce` / `eval_expr_into` /
+  `eval_expr_multi_into` 入口的 miss 仍硬报错（JIT 未覆盖）。AGENTS.md 铁律 #7 / §7 / §12 与
+  全部相关头注释、测试注释同步改写；本条目为归档。与同批落地的引擎 .so 化（T9）同日在
+  `feature/kernel-cache` 分支，未合入 main。
+
 ## fold 结构全部自登记：注意力组合与 v1 样例改由定义方挂锚（P4-4 ①，2026-10-15）
 
 - 类型：演进记录 / 覆盖缺口收口（"手写登记块漏项 = GPU 闭合世界硬报错"的最后一个已知点）

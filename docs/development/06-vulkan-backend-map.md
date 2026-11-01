@@ -142,7 +142,7 @@ L3+ model / domain / cli / app
 3. `GpuEngine` 加 `*_impl`：只做形状/精度决策，把"怎么录"交给后端。
 4. 后端加一个 `*_gpu`：`alloc_desc_set_for` → push constants → dispatch →
    barrier（不再手写 `VkWriteDescriptorSet`）。
-5. `shaders/scan_exprs` 不需要登记（op-level 原语不进 AOT 闭合世界）。
+5. `shaders/scan_exprs` 不需要登记（op-level 原语不进 AOT 注册表）。
 
 ## 7. 怎么加一个 pipeline 变体
 

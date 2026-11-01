@@ -13,9 +13,9 @@
 //    2. GPU（AOT，无运行时生成）：to_expr_spec(expr) 在编译期把同一表达式折叠
 //       成扁平 ExprSpec → 与预生成融合 shader 比对 → dispatch。
 //
-//  闭合世界（closed-world）约定：代码里用到的表达式集合 = AOT 生成的 shader 集合。
-//  运行时若遇到未预生成 shader 的表达式，GPU 直接**硬报错**，绝不静默回退
-//  （设计上不设 eager 回退路径，把"难以察觉的漂移"变成"立即暴露的错误"）。
+//  AOT 注册表约定：代码里用到的表达式集合 = 构建期 AOT 生成的 shader 集合
+//  （预热加速器）。运行时未命中默认走运行期 JIT 现编兜底；NN_STRICT_CLOSED_WORLD=1
+//  恢复硬报错（把"难以察觉的漂移"变成"可选的立即暴露"）。
 //
 //  设计要点：
 //    - 算子复用 nn::ops（唯一的算子来源，op_id() 统一映射到 ExprOp）。
@@ -1092,7 +1092,7 @@ template <nn::dsl::DslExpr E> [[nodiscard]] constexpr auto operator-(const E& e)
 { return Unary<ops::Neg, E>{e}; }
 
 // ══════════════════════════════════════════════════════════════════════════
-// GPU AOT：编译期表达式 → 扁平 ExprSpec + 输入张量（闭合世界分发用）
+// GPU AOT：编译期表达式 → 扁平 ExprSpec + 输入张量（AOT 注册表分发用）
 // ══════════════════════════════════════════════════════════════════════════
 template <typename E>
 [[nodiscard]] std::pair<ExprSpec, std::vector<Tensor>> to_expr_spec(const E& e)
@@ -1534,7 +1534,7 @@ template <typename E>
 //
 // 层侧 dry-run 大多以 (void) 调用，返回的错误会被静默吞掉：若结构本身非法
 // （例：裸分组归约视图做根节点 → 空指令表），扫描会"跑完"却不登记任何结构，
-// 直到 GPU 运行期才暴露 validate_expr_spec / 闭合世界报错——CPU 模板路径不校验，
+// 直到 GPU 运行期才暴露 validate_expr_spec / 注册表 miss（JIT 兜底）——CPU 模板路径不校验，
 // 于是这类问题只在 GPU 上出现。扫描模式下统一在此硬失败，把运行期错误前移到构建期。
 //
 // 退出方式必须是 _Exit 而非 abort：扫描 dry-run 期间线程池 worker 存活，实测
@@ -1610,14 +1610,14 @@ struct FoldAnchor
 // 折叠表达式 → 校验 → 登记进全局注册表，并返回折叠出的 spec（compute_reduce
 // 还要用它判定归约轴）。
 // 登记两项：
-//   ① **结构**（按 canonical key 去重）——运行期闭合世界的键；
+//   ① **结构**（按 canonical key 去重）——运行期注册表的键；
 //   ② **观察到的精度签名**（真实张量精度 + 真实 P）——生成阶段据此发
 //      **编译期特化** shader（键 `key#xxxx`，f16 存储 + f32 算术）。这是一个
 //      纯优化：热循环里不带 `prec` 三元（实测 CE 融合注意力 −18%）；
 //      未枚举到的签名仍由运行期分派变体 `key#x` 兜底。
 // 锚点（FusedAnchor，按**类型**登记）由本函数统一 odr-use，保证三个入口的
 // 锚点覆盖行为一致（此前三处各写一遍，漏一处 = 该入口的调用点失去编译期可达
-// 覆盖，且只在 GPU 闭合世界报错时才暴露）。锚点路径的输入是**符号占位张量**
+// 覆盖，且只在 GPU 注册表 miss（JIT 兜底）时才暴露）。锚点路径的输入是**符号占位张量**
 // （默认 f32）→ 其签名恒 0，不会污染特化集合。
 template <class Expr>
 [[nodiscard]] inline ExprSpec scan_register(const Expr& e, Precision P = Precision::F32)
@@ -1646,8 +1646,8 @@ template <class Expr>
 // ══════════════════════════════════════════════════════════════════════════
 // 统一入口：engine.compute(expr, rows, cols[, P])
 //   CPU：编译期模板求值（SIMD 融合）。
-//   GPU：闭合世界 AOT —— to_expr_spec 折叠 → engine.eval_expr 匹配预生成
-//        shader；未命中由 eval_expr 硬报错（无 eager）。
+//   GPU：AOT 注册表 —— to_expr_spec 折叠 → engine.eval_expr 匹配预生成 shader；
+//        未命中默认运行期 JIT 现编（NN_STRICT_CLOSED_WORLD=1 恢复硬报错）。
 //
 // P = **输出存储精度**（多精度，docs/development/05-mixed-precision.md §8.1）。
 //   · 默认 F32：未显式指定即按 f32 求值；Layer 按 §8.5 约定显式传 p_.compute / p_.stable。
@@ -1678,7 +1678,7 @@ template <typename E>
     (void)eng;
     // IR-C：个体结构**恒登记**（录制段内也登记——锚点的
     // 符号实例与运行期实例可能折叠出不同 key，双保险；注册表按 key 去重，
-    // 冗余无害。P2 教训：只入图不登记会让未融合回退/单节点 kernel 闭合世界
+    // 冗余无害。P2 教训：只入图不登记会让未融合回退/单节点 kernel 走 JIT 兜底
     // miss），录制段内再入图（end_expr 时融合并登记复合 spec）。
     const ExprSpec reg_spec = scan_register(e, P);
     if (auto* g = fused::recording_graph())
@@ -1722,7 +1722,7 @@ template <typename E>
 
     auto [spec, inputs] = to_expr_spec(e);
     NN_TRY(v, validate_expr_spec(spec, inputs.size()));
-    return eng.eval_expr(spec, inputs, rows, cols, P);  // 闭合世界：GPU 未命中即报错
+    return eng.eval_expr(spec, inputs, rows, cols, P);  // AOT 注册表：GPU 未命中走 JIT 兜底
 #endif
 }
 

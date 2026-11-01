@@ -16,7 +16,7 @@
 |------|---------|--------|
 | **架构** | 分层引擎化 | 一次编写 Layer，CPU/GPU 零修改双跑 |
 | **架构** | 铁律式职责划分 | 算法留 Layer、原语进引擎、Shader 是内部实现 |
-| **编译** | AOT 闭合世界表达系统 | 表达式文本唯一、构建期扫描生成、运行时按 key 精确分发 |
+| **编译** | AOT 注册表表达系统（JIT 兜底） | 表达式文本唯一、构建期扫描生成、运行时按 key 精确分发；主路径未命中 JIT 现编 |
 | **性能** | 自适应并行 + 零分配线程池 | 自适应并行、消除每次任务的堆分配 |
 | **性能** | 表达式模板零临时矩阵 | `a + b * c` 不物化中间结果 |
 | **显存** | 结构融合（而非手写 kernel） | 三粒度融合：逐元素链 / matmul+归约 / fold 流式注意力 |
@@ -69,7 +69,7 @@ Shader / 融合逻辑是引擎内部实现，用户不可见
 
 ---
 
-## 2. AOT 闭合世界表达系统（Compiler-Style）
+## 2. AOT 注册表表达系统（Compiler-Style，主路径 JIT 兜底）
 
 这是本项目**最具工程创新性**的设计，把"表达式"当成一门可编译的语言：
 
@@ -83,13 +83,13 @@ Shader / 融合逻辑是引擎内部实现，用户不可见
 Layer 内联表达式 → to_expr_spec 折叠 → ExprSpec（扁平 SSA IR）
     → expr_spec_key（规范结构 key）→ scan_exprs 收集
     → 生成阶段 用 glsl_gen 合成 GLSL → glslc → 内联 SPIR-V → fused_registry.hpp
-运行时：fold → key → find_fused(key) → 精确 dispatch（闭合世界）
+运行时：fold → key → find_fused(key) → 精确 dispatch（注册表命中；miss 主路径 JIT 兜底）
 ```
 
 **创新点**：
-- **闭合世界（closed world）**：所有可能出现的融合 kernel 都在构建期预编译、内联进最终程序。运行时**没有编译器、没有 eager 分发**。
+- **AOT 注册表（预热加速）**：库内已知的融合 kernel 在构建期预编译、内联进最终程序；`eval_expr` 主路径未命中走运行期 JIT 现编兜底（懒加载 `libnn-kernelgen.so` → 生成 SPIR-V → 懒建 pipeline）。
 - **派生而非手写**：`scan_exprs` 通过 dry-run 执行 Layer 的 forward/backward 触达表达式，把折叠后的**结构（派生物）**采集进注册表，而不是手工维护一份 kernel 清单。
-- **未命中硬报错**：GPU 上遇到未预生成的表达式结构，**硬报错**并且绝不静默回退 CPU，保持项目"不降级"哲学——据此暴露扫描覆盖缺口。
+- **未命中策略**：GPU 上遇到未预生成的表达式结构，主路径默认 JIT 现编；`NN_STRICT_CLOSED_WORLD=1` 恢复硬报错（opt-in 看门狗），绝不静默回退 CPU，保持项目"不降级"哲学。
 
 ### 2.3 确定性 key 铁律
 
@@ -131,9 +131,9 @@ attention / softmax / layernorm 这类算法名。
 
 ### 3.4 形状无关融合（关键创新）
 
-RoPE 的 `RowMod/RotateHalf` 参数如果以**结构常量**折进 key，每个 `d_k` 就要一个新融合 shader → 闭合世界无法穷举。
+RoPE 的 `RowMod/RotateHalf` 参数如果以**结构常量**折进 key，每个 `d_k` 就要一个新融合 shader → 注册表无法穷举。
 
-**解决**：把形状相关参数（mod/block）从 key 里**拿出来变成运行时 push constant**。结构相同、形状不同共享同一融合 shader——任意 `d_k`（含非 2 的幂）都全融合，零额外显存。这是"闭合世界"与"形状多变"矛盾的一个优雅解法。
+**解决**：把形状相关参数（mod/block）从 key 里**拿出来变成运行时 push constant**。结构相同、形状不同共享同一融合 shader——任意 `d_k`（含非 2 的幂）都全融合，零额外显存。这是"AOT 注册表"与"形状多变"矛盾的一个优雅解法。
 
 ---
 
@@ -189,7 +189,7 @@ RoPE 的 `RowMod/RotateHalf` 参数如果以**结构常量**折进 key，每个 
 
 - **IR-A canonicalize**：DCE + 常量折叠 + 代数化简 + 稳定重编号（保守、不改变浮点语义）。
 - **IR-B CSE + 寄存器分配**：哈希指令去重，liveness 线性扫描确定性贪心分配寄存器。
-- **IR-C 图 IR + 融合分析**：**现行**——`engine.begin_expr()/end_expr()` + `ExprSegment` RAII 守卫 + `expr_graph.hpp` 做图级跨表达式融合：**P1 链**（单输出逐元素链、允许 matmul 头段）与 **P2 分量**（纯逐元素 F32 同形状节点按依赖边连通成组，多消费者/菱形不再是边界，成员输出全部写穿 = `ExprSpec.extras`，≤4）。GPU 真录制（`execute_fused_graph`），CPU 普通运行 no-op，`NN_EXPR_SCAN` 下构建期扫描与运行期融合一致（闭合世界）。首个生产调用方是 Adam/AdamW——每参数张量的 m/v 写穿 + delta + `p += delta` 收敛为**一个多输出 kernel**；`NN_PROFILE` 实测（GPU 40HX，GPT d_model=64/4 层/heads=4/seq=256/batch=64，`adam`，20 步）设备 kernel **266 → 66.5 每步**、设备时间 **0.57 → 0.23 ms/step**。不需要写穿的长链仍可直接写成一个 `dsl::compute`。历史取舍见 `docs/history/history.md`。
+- **IR-C 图 IR + 融合分析**：**现行**——`engine.begin_expr()/end_expr()` + `ExprSegment` RAII 守卫 + `expr_graph.hpp` 做图级跨表达式融合：**P1 链**（单输出逐元素链、允许 matmul 头段）与 **P2 分量**（纯逐元素 F32 同形状节点按依赖边连通成组，多消费者/菱形不再是边界，成员输出全部写穿 = `ExprSpec.extras`，≤4）。GPU 真录制（`execute_fused_graph`），CPU 普通运行 no-op，`NN_EXPR_SCAN` 下构建期扫描与运行期融合一致（注册表两端一致）。首个生产调用方是 Adam/AdamW——每参数张量的 m/v 写穿 + delta + `p += delta` 收敛为**一个多输出 kernel**；`NN_PROFILE` 实测（GPU 40HX，GPT d_model=64/4 层/heads=4/seq=256/batch=64，`adam`，20 步）设备 kernel **266 → 66.5 每步**、设备时间 **0.57 → 0.23 ms/step**。不需要写穿的长链仍可直接写成一个 `dsl::compute`。历史取舍见 `docs/history/history.md`。
 - **IR-D emitter 抽象**：`ExprEmitter` 接口 + 注册表，一份 canonical IR 可产出多后端代码（后端实现按接口注册；当前注册的只有 `glsl` 后端）。
 
 ### 6.3 关键不变量
@@ -284,7 +284,7 @@ f32 以控制数值风险；BF16/F64 为"使用即报错"的保留值）。数�
 |------|------|
 | **合规红线先行** | 每次设计与改动（融合/IR/显存）都先写"不可逾越红线"表，再谈实现 |
 | **结构 > 命名的哲学** | 引擎认结构不认算法名，是融合与 IR 能落地的共同前提 |
-| **闭合世界 + 硬报错** | 不静默降级，宁可报错暴露覆盖缺口 |
+| **AOT 注册表 + JIT 兜底** | 不静默回退 CPU；主路径未命中 JIT 现编（`NN_STRICT_CLOSED_WORLD=1` 可恢复硬报错） |
 | **恶意保守的正确性安全网** | GPU 融合未命中 = 硬报错（铁律 7，暴露扫描覆盖缺口、绝不静默降级）；融合路径与 CPU 参考数值一致并互相验证 |
 | **数值确定性** | 定点可复现、优化 pass 不改变浮点语义；默认 f32，f16 须显式 `PrecisionProfile` |
 | **可验证增量里程碑** | M1-M6 每步有独立测试验证（gradcheck / CPU 对照），先小层数回归再全面放开 |

@@ -120,7 +120,7 @@ void test_f32_zero_regression(nn::ComputeEngine& raw, nn::ComputeEngine& eng)
     }
 }
 
-// DSL 版 f32 零回归（CPU：不受 AOT 闭合世界约束）
+// DSL 版 f32 零回归（CPU：不受 AOT 注册表约束）
 void test_f32_zero_regression_dsl(nn::ComputeEngine& raw, nn::ComputeEngine& eng)
 {
     nn::Matrix a = make_rand(16, 8, 1);
@@ -851,9 +851,9 @@ void run_suite(const char* label, nn::ComputeEngine& raw, nn::ComputeEngine& ada
     test_f32_zero_regression(raw, adapter);
     test_f16_move(raw, adapter);
     test_f16_reduce_matmul(raw, adapter);
-    // 任意表达式（DSL）在 GPU 上受 AOT 闭合世界约束：只能命中构建期 scan_exprs
-    // 登记过的结构。故这里只在 CPU 跑任意表达式；GPU 的 DSL / 原地 / 端到端
-    // 由 test_f16_model_e2e（Layer 结构 = 已登记结构）覆盖。
+    // 任意表达式（DSL）在 GPU 上优先命中构建期 scan_exprs 登记过的结构
+    // （未登记走 JIT 兜底、有冷启动开销）。故这里只在 CPU 跑任意表达式；
+    // GPU 的 DSL / 原地 / 端到端由 test_f16_model_e2e（Layer 结构 = 已登记结构）覆盖。
     if (allow_arbitrary_expr)
     {
         test_f32_zero_regression_dsl(raw, adapter);
@@ -876,7 +876,7 @@ int main()
 {
     std::printf("f16_precision_test（Phase 2：f16 存储经基类边界 cast 生效）\n");
 
-    // CPU（始终运行；任意 DSL 表达式不受 AOT 闭合世界约束）
+    // CPU（始终运行；任意 DSL 表达式不受 AOT 注册表约束）
     {
         auto cpu_owner = nn::create_cpu_engine();
         nn::ComputeEngine& cpu = *cpu_owner;

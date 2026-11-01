@@ -13,7 +13,7 @@
 //       GLSL（glsl_gen.hpp）→ glslc → SPIR-V → 内联进 fused_registry.hpp
 //       （key → spirv）。**不经 .bin 中间序列化**（原 gen_fused 已并入）。
 //    ③ 运行时 eval_expr 折叠内联表达式 → expr_spec_key → 查嵌入映射
-//       → dispatch。未命中硬报错（闭合世界，见 expr_dsl.hpp 的锚点说明）。
+//       → dispatch。未命中走运行期 JIT 兜底（NN_STRICT_CLOSED_WORLD=1 恢复硬报错；见 expr_dsl.hpp 锚点说明）。
 //
 //  表达式**文本**只出现在 Layer；生成头是折叠后的**派生物**，
 //  非手写定义，故不违反"表达式只在 Layer"的约束。

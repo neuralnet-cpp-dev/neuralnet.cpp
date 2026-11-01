@@ -71,9 +71,10 @@ add_subdirectory(3rd_party/neuralnet.cpp)
   `NN_HAS_VULKAN` 宏、44 份原语 SPIR-V 嵌入头 + 库自身 `fused_registry.hpp` 的 include
   目录、`Vulkan::Vulkan` 链接、以及「shader 生成先于你的 TU 编译」的顺序依赖。
   源码里 `#ifdef NN_HAS_VULKAN` 即可分支，无需自己写任何 Vulkan 相关 CMake。
-- **闭合世界**：库内层的融合 shader 在库构建期全部生成；你的目标直接跑库内层**开箱即用**。
-  但若你在自己的层里写了 `nn::dsl::compute` 表达式，必须再加一行（见 §4）——否则 GPU
-  运行期会按 `expr_spec_key` **硬报错**（无 eager 回退，这是 AOT 闭合世界的设计）。
+- **注册表（预热）**：库内层的融合 shader 在库构建期全部生成；你的目标直接跑库内层**开箱即用**。
+  若你在自己的层里写了 `nn::dsl::compute` 表达式，建议再加一行（见 §4）让结构进注册表、
+  免 JIT 冷启动——否则 GPU 运行期按 `expr_spec_key` 未命中时主路径走运行期 JIT 现编
+  （`NN_STRICT_CLOSED_WORLD=1` 恢复硬报错）。
 - **`NN_ENABLE_GPU=AUTO` 的静默降级**：找不到 Vulkan 时走纯 CPU（与本仓行为一致）。
   想要"没 GPU 就失败"用 `ON`。
 

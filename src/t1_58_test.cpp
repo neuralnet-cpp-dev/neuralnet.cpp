@@ -595,7 +595,7 @@ bool test_training(nn::ComputeEngine& eng, const char* dev)
 
     float first = -1.f, last = -1.f;
     constexpr int STEPS = 300;
-    // 失败时打印引擎错误原文（GPU 上多为"闭合世界未命中/精度签名不支持"）
+    // 失败时打印引擎错误原文（GPU 上多为"注册表 miss（JIT 兜底）/精度签名不支持"）
     const auto report = [](const char* what, const std::string& msg)
     {
         std::printf("    [FAIL] %s: %s\n", what, msg.c_str());

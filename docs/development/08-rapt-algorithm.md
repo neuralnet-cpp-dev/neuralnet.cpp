@@ -195,7 +195,7 @@ CPU 实现**逐位一致**（门禁 `scan_bitwise_test`）。**dk ≤ 32 走窄�
 | `text_train --model rapt --gpu` | 319 步：loss 6.3→3.9，10.3s，无 TDR |
 | `text_infer --model rapt --gpu` | 16 token 0.4s；forward_step GPU 录制路径验证通过 |
 
-> 扫描原语是手写 shader，不进融合注册表（闭合世界不受影响，AOT 收集条数不变）；
+> 扫描原语是手写 shader，不进融合注册表（注册表不受影响，AOT 收集条数不变）；
 > GPU 侧接线实现见 `compute_gpu_engine.hpp` 与 `backend/compute_vk_backend.hpp`。
 
 ---
@@ -206,7 +206,7 @@ CPU 实现**逐位一致**（门禁 `scan_bitwise_test`）。**dk ≤ 32 走窄�
 由注意力 forward 的**单 fold kernel 分块流式**实现（`FoldSpec`：QKᵀ/掩码/online softmax/ΣwV 逐
 `EXPR_FOLD_BLOCK=128` 块完成，S 矩阵绝不物化，见 `../contributors/pitfalls.md` §4 与
 `compute_layer_attention.hpp` 头注释）。掩码变体（Plain/Causal/Alibi/Doc/AlibiDoc）经 `FoldSpec`
-登记，漏登记即 GPU 闭合世界硬报错。backward 为 R/X 表达式 + 3 个 `batched_matmul`。
+登记，漏登记即 GPU 注册表 miss（主路径 JIT 兜底）。backward 为 R/X 表达式 + 3 个 `batched_matmul`。
 
 > 与传统两趟式多 kernel 注意力（W 物化供复用）的对照分析已移入 `docs/history/history.md`。
 

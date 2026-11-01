@@ -530,7 +530,7 @@ int test_expr_fold()
     // 注意力 fold 的结构自登记（`compute_layer_attention.hpp` 的
     // `attn_fold_anchor`）只登记**一组代表形状**（seq=64/dk=2/bh=2，kv_ratio
     // 取 1 与 2）——它能覆盖所有真实调用点的前提 = "这些量都不进 key"。本段把
-    // 该前提锁成契约（违反 → 闭合世界对真实形状 miss）：
+    // 该前提锁成契约（违反 → 注册表对真实形状 miss，走 JIT 兜底）：
     //   ① 同一组合在任意形状下 key 相同（含 GQA 比：2 ≡ 4，任意 n_rep 共用）；
     //   ② 10 个组合（掩码清单 × {无偏置, 位置偏置} −"Plain+偏置"，× {MHA,GQA}）
     //      两两不同（登记少一条 = GPU 硬报错）。

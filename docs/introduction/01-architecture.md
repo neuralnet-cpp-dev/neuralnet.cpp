@@ -269,7 +269,7 @@ class Tensor {
 | 归约级 | `row_reduce_sum`, `col_reduce_sum/max`, `grouped_reduce_sum/max`（沿行按固定长度 R 分组归约） |
 | 数据操作 | `slice_rows`, `insert_rows`, `gather_rows`, `scatter_add_rows`, `rearrange_3d`, `im2col`, `col2im`, `clone`, `copy_from`, `cast` |
 | 扫描级 | `scan_prefix_outer`, `scan_suffix_outer`, `outer_col`（RLA/RAPT，dk≤64） |
-| 表达式 | `eval_expr`, `eval_expr_reduce`（AOT 融合 shader 入口，闭合世界硬报错） |
+| 表达式 | `eval_expr`, `eval_expr_reduce`（AOT 融合 shader 入口；主路径未命中 JIT 兜底） |
 | 批控制 | `begin_batch` / `end_batch`（CPU: no-op; GPU: command buffer） |
 | 内存 | `release_idle_pool_blocks`, `pool_stats` |
 | offload | `create_offload_buffer`, `offload_save/restore`（activation offload） |
@@ -289,10 +289,10 @@ class Tensor {
 | `fused_registry.hpp` | **生成物**（构建期 生成阶段 产出）：`key → {ExprSpec 结构, 内联 SPIR-V}` 融合 shader 注册表；运行时按 key 精确匹配 |
 | `tools/scan_exprs.cpp` | 构建期工具（**单步** = 收集 + 生成）：`FusedAnchor` 按类型自登记结构 + dry-run/模型 pass 补签名，随后原地生成 `fused_registry.hpp` |
 | `tools/fused_generate.hpp` | 生成阶段（原独立工具 `gen_fused`，现为 `scan_exprs` include 的头文件）：注册表 → `glsl_gen` → glslc → 内联 SPIR-V → `fused_registry.hpp` |
-| `eval_expr` | `ComputeEngine` 虚接口：CPU 编译期模板求值（经 `dsl::compute`）；Vulkan 按 `expr_spec_key` 查 `fused_registry`（闭合世界，未命中硬报错，无 eager、无运行时编译） |
+| `eval_expr` | `ComputeEngine` 虚接口：CPU 编译期模板求值（经 `dsl::compute`）；Vulkan 按 `expr_spec_key` 查 `fused_registry`（AOT 注册表；主路径未命中运行期 JIT 兜底） |
 | `dsl::compute(engine, expr[, P])` | 统一求值入口（输出形状由表达式推导；显式形式 `dsl::compute(engine, expr, rows, cols[, P])` 并存）：CPU 走编译期模板；GPU 折叠成 `ExprSpec` → `eval_expr` 按 key AOT 分发 |
 
-> **AOT 收集原则**：表达式**文本只出现在 Layer**（内联写进 `forward/backward`）。构建期 `scan_exprs` 只收集折叠后的 `ExprSpec` **结构**（派生物，非手写定义）：由 `FusedAnchor<Expr>` 按表达式类型自登记（编译期可达，dry-run 跑不到的分支也覆盖），再由 dry-run / 模型 pass 补齐运行期配置相关的结构；随后同进程为每个结构发三份 shader（全 f32 / **运行期精度分派** `key#x` / native16 `key#a`）并内联进 `fused_registry.hpp`。**精度签名不是构建期集合**——分派 shader 声明输入/输出双视图、按 PC `prec` 走 uniform 分支，覆盖任意签名，故运行时无 miss、无边界 cast 回退、无回填清单。运行时按 key 精确匹配 dispatch，最终程序自包含、无运行时编译器。**登记方式**：fold 值构造经 **`FoldAnchor`** 自登记（与 `FusedAnchor` 同机制——新 fold 构造无需改 `scan_exprs`）：通用样例在 `expr_fold.hpp`（含 `make_fold_logsumexp`，不含注意力语义），**注意力 fold spec 由 `make_fold_attn_o` 所在的 `compute_layer_attention.hpp` 自登记**（层直调 `engine.eval_expr` 不经 DSL 钩子，故由定义方经 `FoldAnchor` 在静态初始化期登记全部组合）——掩码清单是 X 宏单一真源（枚举与登记表由它展开），**掩码（`AttnMaskKind`）× 位置偏置（`bool score_bias`）× {MHA, GQA} 的实际组合不会有"漏列一行"的缺口**（P4-4 ①，2026-10-15）。
+> **AOT 收集原则**：表达式**文本只出现在 Layer**（内联写进 `forward/backward`）。构建期 `scan_exprs` 只收集折叠后的 `ExprSpec` **结构**（派生物，非手写定义）：由 `FusedAnchor<Expr>` 按表达式类型自登记（编译期可达，dry-run 跑不到的分支也覆盖），再由 dry-run / 模型 pass 补齐运行期配置相关的结构；随后同进程为每个结构发三份 shader（全 f32 / **运行期精度分派** `key#x` / native16 `key#a`）并内联进 `fused_registry.hpp`。**精度签名不是构建期集合**——分派 shader 声明输入/输出双视图、按 PC `prec` 走 uniform 分支，覆盖任意签名，故运行时无 miss、无边界 cast 回退、无回填清单。运行时按 key 精确匹配 dispatch，AOT 为预热加速；主路径未命中走运行期 JIT 现编。**登记方式**：fold 值构造经 **`FoldAnchor`** 自登记（与 `FusedAnchor` 同机制——新 fold 构造无需改 `scan_exprs`）：通用样例在 `expr_fold.hpp`（含 `make_fold_logsumexp`，不含注意力语义），**注意力 fold spec 由 `make_fold_attn_o` 所在的 `compute_layer_attention.hpp` 自登记**（层直调 `engine.eval_expr` 不经 DSL 钩子，故由定义方经 `FoldAnchor` 在静态初始化期登记全部组合）——掩码清单是 X 宏单一真源（枚举与登记表由它展开），**掩码（`AttnMaskKind`）× 位置偏置（`bool score_bias`）× {MHA, GQA} 的实际组合不会有"漏列一行"的缺口**（P4-4 ①，2026-10-15）。
 
 ### L3 实现层
 

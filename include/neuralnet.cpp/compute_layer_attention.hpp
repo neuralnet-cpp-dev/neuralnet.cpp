@@ -286,7 +286,7 @@ inline const bool g_attn_fold_anchors = attn_fold_anchor::register_all();
 //    append_fold_inputs() → 按 make_fold_attn_o 的 views 顺序追加 fold 输入
 //    masked_scores()      → 反向重算 S 的 DSL 文本（与 fold 掩码语义同构）
 //
-//  AOT 闭合世界：每条 masked_scores() 的表达式文本都必须被 scan_exprs 的
+//  AOT 注册表：每条 masked_scores() 的表达式文本都必须被 scan_exprs 的
 //  对应掩码 dry-run 覆盖。
 // ═══════════════════════════════════════════════════════════════════════════
 class AttnScoreMask
@@ -796,7 +796,7 @@ public:
             NN_TRY(ke, pos_->apply_qk(engine, K, seq, /*backward=*/false));
         }
         // 2.6 scale（1/sqrt(d_k)）折进 Q（Q *= scale）：注意力表达式不含
-        // scale 常量 → 结构与 d_k 无关（不同 d_k 共享融合 shader，闭合世界
+        // scale 常量 → 结构与 d_k 无关（不同 d_k 共享融合 shader，注册表
         // key 稳定）。backward 的 grad_Q 相应补乘 scale。
         // 写法用 dsl::compute_into（零分配原地写）；dsl::compute 是分配版
         // （另分配一整块缓冲），此处不适用。
@@ -1275,7 +1275,7 @@ public:
 //  输入。伴随正确性（dL/dK、dL/dV 累加回 memory 路径）与自反向同一套
 //  R/X 机器，仅形状参数不同。
 //
-//  AOT 闭合世界：fold（Plain/no-bias）与 backward 表达式结构与
+//  AOT 注册表：fold（Plain/no-bias）与 backward 表达式结构与
 //  MultiHeadAttention 完全同 key（k/seq 是形状参数不进 key）——scan_exprs
 //  的 CrossAttention dry-run（seq_q ≠ seq_kv 矩形形状）另行登记确保覆盖。
 // ══════════════════════════════════════════════════════════════════════════

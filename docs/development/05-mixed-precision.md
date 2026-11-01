@@ -442,7 +442,7 @@ compute/stable/optimizer 与 `--f16` 逐字段相同；字面"四槽全 f16 + �
 
 ## 11. 对现有架构的影响
 
-### 11.1 AOT 闭合世界（铁律 7，Q6 分期）
+### 11.1 AOT 注册表（铁律 7，Q6 分期）
 
 - **精度不进结构 key。** `expr_spec_key` 保持无精度维度；f16 变体按 **`(key, ExprPrecSig)`** 注册（签名 = 逐输入 bit + 输出 bit，`sig == 0` = 全 f32 → 键就是结构 key 本身）——故全 f32 路径的注册表 key、bin 内容、生成器产物逐字节不变（**全 f32 = 零回归**，`f16_precision_test` 逐字节断言）。变体段在 bin v9（`kExprBinVersion = 9`，每变体只存 `{sig, 基础结构下标}`，见 §12.6）。
 - **三条 f16 执行路径**（当前）：① in-kernel f16 变体——`GlslEmitter` 按签名把缓冲声明为 `float16_t`、读写点转换（算术默认 f32，§7.2）；同一 `(key, sig)` 另可生成 **native16** 变体（f16 ALU 算术，键 `key#sig#a`），按设备 `shaderFloat16` 能力选择 pipeline、运行时优先命中 native16、回退 f32 算术变体；② op-level f16 GEMM——手写 GEMM shader 用 `-DNN_SHADER_F16` 编出第二份 SPIR-V，按操作数精度选 pipeline；③ 无变体可命中时回退 **边界 cast**（`ComputeEngine` 基类 NVI 入口抬 f32 计算、按 P 落回）。
@@ -633,7 +633,7 @@ compute/stable/optimizer 与 `--f16` 逐字段相同；字面"四槽全 f16 + �
 
 ### 12.9 池底材粒度 A/B
 
-**当前结论：池底材粒度不是峰值杠杆。** 同窗交错 A/B 复测三档池配置（默认 12MB 固定块 / `NN_POOL_LADDER_MAX_MB=16` / `NN_POOL_BLOCK_MB=4`）：峰值均值差仅个位数百分比、耗时无差异 → **池保持默认**；`NN_POOL_BLOCK_MB` / `NN_POOL_LADDER_MAX_MB` 只作探针 / 实验旋钮（`text_train` 的提示指向本节）。方法论教训：**跨会话单点 + 不同时段的对照组会被系统漂移误导；机制之争必须用形状/尺寸归因表裁决（§12.10），不要用总量推理。**
+**当前结论：池底材粒度不是峰值杠杆。** 同窗交错 A/B 复测三档池配置（默认 12MB 固定块 / 16MB 阶梯 / 4MB 小块）：峰值均值差仅个位数百分比、耗时无差异 → **池保持默认**；`NN_POOL_BLOCK_MB` / `NN_POOL_LADDER_MAX_MB` 调参变量已随实现收敛删除（2026-11，遗留只读注释），底材粒度现为编译期常量。方法论教训：**跨会话单点 + 不同时段的对照组会被系统漂移误导；机制之争必须用形状/尺寸归因表裁决（§12.10），不要用总量推理。**
 
 > 本节原始 A/B 数据（含一个不可复现的"−21% 峰值 + 2× 耗时"跨会话单点）与复盘见 `docs/history/history.md`。
 > 仍有效的副产物：`NN_PREC_TRACE=1` 的 `[prec][miss]` 打印——真实 GPT 配置 38 个非零签名请求只 6 个未命中（eval_expr 路径 84% 已原生），说明 cast 大头不在融合路径上。
@@ -644,7 +644,7 @@ compute/stable/optimizer 与 `--f16` 逐字段相同；字面"四槽全 f16 + �
 
 #### ① 池粒度裁决（§12.9 的复测）
 
-`bench/run_ab_env.ps1`（按 env/args **同窗交错** A/B + 峰值/耗时配对）复测三档池配置（默认 12MB 固定块 / `NN_POOL_LADDER_MAX_MB=16` / `NN_POOL_BLOCK_MB=4`）→ 峰值均值差仅个位数百分比、耗时全部 ≈5.7s：**池粒度不是杠杆，池保持默认**；`NN_POOL_BLOCK_MB` / `NN_POOL_LADDER_MAX_MB` 是探针 / 实验旋钮（`text_train` 启动提示即指向本节）。池账本计数器并入 `pool_stats()`（`calls / blk_new-free / 扫描 block/region 数 / vkalloc ms`，mem_probe 每阶段打印）——1 万次 allocate 只扫 ~5 万 block、`vkAllocateMemory` 累计 ~150ms，**池记账不是瓶颈**。
+`bench/run_ab_env.ps1`（按 env/args **同窗交错** A/B + 峰值/耗时配对）复测三档池配置（默认 12MB 固定块 / 16MB 阶梯 / 4MB 小块）→ 峰值均值差仅个位数百分比、耗时全部 ≈5.7s：**池粒度不是杠杆，池保持默认**；`NN_POOL_BLOCK_MB` / `NN_POOL_LADDER_MAX_MB` 调参变量已随实现收敛删除（2026-11）。池账本计数器并入 `pool_stats()`（`calls / blk_new-free / 扫描 block/region 数 / vkalloc ms`，mem_probe 每阶段打印）——1 万次 allocate 只扫 ~5 万 block、`vkAllocateMemory` 累计 ~150ms，**池记账不是瓶颈**。
 
 #### ② 归因工具：形状级 cast 归因
 

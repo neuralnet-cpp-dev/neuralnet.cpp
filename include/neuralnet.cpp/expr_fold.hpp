@@ -5,7 +5,7 @@
 //
 //  本头只承载**与注意力无关**的通用 fold 样例，是 scan_exprs（AOT 收集
 //  dry-run）与 fused_gpu_test / expr_fold_test 对拍的**共享唯一来源**——
-//  各方必须构造出结构完全一致的 spec（key 一致），否则闭合世界查表未命中。
+//  各方必须构造出结构完全一致的 spec（key 一致），否则注册表查表未命中（走 JIT 兜底）。
 //  rowmax/rowsum/softmax_denom 三个 fold v1 样例不被 Layer 使用，保留为状态
 //  语义回归锚点；它们的**结构自登记**在文件末尾（`FoldAnchor`，扫描期，
 //  与 fold 值构造的既有约定一致——新增/改动样例无需改 scan_exprs）。

@@ -142,7 +142,7 @@ backward: grad_K (n_head*d_k, N) → scatter_add_rows(expand_idx) → grad_K_kv 
 构建一次、常驻。**反向复用同一张表**——重复的两行在 `scatter_add_rows` 里自然累加，正好是
 "多个 query 头共享一个 KV 头"的梯度语义。
 
-**为什么选展开而不是改 fold**：`dsl::make_fold_attn_o` 与它的 AOT 注册表是**闭合世界**
+**为什么选展开而不是改 fold**：`dsl::make_fold_attn_o` 与它的 AOT 注册表是**注册表契约**
 （`AGENTS.md` §7）——让 fold body 感知 `n_kv` 等于新增结构 + 新增注册，且 CPU/GPU 两侧同步。
 展开方案让 fold 与注册表**零改动**，代价是 `n_rep` 倍的 K/V 物化（本项目规模可忽略；
 in-kernel 版作为 P2 优化项记录）。
@@ -160,7 +160,7 @@ S2 的展开方案有实打实的代价：`n_rep` 倍物化（两个全尺寸缓
 - **为什么是"视图参数"而不是"算子结构字段"**：`views[].param` 被
   `expr_view_has_runtime_param` 判定为**运行期形状数据** → 不进 `expr_spec_key`、
   经既有 push constant `vp` 槽填充。若做成 `MatmulSpec` 的字段并进 key，
-  **每个 n_rep 各要一份 shader**，闭合世界对未登记的 n_rep 必然硬报错。
+  **每个 n_rep 各要一份 shader**，注册表对未登记的 n_rep 必然 miss（走 JIT 兜底）。
 - **单一真源** `nn::gqa_ratio_of(spec, view_idx)`：GPU 生成器与 CPU 参考都从这里取，
   避免两侧口径漂移。
 - 覆盖三处：fold 的 mm 段 A/B 两侧、fold 的 vecacc（`V_t`）、独立 bmm 的 A/B 两侧
@@ -442,7 +442,7 @@ graph TB
 5. **attention fold 不在 `dsl::compute` 路径上**：层 forward 直调 `engine.eval_expr`，
    dry-run/模型 pass 一条 fold 结构都产不出（结构由构造实参决定）——因此 fold 结构
    一度**只能由 `scan_exprs` 的显式登记块产出**。P2 的 GQA fold 变体（K/V_t 走
-   `HeadGroup` 视图）最初只加在模型 pass 的用例里 → GPU 闭合世界硬报错；补进显式块后
+   `HeadGroup` 视图）最初只加在模型 pass 的用例里 → GPU 注册表 miss；补进显式块后
    结构数 102 → **107**。**P4-4 ①（2026-10-15）起该显式块已删除**：注意力组合由
    `compute_layer_attention.hpp` 的 `attn_fold_anchor` 经 `FoldAnchor` 在静态初始化期
    自登记（掩码清单 X 宏 × {无偏置,位置偏置} × {MHA,GQA}）→ 新增组合无需改 `scan_exprs`。

@@ -353,7 +353,7 @@ f32 `.nnmodel` warm start 1 step：loss **7.6060**；文件 SHA-256
 - `bench/gui_cli_audit.py`：七节 **PASS，可行动 0**（最终 Release 二进制）；
 - `bench/doc_align_audit.ps1` / `bench/audit_dangling.ps1`：可行动 0；
 - `scan_exprs`：库内 **158 条**融合表达式；RL PPO/value/GAE/reduction 路径进入 AOT
-  闭合世界；
+  注册表（预热）；
 - 审查修复：PPO off-policy 负 advantage 梯度、GAE mask 值泄漏、policy batch 形状、
   forward 失败后的具名反向状态、不可信 schema 解码上限、pipeline post-hook 状态提交；
   全部加入对应 RL 用例。

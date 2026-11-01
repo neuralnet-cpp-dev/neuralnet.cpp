@@ -860,16 +860,17 @@ TEST_CASE("linear_gradcheck") {
 
 **A**: CPU 操作是同步的，立即执行。GPU 操作是异步的，需要录制 command buffer 后统一提交。
 
-### Q6: GPU 报「未找到该内联表达式的 AOT 融合 shader（闭合世界）」怎么办？
+### Q6: GPU 报「未找到该内联表达式的 AOT 融合 shader（AOT 注册表）」怎么办？
 
-**A**: 这是**设计内**的硬报错（铁律 #7：AOT 闭合世界，构建期生成、运行期按 `expr_spec_key`
-精确匹配，未命中不静默回退），不是崩溃。按 key 依次排查：
+**A**: 这是**注册表 miss**（铁律 #7：AOT 注册表为预热加速器；`eval_expr` 主路径未命中默认走运行期
+JIT 现编，`NN_STRICT_CLOSED_WORLD=1` 或 fold / reduce / into / multi 入口下为硬报错，不静默回退），
+不是崩溃。按 key 依次排查：
 
 1. **改了 Layer 里的内联表达式但没重新构建**：直接重跑构建即可——`scan_exprs` 单步
-   （收集 + 生成）会自动重建 `fused_registry.hpp`
+   （收集 + 生成）会自动重建 `fused_registry.hpp`（重建后该结构回到预热路径，免 JIT 冷启动）
 2. **该 Layer 路径没被扫描覆盖**：结构来自锚点自登记 + per-layer dry-run + 模型 pass 三路；
    报错带 `key=`，可查 `build/generated/fused_registry.hpp` 是否有该条目
 3. **库外自定义层**：必须用 `nn_enable_gpu_fusion(<target> MAIN <src>)` 生成该目标专属注册表，
    且 `${NNF_OUT_DIR}` 的 include 顺序要在库自身注册表之前（见 AGENTS §7）
 4. **注意区分**：`[prec][miss]` 是精度变体的诊断日志、不是错误——精度三档
-   `key#a` → `key#x` → 基类边界 cast，最后一档正确但更慢；只有 f32 结构 key 缺失才硬报错
+   `key#a` → `key#x` → 基类边界 cast，最后一档正确但更慢；只有 f32 结构 key 缺失才触发 miss

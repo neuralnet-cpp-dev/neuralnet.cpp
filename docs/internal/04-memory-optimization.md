@@ -199,5 +199,5 @@ fp32 基线下激活、梯度、权重、优化器态全部 4B。
 ## 与既有约束的关系
 
 - **不破坏分层铁律**：L1/L2 只在 `Model`/`Layer` 契约与 `backend` 内存管理内实现，`ComputeEngine` 原语与 `expr_dsl` 不动。
-- **不破坏闭合世界/AOT**：L1/L2 不引入新 shader、不删改 `expr_registry`；不在运行期进入"未预生成表达式"分支。
+- **不破坏注册表/AOT**：L1/L2 不引入新 shader、不删改 `expr_registry`；不破坏主路径 JIT 兜底。
 - **不违背确定性**：全部路径保持定点、可复现；L1/L2 与精度设置正交（f16 混合精度另行记录在 05-mixed-precision，本文档账目为 fp32 口径）。

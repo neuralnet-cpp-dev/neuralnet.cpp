@@ -266,7 +266,7 @@
   构建照常通过；③ 生成器 `expr_glsl_gen` 假定 `instrs.back()` 非空，根本没有 view 根的代码路径。
 - **修法**：与 RAPT 既有先例一致——根视图与一个**运行时 0** 相加
   （`grouped_reduce_max(x, R) + dsl::rparam(Scalar{0})`）：rparam 编译期不可被常量折叠，
-  表达式合法、语义不变，且 rparam 的值不进 `expr_spec_key`（闭合世界不受影响）。
+  表达式合法、语义不变，且 rparam 的值不进 `expr_spec_key`（注册表不受影响）。
 - **防复发**：① 扫描模式下 `validate_expr_spec` 失败即硬退出（`dsl::scan_reject` →
   `std::_Exit(3)`），把这类错误从 GPU 运行期前移到**构建期**；② `scan_exprs` 的
   Conv/MaxPool dry-run 改为显式检查返回值（同 MHA 段）；③ ctest 新增 `cnn_test_gpu`
@@ -363,7 +363,7 @@ GPU-resident 单算子对、链式错；attn batch=1 对、batch=2 错；gradche
 - [ ] 参数/梯度注册、`extra_state()`（BatchNorm 的 running 统计）
 - [ ] 序列化：model_spec 新字段走 `apply_spec_version_defaults` 版本默认表
 - [ ] 推理模式：`set_training(false)` 路径（batch=1 场景必须正确）
-- [ ] 新内联表达式：进 `scan_exprs` 对应 dry-run（漏登记 = GPU 闭合世界未命中）；根节点不得是**裸视图**（空指令表只有 GPU 报错，见 §4.13）
+- [ ] 新内联表达式：进 `scan_exprs` 对应 dry-run（漏登记 = GPU 注册表 miss，主路径 JIT 兜底）；根节点不得是**裸视图**（空指令表只有 GPU 报错，见 §4.13）
 
 ### 修改 GPU 相关
 - [ ] batch 模式：录制期引用的张量存活到 end_batch 之后

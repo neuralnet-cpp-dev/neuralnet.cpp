@@ -61,7 +61,7 @@ M2 落地后 init RNG 已收编，下表保留为动机证据，复现命令仍�
 
 **非目标（明确不做）**
 
-- 不改 AOT 闭合世界、batch-major 布局、`PrecisionProfile` 归属、DSL 表达式签名。
+- 不改 AOT 注册表机制、batch-major 布局、`PrecisionProfile` 归属、DSL 表达式签名。
 - 不强求 CPU/GPU **实现**对称（§4.5）。
 - 不删除 Matrix（裁定 D4：保留降级）。
 - 不动已完成的 15 P-1/P1 成果。

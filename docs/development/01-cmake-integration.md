@@ -119,7 +119,7 @@ add_subdirectory(3rd_party/neuralnet.cpp)
   `NN_HAS_VULKAN`、SPIR-V 嵌入头目录、`Vulkan::Vulkan`、shader 生成顺序。
 - **`NN_ENABLE_GPU=AUTO` 的静默降级**：找不到 Vulkan / glslc 时走纯 CPU。
   想要「没 GPU 就配置失败」用 `ON`。
-- **闭合世界**：库内层的融合 shader 构建期全部生成，你的目标直接跑库内层**开箱即用**。
+- **注册表（预热）**：库内层的融合 shader 构建期全部生成，你的目标直接跑库内层**开箱即用**（未命中主路径走 JIT 兜底）。
   但若你在自己的层里写了 `nn::dsl::compute` 表达式，必须再加一行（见 §6），
   否则 GPU 运行期按 `expr_spec_key` **硬报错**（无 eager 回退，设计使然）。
 
@@ -262,7 +262,7 @@ DAG 依赖链 `nn.core → nn.kvrecord → nn.dataset → nn.tokenizer`。动机
   剔除）。源码双轨：`#ifdef NN_USE_MODULES / import nn.<域> / #else / #include … / #endif`。
 - **硬约束**：宏（`NN_TRY` / `NN_UNWRAP` 等）不可导出 → 消费方显式 include `core_errors.hpp`；
   STL 留在全局片段 → 消费方自带用到的 STL 头（缺了会报 "missing '#include'"）。engine /
-  layers / model / train 域依赖 `NN_EXPR_SCAN` 宏收集（闭合世界铁律）→ 本轮不模块化。
+  layers / model / train 域依赖 `NN_EXPR_SCAN` 宏收集（注册表铁律）→ 本轮不模块化。
 - **嵌入消费方**：默认 `OFF`（不编译模块、不切换任何目标）；消费方要启用就
   `set(NN_ENABLE_MODULES ON)` 于 `add_subdirectory` 之前。
 

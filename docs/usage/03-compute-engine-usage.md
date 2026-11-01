@@ -65,7 +65,7 @@ ComputeEngine              ← op-level 原语，永远不知道 "ReLU" / "Atten
 | 设备 | 表达式如何执行 |
 |---|---|
 | CPU | 编译期模板内联求值（编译器 SIMD 融合），等价手写循环；含 matmul/归约的表达式先"预绑定"再内联 |
-| GPU | 折叠成 `ExprSpec` → 按 key 匹配**构建期预生成**的融合 shader（闭合世界，未命中硬报错，无 runtime 编译） |
+| GPU | 折叠成 `ExprSpec` → 按 key 匹配**构建期预生成**的融合 shader（AOT 注册表；主路径未命中走运行期 JIT 兜底） |
 
 **你的代码在两者上完全一样**——只写表达式，不写设备分支。差异只体现在性能与 `P`（精度）上。
 
@@ -671,7 +671,7 @@ template <typename E>
 |---|---|
 | CPU 且表达式**不含**归约/matmul/索引叶子 | 编译期模板内联求值（SIMD 融合）。**无任何形状校验**（见 §8.7 陷阱 ①） |
 | CPU 且含归约/matmul/索引 | 先试"预绑定 + 模板内联"快路径；不行则折叠 `ExprSpec` 走 CPU 解释器（此时**有**形状校验） |
-| GPU | 折叠 `ExprSpec` → `validate_expr_spec` → `eval_expr` 匹配**构建期预生成** shader；**未命中 = 硬报错**（闭合世界，无 eager 回退） |
+| GPU | 折叠 `ExprSpec` → `validate_expr_spec` → `eval_expr` 匹配**构建期预生成** shader；**未命中主路径 = JIT 现编**（`NN_STRICT_CLOSED_WORLD=1` 恢复硬报错） |
 
 **`compute_into` 的等价改写**（把"原地更新"纳入 DSL，无需逐操作调用引擎原地原语）：
 
@@ -727,7 +727,7 @@ auto c = nn::dsl::compute(eng, nn::dsl::max(nn::dsl::leaf(x), nn::dsl::ConstLeaf
 | | 值是否进 `expr_spec_key` | 用途 |
 |---|---|---|
 | `dsl::ConstLeaf{v}` | **进** | 结构常量，编译期固定（ReLU 的 0、GELU 的 1.702、掩码的 `-inf`） |
-| `dsl::rparam(v)` | **不进** | 运行时标量（lr / eps / β / γ / 每 step 变化的 `scale`）。**运行时值必须走 rparam**，否则破坏 AOT 闭合世界 |
+| `dsl::rparam(v)` | **不进** | 运行时标量（lr / eps / β / γ / 每 step 变化的 `scale`）。**运行时值必须走 rparam**，否则破坏 AOT 注册表的结构 key 语义 |
 
 ### 8.3 一元函数（全部 7 个 + 一元负号）
 
@@ -931,7 +931,7 @@ auto pooled = nn::dsl::compute(eng,
 
 **③ `dsl::matmul` 没有 `alpha` 参数**
 
-缩放写成**尾链**（值不进 key，符合 AOT 闭合世界）：
+缩放写成**尾链**（值不进 key，符合 AOT 注册表 key 语义）：
 
 ```cpp
 // ✅
@@ -947,7 +947,7 @@ auto bad = nn::dsl::matmul(q, k, true, false, 1, 0.125f);
 
 **⑤ 运行时值禁进常量池**
 
-`scale` / `inv_num_valid` / lr / eps 等每步或每次调用会变的量，**必须走 `rparam`**；用 `ConstLeaf` 会把值编进 `expr_spec_key` → GPU 闭合世界查不到预生成 shader → 硬报错。
+`scale` / `inv_num_valid` / lr / eps 等每步或每次调用会变的量，**必须走 `rparam`**；用 `ConstLeaf` 会把值编进 `expr_spec_key` → GPU 注册表查不到预生成 shader → 主路径 JIT 兜底。
 
 ### 8.8 `matmul` 表达式叶子
 
@@ -980,7 +980,7 @@ NN_TRY_CHECK(seg.end());                      // 显式收口；end_expr 错误�
 ```
 
 - **GPU-only 收益**：只有 `GpuEngine::execute_fused_graph` 真做图融合；**CPU 普通运行 `begin_expr/end_expr` 是 no-op**（数值不变），构建期收集器 `NN_EXPR_SCAN` 下 `end_expr` 会跑同一套融合分析并登记 spec。
-- **闭合世界**：录制段折叠出的结构必须被构建期 `scan_exprs`（收集器目标）覆盖，运行时才命中预生成 shader。未登记时**只有复合 kernel 降级**——拆回成员逐个派发（成员都是已登记的**单节点**结构，`NN_IRC_TRACE=1` 打 `[ir-c][degrade]`）；未登记的**单节点**结构仍是**硬报错**。
+- **注册表**：录制段折叠出的结构被构建期 `scan_exprs`（收集器目标）覆盖后，运行时才命中预生成 shader（预热加速）。未登记时**复合 kernel 降级**——拆回成员逐个派发（成员都是已登记的**单节点**结构，`NN_IRC_TRACE=1` 打 `[ir-c][degrade]`）；未登记的**单节点**结构走 JIT 兜底。
 - **融合规则**：P1 链（单输出逐元素链，允许 matmul 头段）与 P2 分量（纯逐元素 F32 同形状节点连通成组、多消费者不再阻断，写穿全部成员输出）。
 - 不需要多输出/写穿的场景，直接把长链写成一个 `dsl::compute` 更简单——**仍是首选**。库内生产调用方是 `Adam::step` / `AdamW::step`（每参数张量 1 个多输出 kernel）。
 
@@ -1273,7 +1273,7 @@ auto back = engine.rearrange_3d(*ctx, heads * d_k, batch, seq, true);   // inver
 
 - 所有输入张量必须**绑定到同一引擎**（`bind_check_`）。
 - `inputs.size()` 必须与 spec 记录的输入数一致。
-- **闭合世界**：GPU 上该 `(结构 key, 精度签名)` 没有预生成 shader → **硬报错**，无 eager、无运行时编译。
+- **注册表**：GPU 上该 `(结构 key, 精度签名)` 没有预生成 shader → 主路径 JIT 现编（`NN_STRICT_CLOSED_WORLD=1` 恢复硬报错）。
 
 **辅助工具**：
 
@@ -1547,7 +1547,7 @@ public:
 | 在 Layer 里出现 `Matrix` / `to_matrix` | 违反铁律 #12；GPU 上引入 PCIe 往返 | `detail::upload_span` / `download_span` |
 | 手写 `cast` 适配 f16 | 全尺寸临时量，且与边界 cast 层重复 | 传对 `P` |
 | 循环 per-head / per-channel 调 dispatch | dispatch 次数随通道数线性增长 | `batched_matmul` / `grouped_reduce_*` |
-| 运行时标量写成 `ConstLeaf` | 值进 key → GPU 闭合世界查不到 shader | `dsl::rparam` |
+| 运行时标量写成 `ConstLeaf` | 值进 key → GPU 注册表查不到 shader | `dsl::rparam` |
 | 视图 / 叶子单独作表达式根 | 空指令表 → 构建期硬失败 | 尾接 `+ dsl::rparam(0.0f)` |
 | `create_tensor` + `zero` 两步 | 多一次全量写与一次 dispatch | `InitSpec::zero()` 一步 |
 | 每调用点手写 `p_.stable` / `p_.compute` | 同一层内可能混用，语义漂移 | 由层类型决定，集中在少数调用点 |
@@ -1664,7 +1664,7 @@ if (nn::dsl::env_flag("NN_PREC_TRACE"))
 | `read/write: 元素数与张量形状不匹配` | span 长度 ≠ `rows*cols` | 修正长度 |
 | `bind_check_ mixed engines` | 两个不同引擎创建的张量进了同一个算子 | 用 `import` 把张量拉到目标引擎 |
 | `dsl::compute_into: dst not on CPU` | CPU 引擎下 `dst` 是 GPU 张量 | 检查 `dst.device()` |
-| GPU 报闭合世界未命中 | 表达式**结构**没有预生成 shader | 检查是否把运行时值写成了 `ConstLeaf`（应改 `rparam`）；改 Layer 表达式后需重新构建（`scan_exprs` → 生成阶段 自动跑）。**精度签名不会再导致 miss**（运行期分派 shader 覆盖任意签名） |
+| GPU 报注册表 miss | 表达式**结构**没有预生成 shader | 检查是否把运行时值写成了 `ConstLeaf`（应改 `rparam`）；改 Layer 表达式后需重新构建（`scan_exprs` → 生成阶段 自动跑）。**精度签名不会再导致 miss**（运行期分派 shader 覆盖任意签名）；主路径 miss 走 JIT 兜底 |
 | `validate_expr_spec: empty instruction list` | 表达式根是裸视图/叶子 | 尾接 `+ dsl::rparam(0.0f)` |
 | 构建期 `[scan] validate_expr_spec 失败` + `_Exit(3)` | 新增表达式非法（最常是空指令表 / 裸分组归约视图作根） | 同上；这是**构建期闸门**，不是运行期 bug |
 | `VK_ERROR_DEVICE_LOST` | 录制期张量提前析构（铁律 #6），或 TDR | 确认张量存活到 `end_batch()`；TDR 不可重试，存 checkpoint 退出；`VK_TIMEOUT` 可减半 batch 重试 |

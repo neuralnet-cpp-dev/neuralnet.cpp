@@ -493,7 +493,7 @@ public:
         // 下 4 节点金刚石单 kernel 3 extras；混精度按门禁自动分裂），替代逐表达式
         // 数百个小 dispatch（P2 前实测 266 设备 kernel/步、host 提交 4.5ms/步）。
         // CPU begin/end 为 no-op（行为不变）；NN_EXPR_SCAN 下本段把复合 spec
-        // 登记进闭合世界（scan_exprs 的优化器 dry-run 正是经此登记）。
+        // 登记进注册表（scan_exprs 的优化器 dry-run 正是经此登记）。
         NN_TRY(b, engine_.begin_expr());
         ExprSegment seg(engine_owner_);
         for (std::size_t i = 0; i < params_.size(); ++i)

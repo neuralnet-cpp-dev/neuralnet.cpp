@@ -214,7 +214,7 @@ public:
 // 用 dsl::compute 单表达式融合：sigmoid(βx) = 1/(1+exp(-βx)) 全部折叠为单个
 // GPU 融合 kernel（仅 input/output 落显存，无中间 Tensor）。backward 用
 // input_cache_ 重算 sigmoid（不缓存，省显存）。AOT 收集由 scan_exprs dry-run
-// 本层完成（GPU 闭合世界两端一致）。
+// 本层完成（GPU 注册表两端一致）。
 // ══════════════════════════════════════════════════════════════════════════
 class GeLU final : public Layer
 {
@@ -718,7 +718,7 @@ public:
 
     // ── forward ───────────────────────────────────────────────────────────
     // 单表达式融合（算法公式不变，中间 x_sq (F,B) 由归约 kernel 内部消解）：
-    //   融合表达式保持 F 无关结构（不含 1/F、ε 常量，避免闭合世界 key 随
+    //   融合表达式保持 F 无关结构（不含 1/F、ε 常量，避免注册表 key 随
     //   归一化维度漂移）；形状相关标量在 (1,B) 小向量上用引擎原语施加：
     //   1. s_raw  = col_reduce_sum(x*x)                    → (1,B) 归约向量输出
     //   2. rms_inv= rsqrt(s_raw*(1/F) + ε)                 → (1,B) 原语

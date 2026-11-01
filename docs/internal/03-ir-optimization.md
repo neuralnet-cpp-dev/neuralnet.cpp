@@ -3,7 +3,7 @@
 > **读者**：项目开发者（本仓内部工作文档）。本分册定位见 [`README.md`](README.md)；历史归档在 [`../history.md`](../history/history.md)。
 > **状态**：现行。
 
-> 目标：在**不推翻现有 AOT 闭合世界**的前提下，把 `ExprSpec` 从"直通轻量 IR"演进为带优化 pass 的规范 IR，分阶段提升开发便利与代码质量。
+> 目标：在**不推翻现有 AOT 注册表机制**的前提下，把 `ExprSpec` 从"直通轻量 IR"演进为带优化 pass 的规范 IR，分阶段提升开发便利与代码质量。
 > 状态：现行优化链 = **IR-A（canonicalize：DCE/常量折叠/代数化简/稳定重编号）+ IR-B（CSE + 寄存器分配 liveness）+ IR-C（图 IR + `begin_expr/end_expr` 融合分析）+ IR-D（后端 emitter 抽象）**，分别由 `expr_opt.hpp` / `expr_graph.hpp` / `expr_emitter.hpp` 承载；**IR-C 已恢复并通用化（P1 机制 + P2 写穿多输出 + Adam 接线，见 §5.3）**。
 > 关联文档：`02-operator-fusion.md`（算子融合）、`../contributors/cpp-standards.md`（分层铁律）、`../contributors/pitfalls.md`。
 
@@ -28,7 +28,7 @@
 ```
 Layer 内联表达式 → to_expr_spec 折叠 → ExprSpec → glsl_gen → GLSL → glslc → SPIR-V → fused_registry.hpp
                     （前端）                （IR）        （后端）
-运行时：fold → expr_spec_key → find_fused(key) → dispatch（闭合世界）
+运行时：fold → expr_spec_key → find_fused(key) → dispatch（注册表命中；miss 主路径 JIT 兜底）
 ```
 
 `ExprSpec` 是事实上的轻量 IR：SSA 式扁平指令表、内存访问视图、可序列化（NNEXP）、跨后端、确定性结构 key。它**自带一组确定性优化 pass**（IR-A/IR-B，`expr_opt.hpp`）：折叠产出的指令序列先经 `canonicalize_expr_spec` 规范化再算 key，`glsl_gen` 只消费 canonical 形态。
@@ -41,7 +41,7 @@ Layer 内联表达式 → to_expr_spec 折叠 → ExprSpec → glsl_gen → GLSL
 4. **后端耦合**：`glsl_gen` 为 GLSL 专用，无法"一份 IR 多后端"（CUDA 后端已整体移除）→ IR-D emitter 抽象，当前注册的只有 GLSL。
 5. **跨表达式融合**：已由 IR-C 落地（`begin_expr/end_expr` + `expr_graph.hpp` 图 IR，P1 链 / P2 分量融合，§5.3）；不需要跨表达式写穿的场景仍可直接写成单个 `dsl::compute`（单个 AOT 融合 kernel）。
 
-本文记录 IR 优化 pass 的设计与当前实现，核心约束是**不破坏闭合世界的确定性 key 匹配**。
+本文记录 IR 优化 pass 的设计与当前实现，核心约束是**不破坏注册表的确定性 key 匹配**。
 
 ---
 
@@ -64,7 +64,7 @@ IR 属于"引擎/工具内部"，**完全落在红线允许区**，且强化"引
 
 1. **规范性**：把 `ExprSpec` 正式确立为 IR 规范，写清语义、上限、序列化。
 2. **可优化性**：提供确定性优化 pass（DCE、常量折叠、CSE、寄存器分配、代数化简）。
-3. **闭合世界兼容**：key 定义在 **canonical（优化后）IR** 上，scan 与 runtime 两端一致。
+3. **注册表兼容**：key 定义在 **canonical（优化后）IR** 上，scan 与 runtime 两端一致。
 4. **跨后端**：IR → 多 emitter（GLSL / CPU），可选扩展。
 5. **可扩展性**：单表达式 IR 与图 IR 分层——跨表达式融合（IR-C 图 IR）**现行**（§5.3），可安全融合的层由 `begin_expr/end_expr` 显式录制。
 
@@ -207,7 +207,7 @@ canonicalization 与优化 pass 的验证重点：
 2. **语义等价**：canonical 前后 CPU 求值结果一致（容差内）；优化不改变浮点语义。
 3. **现有测试全量回归**：`expr_cpu_test` / `expr_gpu_test` / gradcheck 系列 / GPT、MNIST 训练冒烟（CPU + GPU）。
 4. **上限压力测试**：构造超输入/超寄存器用例，验证 CSE + 寄存器分配后落入限制内。
-5. **闭合世界覆盖**：新增优化后，scan 覆盖的路径仍能命中（key 定义在 canonical IR 上，两端一致）。
+5. **注册表覆盖**：新增优化后，scan 覆盖的路径仍能命中（key 定义在 canonical IR 上，两端一致）。
 
 ---
 

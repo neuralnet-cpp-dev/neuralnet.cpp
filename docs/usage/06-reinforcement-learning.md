@@ -323,10 +323,10 @@ on-policy epoch 或自定义 sampler。
 | `training_group_session_test` | 多 role 生命周期/引擎校验/move |
 | `rl_pipeline_test` | source/buffer/sampler/metrics/checkpoint/hooks/seed |
 | `rl_training_integration_test` | PPO named gradients → TrainingSession optimizer update |
-| `rl_gpu_smoke_test` | Vulkan AOT 闭合世界 |
+| `rl_gpu_smoke_test` | Vulkan AOT 注册表 |
 
 新增 RL 内联表达式时，`tools/scan_exprs.cpp` 必须触达对应运行路径；GPU 未登记
-结构会在执行时返回带 key 的闭合世界错误。
+结构会在执行时返回带 key 的注册表 miss 错误（主路径 JIT 兜底）。
 
 ## 12. 当前边界
 

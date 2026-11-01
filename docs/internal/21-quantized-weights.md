@@ -650,7 +650,7 @@ BitLinear 只在 `latent_w_.write_epoch()` 变化时重算 τ/wq，`quantize_cal
 三值 + 2 ∈ {1,2,3}（**与 microsoft/BitNet `gpu/pack_weight.py` 的位宽/码值一致**；不采用
 其 CUDA interleave 置换，解码等价）。容器 = f32 张量（每元素 16 个权重，`bit_cast` 当
 原始字）→ **0.25 B/权重**（f16 稠密 2 B/权重，−87.5%）。新引擎原语
-`trit_pack` / `matmul_q` / `matmul_q_t`（op-level，**不进 DSL 闭合世界**，故无需 scan
+`trit_pack` / `matmul_q` / `matmul_q_t`（op-level，**不进 DSL 注册表**，故无需 scan
 登记），CPU 微内核 + GPU shader（f32 与 `-DNN_SHADER_F16=1` 两版；`matmul_q_t` 把反向
 的 dX 变成一趟 GEMM，顺带省掉 `dy_scaled` 中间量与一次 dispatch）。
 `supports_ternary_gemm()` 是能力位；未接的后端/设备自动退回 f16 稠密缓冲。
@@ -685,7 +685,7 @@ GPU 上收敛显著变差（3.49 → 1.35 vs 阈值 0.30）且 CPU/GPU 末步 lo
 某些 GPT 形状下取值仍错（小形状对得上、GPT 形状对不上）。故**主分支保持"按宽度
 选址"（宽 batch 走稠密）**，分块版停在 WIP 分支，修好并**跨形状**验证后再把选址
 策略简化掉。
-> 教训（写进协议）：闭合世界只保证"结构命中"，不保证"分块 / 网格 / 写出与形状
+> 教训（写进协议）：注册表只保证"结构命中"，不保证"分块 / 网格 / 写出与形状
 > 一致" —— 分块原语必须有**跨形状**（含尾部块、非整除 K/M/N、GPT 形状）的对拍。
 
 **→ 同日收口（2026-10-11，见 §4.14）**：这条的阻塞根因是**第三个**坑 —— dispatch 的
@@ -771,7 +771,7 @@ bitsandbytes int8 payload 的 8 bit）。
 同一约定），并把"网格尺寸随分块常量、轴向随 block_col/block_row"写成后端注释里的
 显式契约。回归用例 `ternary_gemm_test` [6]：9 个形状 × transA × f32/f16，专挑方形
 会掩盖的三类（轴向对拍 / 尾块 / 单列 N=1），GPU 追加 2B4T 量级（2048×2560×64）。
-**教训**：闭合世界只保证结构命中，不保证分块/网格/形状一致 —— 分块原语必须有跨形状对拍。
+**教训**：注册表只保证结构命中，不保证分块/网格/形状一致 —— 分块原语必须有跨形状对拍。
 
 **② 窄 N 打包 GEMV（`shaders/matmul_q_gemv.comp`，新原语）**：分块内核按 64×64 输出块
 算，n=1 时 63/64 列空转。实测（102/40HX，m=2560 k=6912 n=1）：分块打包 1.53 ms、
@@ -967,7 +967,7 @@ ctest **36/36**。
   测试只能覆盖"latent 梯度 = STE 公式"，以及"量化输出逐位符合 τ 规则"。
 - **优化器状态必须留 f32**：`research/f16_weight_decay/REPORT.md` 已证 f16 状态会被舍入吃掉；
   三值训练同理，`optimizer` 槽不允许 `T1_58`（校验会拦）。
-- **闭合世界**：新层的表达式若没进 `scan_exprs` 的 dry-run，GPU 会以"闭合世界硬报错"暴露，
+- **注册表**：新层的表达式若没进 `scan_exprs` 的 dry-run，GPU 会以注册表 miss 暴露（主路径 JIT 兜底），
   且离根因很远（AGENTS §7 已有先例）。
 
 **已裁定（2026-10-10）**
@@ -1007,7 +1007,7 @@ GPT 侧已于 **P1.5 落地**（§4.10），RAPT/ViT 仍拒绝（§4.10 边界�
 | 1 | `include/neuralnet.cpp/precision.hpp` | 加 `Precision::T1_58 = 4`；`precision_name` → `"t1_58"`；`precision_tag`/`precision_from_tag` 加 `4`；`precision_bytes` 返回 0 并注明"非存储精度，位宽由打包格式表达"；`check_precision_supported` 拒绝 `T1_58`；**把"序"从枚举值拆出**（`precision_rank()`，见 §4.1 R4） | ✅ 步骤 1 |
 | 2 | `include/neuralnet.cpp/compute_layer_base.hpp` | 加 `PrecisionSet` / `PrecisionSupport`（§4.2 骨架）；`virtual precision_support()` 默认 `{f16,f32}×4`；`virtual const char* layer_name()`；在 `Layer::init` NVI 内做校验（层名 + 槽位 + 取值 + 允许集合）；按 D3(b) 在已 init 时拒绝 `set_precision_profile` | ✅ 步骤 2（+ `layer_name()` 铺开在步骤 4） |
 | 3 | 新 `include/neuralnet.cpp/compute_layer_bitlinear.hpp` | `BitLinear`：`latent_w_`(f32) + `wq_`(f16 缓冲) + `tau_`((out,1) f32)；`forward` = `compute_reduce(row_reduce_sum(abs(W)))` → `select` 量化 → `matmul+row_broadcast(τ)`；`backward` = STE（`dX`/`dW_lat`/`db`，§4.4）；`precision_support()` = `param={T1_58}` 其余 `{f16,f32}`；`layer_name()` = `"BitLinear"` | ✅ 步骤 3 |
-| 4 | `tools/scan_exprs.cpp` | per-layer dry-run 补一个 `BitLinear`（否则 GPU 闭合世界硬报错；dry-run 是结构的主要来源，见 `AGENTS.md` §7） | ✅ 步骤 3（落在**模型 pass**，见 §4.9-2；91 → 96 条结构） |
+| 4 | `tools/scan_exprs.cpp` | per-layer dry-run 补一个 `BitLinear`（否则 GPU 注册表 miss、主路径 JIT 兜底；dry-run 是结构的主要来源，见 `AGENTS.md` §7） | ✅ 步骤 3（落在**模型 pass**，见 §4.9-2；91 → 96 条结构） |
 | 5 | `include/neuralnet.cpp/model_spec.hpp` + `model_serialization.hpp` | `ModelSpec` 加 `weight_quant`（`None`/`T1_58`，缺键 = `None`）；`save/load` 往返；`spec_summary` 与校验同步 | ✅ 步骤 3（KV 读写）+ 步骤 4（往返测试 [8]） |
 | 6 | `src/mnist_train.cpp`、`src/text_train.cpp` | `parse_precision` 接受 `t1_58`（**无别名**）；帮助行写明 `t1_58`（实现期细化为只挂 param 行，见 §4.9-1）；删掉 `mnist_train:678` 的冗余 `set_precision_profile`（D3(a) 的连带） | ✅ 步骤 2（删冗余）+ 步骤 4 |
 | 7 | `gui.py` + `bench/gui_cli_audit.py` | 参数精度下拉加 `"t1_58"`（实现期拆成 `PRECISION_PARAM_OPTIONS`，只挂 param 行）；审计脚本跑一遍确认仍退 0（只加**取值**、不加 flag，flag 面无变化） | ✅ 步骤 4 |
@@ -1087,7 +1087,7 @@ flowchart LR
         DYE --> DB
     end
 
-    subgraph AOT["AOT 闭合世界（GPU）"]
+    subgraph AOT["AOT 注册表（GPU）"]
         S["scan_exprs 模型 pass<br/>param=T1_58 的 MLP 用例"]
         G["fused_registry.hpp<br/>91 → 96 条结构 / 130 → 135 变体"]
         S --> G
