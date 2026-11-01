@@ -146,7 +146,9 @@ KeyValueRecord v2:
 - [x] 系统缓存目录定位 + `NN_KERNEL_CACHE_DIR`/`NN_KERNEL_CACHE_PATH` 覆盖（`kernel_cache_path()`，读一次缓存；测试覆盖三档优先级）。
 - [x] 文档同步 + `python scripts/doc_audit.py` 全绿。
 
-> **Phase 1 实施进度**：✅ 已做 = KVRecord v2 容器重构（`kernel_cache.hpp`）+ `K` 编码（版本进 key）+ 版本失效 + 懒加载热缓存 + 系统缓存目录定位 + env 覆盖 + 测试；构建期 `.nnk` 发射已回退（warmup 模型不需要）。⏳ Phase 1 收尾完成，进入 Phase 2（生成器 `.so` + 引擎 JIT miss）。
+> **Phase 1 实施进度**：✅ Phase 1 全部完成 = KVRecord v2 容器 + `K` 编码（版本进 key）+ 版本失效 + 懒加载热缓存 + 系统缓存目录定位 + env 覆盖 + 测试。
+> **Phase 2 进度**：✅ libnn-kernelgen.so 生成器（C ABI `ExprSpec(序列化)→SPIR-V`，内嵌 GlslEmitter + shaderc，CMake 目标 `nn_kernelgen` + install 到 `lib/`，已实测产出有效 SPIR-V magic 0x07230203）。⏳ 待做 = 引擎 GPU dispatch 在缓存 miss 时调用 `.so` 现编 + `model_warmup()` 预热钩子。
+> **Phase 3**：⏳ 引擎 link 阶段 + C ABI + 完整 install 布局（bin/ + lib/）。
 
 ## 8. 风险与取舍
 

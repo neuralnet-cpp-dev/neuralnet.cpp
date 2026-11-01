@@ -1138,6 +1138,28 @@ if(Vulkan_FOUND)
                             "or use NN_ENABLE_GPU=AUTO/OFF.")
     endif()
 
+    # ── libnn-kernelgen.so：运行期 JIT 算子生成器（内嵌 GlslEmitter + shaderc）──
+    # 引擎在 .nnk 缓存 miss 时调用它现编 SPIR-V。shaderc（内嵌 glslang）来自
+    # Vulkan SDK；链接为单一版本化 .so（单份共享、懒加载），避免链进每个可执行
+    # 文件（体积爆炸）或依赖系统 glslc（版本漂移/缺失）。见 docs/internal/33 §4。
+    find_path(SHADERC_INCLUDE_DIR shaderc/shaderc.h HINTS ${Vulkan_INCLUDE_DIRS})
+    find_library(SHADERC_LIBRARY NAMES shaderc_shared HINTS ${Vulkan_LIBRARY_DIR})
+    if(SHADERC_INCLUDE_DIR AND SHADERC_LIBRARY)
+        add_library(nn_kernelgen SHARED src/kernelgen/kernelgen.cpp)
+        target_include_directories(nn_kernelgen PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include ${SHADERC_INCLUDE_DIR})
+        target_link_libraries(nn_kernelgen PRIVATE nn_core ${SHADERC_LIBRARY})
+        target_compile_features(nn_kernelgen PRIVATE cxx_std_26)
+        set_target_properties(nn_kernelgen PROPERTIES
+            OUTPUT_NAME nn_kernelgen
+            LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib)
+        # 安装到 ${prefix}/lib（bin/ 的 cli 后续 Phase 3 install 规则统一；见 docs/internal/33 §4.3）
+        install(TARGETS nn_kernelgen LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+        message(STATUS "nn_kernelgen: libnn-kernelgen.so（JIT 算子生成器）已启用")
+    else()
+        message(STATUS "nn_kernelgen: shaderc 未找到（运行期 JIT 算子生成器禁用）")
+    endif()
+
     # ── 铁律：原语 shader 永不含任何算法 ──────────────────────────────
     # 原语 shader 只做 op-level 计算（矩阵乘、逐元素、归约、广播、搬移）。
     # ReLU/GeLU/Softmax/LayerNorm/Attention/RoPE/SwiGLU 等算法一律来自
