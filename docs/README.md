@@ -62,6 +62,7 @@
 | [`05-consume-as-library.md`](usage/05-consume-as-library.md) | 把库嵌进自己工程（`neuralnet::nn` 门面 / FetchContent） |
 | [`06-reinforcement-learning.md`](usage/06-reinforcement-learning.md) | RL：具名多输出、experience/GAE、REINFORCE/PPO/GRPO、多模型 Session、可替换 rollout pipeline |
 | [`07-thread-safety.md`](usage/07-thread-safety.md) | **线程安全契约**：每个对象的并发口径矩阵 + 服务化下游设计模板（issue #38） |
+| [`08-engine-so-guide.md`](usage/08-engine-so-guide.md) | **引擎 .so 化后的接入指南**：编译流程（主仓库 + 新仓库）/ 代码结构（双许可 + 跨界 ABI）/ 调用示例（工厂 + 接口 / LGPL 替换验证） |
 
 ### development/（给调用者）
 
