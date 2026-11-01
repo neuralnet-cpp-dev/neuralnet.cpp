@@ -161,7 +161,12 @@ bool test_primitive(nn::ComputeEngine& e, std::size_t rows, std::size_t cols, un
     const nn::Matrix p_e = download(e, pt);
     const nn::Matrix m_e = download(e, mt);
     const nn::Matrix v_e = download(e, vt);
-    CHECK(matrices_equal(p_e, p_ref), "参数逐位一致");
+    // 参数更新经 sqrt：GLSL sqrt 的精度是实现定义的（非正确舍入），与宿主
+    // std::sqrt 跨工具链/驱动存在 1 ULP 级差异（实测 abs ≤ 2⁻²⁴、rel ≤ 7e-6，
+    // 近零值处被放大）→ 参数比较用紧容差（仍可抓全部真实错误：逻辑错误 ≥ 1e-3）。
+    // m/v 容器是纯整数打包路径（decode→encode 逐位确定）→ 保持逐位锁。
+    const bool p_ok = close_to(p_e, p_ref, 1e-6f, "参数", 0);
+    CHECK(p_ok, "参数一致（≤1 ULP 舍入容差）");
     CHECK(matrices_equal(m_e, mp_ref), "一阶矩容器逐位一致");
     CHECK(matrices_equal(v_e, vp_ref), "二阶矩容器逐位一致");
     return true;
