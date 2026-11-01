@@ -39,7 +39,7 @@
 | 文档 | 何时读 |
 |------|--------|
 | [`17-unified-tensor-engine.md`](17-unified-tensor-engine.md) | Tensor / ComputeEngine / MemoryPool 底层总纲（M1–M6 已实施；M7 未立项）：访问不变量、InitSpec、批量读写、Matrix 降级、内存契约、`import`、Layer 删 engine 形参 |
-| [`33-kernel-cache-and-engine-decouple.md`](33-kernel-cache-and-engine-decouple.md) | **ComputeEngine 解耦与可移植算子缓存（`kernels.nnk`）**：把 AOT 融合注册表从内嵌头解耦为可移植二进制缓存，C++ 构建期生成 / 引擎运行期加载 / Python 共用同一数据契约。四阶段方案 + Phase 1（`.nnk` 契约 + 生成器 + 运行期加载）验收口径；改融合注册表消费方式前读 |
+| [`33-kernel-cache-and-engine-decouple.md`](33-kernel-cache-and-engine-decouple.md) | **ComputeEngine 解耦与可移植算子缓存（`kernels.nnk`）**：`.nnk` 是运行期 JIT 算子缓存（非部署代码模块），`K=生成器版本+expr_spec_key → V=SPIR-V`，KVRecord v2 承载、存系统缓存目录；引擎 miss 经版本化生成器 `.so`（内嵌 glslang）现编；warmup 驱动、无闭合世界注册。定稿定位 + Phase 1（KVRecord v2 容器）验收口径 |
 | [`02-operator-fusion.md`](02-operator-fusion.md) | 算子融合全篇（归约语义 IR → 表达式录制 → matmul 参与融合 → 跨 kernel 自动融合）：改融合/IR 前必读 |
 | [`03-ir-optimization.md`](03-ir-optimization.md) | IR-A/B/C/D 优化链设计（IR-C = 图 IR + `begin_expr/end_expr` 融合分析） |
 | [`19-unified-dataset.md`](19-unified-dataset.md) | 统一数据集（`.nndataset` / `.nnvocab` / KVRecord v2）格式与 `nn::Dataset`；**P2b 起含样本层**（`dataset_samples.hpp`：存储单位 = doc、训练单位 = 样本/窗口，`step` 是派生量） |

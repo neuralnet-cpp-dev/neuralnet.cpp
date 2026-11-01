@@ -1,67 +1,57 @@
 #pragma once
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  kernel_cache.hpp — 可移植算子缓存（kernels.nnk）格式与加载器
+//  kernel_cache.hpp — 运行期 JIT 算子缓存（kernels.nnk）
 //
-//  把 AOT 融合注册表从"构建期内嵌头（fused_registry.hpp）"解耦为可移植
-//  二进制缓存文件，C++ 构建期生成、引擎运行期加载，Python 复用同一数据契约。
+//  定位：`.nnk` 是**缓存**（torch.compile 式），不是部署代码模块。
+//  记录：K = "v<生成器版本>.<expr_prec_sig_key(expr_spec_key, 所需签名)>" → V = SPIR-V 字节。
+//  容器：KVRecord v2（KeyValueRecord），每条 kernel 一个字段 "kernel.<K>" → SPIR-V 字节
+//        （key_index_ 使 has/get 按 key O(1) 命中；set + serialize_v2 支持运行期追加重建）。
+//  版本失效：生成器版本进 K；引擎升级后 K 全变 → 旧条目永不匹配（孤立无害），
+//        新 key 触发重编；加载时 generator_version 不符 → 判陈旧 → 丢弃重建。
 //  设计见 docs/internal/33-kernel-cache-and-engine-decouple.md。
 //
-//  本头只含纯数据/序列化逻辑（无引擎依赖，仅 <cstdint>/<vector>/<string>
-//  + core_errors / core_sha256 / expr_spec），写入侧（tools/fused_generate）
-//  与加载侧（引擎运行期）共用同一套 encode/decode。
-//
-//  .nnk 布局（little-endian）：
-//    magic    8B   "NNKFUSED"
-//    version  u32  1
-//    flags    u32  位 0 = 仅 GPU 融合算子（本版恒 1）
-//    count    u32  条目数
-//    [条目 × count]
-//      key       u32 len + bytes        （expr_spec_key，含变体后缀）
-//      spec      u32 len + bytes        完整 ExprSpec 序列化
-//      spirv     u32 words + u32[]      SPIR-V 二进制
-//      meta      6 × u32                reduce_axis / has_matmul /
-//                                       view_param_count / rparam_count /
-//                                       vec_width / prec_sig
-//    sha256  32B   整文件校验和（不含 sha256 与 trailer）
-//    trailer  5B   "NNEND"
+//  本头还含 ExprSpec 序列化器 —— 它**不是缓存值**，而是生成器 `.so`
+//  （libnn-kernelgen.so，Phase 2）的 C ABI 跨边界载荷编码（doc §3.2）。
 // ═══════════════════════════════════════════════════════════════════════════
 
 #include <cstdint>
 #include <cstring>
-#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include <neuralnet.cpp/core_errors.hpp>
-#include <neuralnet.cpp/core_sha256.hpp>
 #include <neuralnet.cpp/expr_spec.hpp>
+#include <neuralnet.cpp/model_keyvalue_record.hpp>
 
 namespace nn::fused
 {
 
-inline constexpr const char* kKernelCacheMagic = "NNKFUSED";
-inline constexpr std::uint32_t kKernelCacheVersion = 1;
-inline constexpr const char* kKernelCacheTrailer = "NNEND";
-inline constexpr std::size_t kKernelCacheTrailerLen = 5;
-inline constexpr std::size_t kKernelCacheShaLen = 32;
+// 生成器版本：只在**代码生成语义变化**时 bump（非每次 release；避免无关升级
+// 频繁作废缓存）。进 K 的版本组件与 .nnk 的 generator_version 字段。
+inline constexpr const char* kKernelCacheGeneratorVersion = "1";
+inline constexpr std::uint64_t kKernelCacheFormatVersion = 1;
 
-// 运行期加载形态的融合 kernel（自有存储；区别于旧的编译期内嵌指针形态）。
-struct FusedKernel
+// KVRecord 里每条 kernel 一个字段，前缀 "kernel." + K。
+inline constexpr const char* kKernelFieldPrefix = "kernel.";
+
+// K = "v<生成器版本>.<表达式签名 key>"
+// 表达式签名 key：V0（sig=0）= 结构 key；分派哨兵 = key + "#x"（EXPR_PREC_DISPATCH_SUFFIX，
+// 与运行期 dispatch 查找一致）；静态签名 = expr_prec_sig_key（key + "#xxxx"）。
+[[nodiscard]] inline std::string kernel_cache_key(const std::string& spec_key,
+                                                  std::uint32_t prec_sig)
 {
-    std::string key;
-    ExprSpec spec;
-    std::vector<std::uint32_t> spirv;
-    int reduce_axis = -1;          // -1 逐元素 / 0 行归约 / 1 列归约
-    int has_matmul = 0;
-    std::uint32_t view_param_count = 0;
-    std::uint32_t rparam_count = 0;
-    std::uint32_t vec_width = 1;
-    std::uint32_t prec_sig = 0;    // V0=0；V1=EXPR_PREC_SIG_DISPATCH；V2 位图
-};
+    std::string body = spec_key;
+    if (nn::expr_prec_sig_is_dispatch(prec_sig))
+        body += nn::EXPR_PREC_DISPATCH_SUFFIX;
+    else
+        body = nn::expr_prec_sig_key(spec_key, prec_sig);
+    return "v" + std::string(kKernelCacheGeneratorVersion) + "." + body;
+}
 
-// ── 字节级序列化（little-endian，长度前缀）──────────────────────────────
+// ── ExprSpec 序列化（生成器 .so 的 C ABI 边界载荷；见 doc §3.2）──────────
+// 与缓存值无关；Phase 1 保留并测试，Phase 2 作为 libnn-kernelgen.so 的接口契约。
 namespace detail
 {
 
@@ -138,10 +128,8 @@ struct ByteReader
         pos += len;
         return true;
     }
-    std::size_t end_pos() const { return pos; }
 };
 
-// 标量容器写/读（float 向量：consts / rparams / fold.inits）
 inline void write_f32_vec(ByteWriter& w, const std::vector<Scalar>& v)
 {
     w.u32(static_cast<std::uint32_t>(v.size()));
@@ -157,7 +145,6 @@ inline bool read_f32_vec(ByteReader& r, std::vector<Scalar>& v)
     return true;
 }
 
-// ExprOperand / ExprView / ExprInstr / MatmulSpec / VecAccSpec
 inline void write_operand(ByteWriter& w, const ExprOperand& o)
 {
     w.u8(o.kind);
@@ -176,8 +163,7 @@ inline void write_view(ByteWriter& w, const ExprView& v)
 }
 inline bool read_view(ByteReader& r, ExprView& v)
 {
-    return r.u8(v.kind) && r.u8(v.negate_first_half) && r.u32(v.param) &&
-           r.u32(v.param2);
+    return r.u8(v.kind) && r.u8(v.negate_first_half) && r.u32(v.param) && r.u32(v.param2);
 }
 inline void write_instr(ByteWriter& w, const ExprInstr& in)
 {
@@ -189,8 +175,8 @@ inline void write_instr(ByteWriter& w, const ExprInstr& in)
 }
 inline bool read_instr(ByteReader& r, ExprInstr& in)
 {
-    return r.u8(in.op) && r.u8(in.dst) && read_operand(r, in.a) &&
-           read_operand(r, in.b) && read_operand(r, in.c);
+    return r.u8(in.op) && r.u8(in.dst) && read_operand(r, in.a) && read_operand(r, in.b) &&
+           read_operand(r, in.c);
 }
 inline void write_instr_seq(ByteWriter& w, const std::vector<ExprInstr>& seq)
 {
@@ -217,8 +203,8 @@ inline void write_matmul(ByteWriter& w, const MatmulSpec& m)
 }
 inline bool read_matmul(ByteReader& r, MatmulSpec& m)
 {
-    return r.u8(m.a_input) && r.u8(m.b_input) && r.u8(m.transA) &&
-           r.u8(m.transB) && r.u32(m.k) && r.u32(m.batch);
+    return r.u8(m.a_input) && r.u8(m.b_input) && r.u8(m.transA) && r.u8(m.transB) &&
+           r.u32(m.k) && r.u32(m.batch);
 }
 inline void write_vecacc(ByteWriter& w, const VecAccSpec& v)
 {
@@ -230,8 +216,8 @@ inline void write_vecacc(ByteWriter& w, const VecAccSpec& v)
 }
 inline bool read_vecacc(ByteReader& r, VecAccSpec& v)
 {
-    return r.u8(v.vec_state) && r.u8(v.weight_reg) && r.u8(v.b_input) &&
-           r.u8(v.scale_reg) && r.u8(v.has_scale);
+    return r.u8(v.vec_state) && r.u8(v.weight_reg) && r.u8(v.b_input) && r.u8(v.scale_reg) &&
+           r.u8(v.has_scale);
 }
 
 inline void write_fold(ByteWriter& w, const FoldSpec& f)
@@ -274,7 +260,6 @@ inline bool read_fold(ByteReader& r, FoldSpec& f)
     return true;
 }
 
-// ExprSpec：instrs / views / consts / rparams / num_regs / matmul / fold / extras
 inline void write_expr_spec(ByteWriter& w, const ExprSpec& s)
 {
     write_instr_seq(w, s.instrs);
@@ -325,130 +310,102 @@ inline bool read_expr_spec(ByteReader& r, ExprSpec& s)
 
 } // namespace detail
 
-// ── 单 kernel 条目编码/解码 ──────────────────────────────────────────────
-inline bool encode_kernel(detail::ByteWriter& w, const FusedKernel& k)
-{
-    w.len_bytes(k.key.data(), k.key.size());
-    w.u32(static_cast<std::uint32_t>(k.spirv.size()));
-    for (const auto x : k.spirv) w.u32(x);
-    w.u32(static_cast<std::uint32_t>(k.reduce_axis));
-    w.u32(static_cast<std::uint32_t>(k.has_matmul));
-    w.u32(k.view_param_count);
-    w.u32(k.rparam_count);
-    w.u32(k.vec_width);
-    w.u32(k.prec_sig);
-    // spec 最后写（便于未来把 spirv/meta 前的 spec 挪成"延后解析"；顺序仅供阅读）
-    const auto spec_start = w.buf.size();
-    detail::write_expr_spec(w, k.spec);
-    (void)spec_start;
-    return true;
-}
-
-[[nodiscard]] inline bool decode_kernel(detail::ByteReader& r, FusedKernel& k)
-{
-    std::vector<std::uint8_t> key_bytes;
-    if (!r.len_bytes(key_bytes)) return false;
-    k.key.assign(reinterpret_cast<const char*>(key_bytes.data()), key_bytes.size());
-    std::uint32_t nwords;
-    if (!r.u32(nwords)) return false;
-    k.spirv.resize(nwords);
-    for (auto& x : k.spirv)
-        if (!r.u32(x)) return false;
-    std::uint32_t u;
-    if (!r.u32(u)) return false; k.reduce_axis = static_cast<int>(u);
-    if (!r.u32(u)) return false; k.has_matmul = static_cast<int>(u);
-    if (!r.u32(k.view_param_count)) return false;
-    if (!r.u32(k.rparam_count)) return false;
-    if (!r.u32(k.vec_width)) return false;
-    if (!r.u32(k.prec_sig)) return false;
-    return detail::read_expr_spec(r, k.spec);
-}
-
-// ── 整文件 .nnk 编码/解码（含 magic/version/count/sha256/trailer）────────
-[[nodiscard]] inline std::vector<std::uint8_t> encode_kernel_cache(
-    const std::vector<FusedKernel>& kernels)
+// 序列化 ExprSpec 为字节（生成器 .so 边界载荷；round-trip 逐位一致，见 test）
+[[nodiscard]] inline std::vector<std::uint8_t> encode_expr_spec(const ExprSpec& s)
 {
     detail::ByteWriter w;
-    w.raw_bytes(kKernelCacheMagic, std::strlen(kKernelCacheMagic));
-    w.u32(kKernelCacheVersion);
-    w.u32(1u);  // flags：仅 GPU 融合算子
-    w.u32(static_cast<std::uint32_t>(kernels.size()));
-    for (const auto& k : kernels) encode_kernel(w, k);
-    const auto body_len = w.buf.size();
-    const auto digest = nn::detail::sha256_digest(
-        std::string_view(reinterpret_cast<const char*>(w.buf.data()), body_len));
-    w.raw_bytes(digest.data(), digest.size());
-    w.raw_bytes(kKernelCacheTrailer, kKernelCacheTrailerLen);
-    return w.buf;
+    detail::write_expr_spec(w, s);
+    return std::move(w.buf);
 }
-
-// 解码并校验整文件 .nnk；返回空 vector 且 err = 具体错误信息。
-[[nodiscard]] inline Result<std::vector<FusedKernel>> decode_kernel_cache(
-    const std::uint8_t* data, std::size_t n)
+[[nodiscard]] inline Result<ExprSpec> decode_expr_spec(const std::uint8_t* data, std::size_t n)
 {
     detail::ByteReader r{data, n, 0, false};
-    constexpr std::size_t kMagicLen = 8;  // "NNKFUSED"
-    if (!r.need(kMagicLen))
-        NN_FAIL("kernel_cache: 文件过短/损坏（缺 magic）");
-    if (std::memcmp(data, kKernelCacheMagic, kMagicLen) != 0)
-        NN_FAIL("kernel_cache: magic 不符（非 kernels.nnk）");
-    r.pos = kMagicLen;
-    std::uint32_t version;
-    if (!r.u32(version)) NN_FAIL("kernel_cache: 损坏（缺 version）");
-    if (version != kKernelCacheVersion)
-        NN_FAIL("kernel_cache: 版本不兼容（期望 " + std::to_string(kKernelCacheVersion) +
-                "，实际 " + std::to_string(version) + "）");
-    std::uint32_t flags, count;
-    if (!r.u32(flags) || !r.u32(count)) NN_FAIL("kernel_cache: 损坏（缺 flags/count）");
-    if (r.pos + 32 + kKernelCacheTrailerLen > n)
-        NN_FAIL("kernel_cache: 文件过短（缺 sha256/trailer）");
-    std::vector<FusedKernel> out;
-    out.reserve(count);
-    for (std::uint32_t i = 0; i < count; ++i)
-    {
-        FusedKernel k;
-        if (!decode_kernel(r, k)) NN_FAIL("kernel_cache: 条目 " + std::to_string(i) + " 损坏");
-        out.push_back(std::move(k));
-    }
-    const auto body_len = r.end_pos();
-    if (body_len + kKernelCacheShaLen + kKernelCacheTrailerLen != n)
-        NN_FAIL("kernel_cache: 文件长度与条目不符");
-    const auto digest = nn::detail::sha256_digest(
-        std::string_view(reinterpret_cast<const char*>(data), body_len));
-    if (std::memcmp(data + body_len, digest.data(), kKernelCacheShaLen) != 0)
-        NN_FAIL("kernel_cache: 校验和不匹配（文件损坏或截断）");
-    if (std::memcmp(data + body_len + kKernelCacheShaLen, kKernelCacheTrailer,
-                    kKernelCacheTrailerLen) != 0)
-        NN_FAIL("kernel_cache: trailer 不符");
-    return out;
+    ExprSpec s;
+    if (!detail::read_expr_spec(r, s))
+        NN_FAIL("kernel_cache: ExprSpec 解码失败（截断/损坏）");
+    return s;
 }
 
-// ── 加载器（引擎运行期用）───────────────────────────────────────────────
+// ── KVRecord v2 缓存容器 ───────────────────────────────────────────────
+// 编码：单个 KeyValueRecord（v2），字段 = nnk_format_version / generator_version /
+//   "kernel.<K>" = SPIR-V 字节（string 字段，length-prefixed，任意字节安全）。
+[[nodiscard]] inline std::string encode_kernel_cache(
+    const std::unordered_map<std::string, std::vector<std::uint32_t>>& kernels,
+    const std::string& generator_version)
+{
+    KeyValueRecord rec;
+    rec.set("nnk_format_version", kKernelCacheFormatVersion);
+    rec.set("generator_version", generator_version);
+    for (const auto& [K, spirv] : kernels)
+    {
+        const std::string bytes(reinterpret_cast<const char*>(spirv.data()),
+                                spirv.size() * sizeof(std::uint32_t));
+        rec.set(std::string(kKernelFieldPrefix) + K, bytes);
+    }
+    return rec.serialize_v2();
+}
+
+// 运行期 JIT 算子缓存：懒加载 + 内存热缓存 + 追加持久化。
 struct KernelCache
 {
-    std::vector<FusedKernel> kernels;
-    std::unordered_map<std::string, std::size_t> index;
+    std::string generator_version;
+    KeyValueRecord rec;                       // 全量 kernel（持久化映像，懒查询）
+    std::unordered_map<std::string, std::vector<std::uint32_t>> hot;  // 内存热缓存
 
-    [[nodiscard]] static Result<KernelCache> from_bytes(const std::uint8_t* data,
-                                                        std::size_t n)
+    // 加载：generator_version 与期望一致 → 复用；不符 → 判陈旧 → 空缓存（重建）。
+    [[nodiscard]] static Result<KernelCache> from_bytes(std::string_view bytes,
+                                                        const std::string& expected_genver)
     {
-        auto kernels_r = decode_kernel_cache(data, n);
-        if (!kernels_r) return std::unexpected(kernels_r.error());
+        auto rec_r = KeyValueRecord::parse(bytes);
+        if (!rec_r) return std::unexpected(rec_r.error());
         KernelCache c;
-        c.kernels = std::move(*kernels_r);
-        for (std::size_t i = 0; i < c.kernels.size(); ++i)
-            c.index.emplace(c.kernels[i].key, i);
+        std::string genver;
+        c.generator_version = (rec_r->get("generator_version", genver))
+                                  ? genver
+                                  : std::string(kKernelCacheGeneratorVersion);
+        if (c.generator_version == expected_genver)
+        {
+            c.rec = std::move(*rec_r);
+        }
+        else
+        {
+            // 陈旧：丢弃旧缓存（字段不读、不命中），换新生成器版本重建。
+            c.generator_version = expected_genver;
+            c.rec.set("nnk_format_version", kKernelCacheFormatVersion);
+            c.rec.set("generator_version", expected_genver);
+        }
         return c;
     }
 
-    [[nodiscard]] const FusedKernel* hit(const std::string& key) const noexcept
+    // 命中：内存热缓存；内存 miss → 从 rec 懒加载（O(1)，key_index_）。返回 nullptr = miss。
+    [[nodiscard]] const std::vector<std::uint32_t>* hit(const std::string& K)
     {
-        const auto it = index.find(key);
-        if (it == index.end()) return nullptr;
-        return &kernels[it->second];
+        const auto it = hot.find(K);
+        if (it != hot.end()) return &it->second;
+        std::string bytes;
+        if (rec.get(std::string(kKernelFieldPrefix) + K, bytes))
+        {
+            const auto* data = reinterpret_cast<const std::uint32_t*>(bytes.data());
+            std::vector<std::uint32_t> spv(data, data + bytes.size() / sizeof(std::uint32_t));
+            const auto [ins, _] = hot.emplace(K, std::move(spv));
+            return &ins->second;
+        }
+        return nullptr;
     }
-    [[nodiscard]] bool contains(const std::string& key) const noexcept
-    { return index.find(key) != index.end(); }
+
+    // JIT miss 后追加：内存 + rec（调用方随后 serialize()+ 写盘持久化）。
+    [[nodiscard]] Result<void> insert(const std::string& K,
+                                      const std::vector<std::uint32_t>& spirv)
+    {
+        hot[K] = spirv;
+        const std::string bytes(reinterpret_cast<const char*>(spirv.data()),
+                                spirv.size() * sizeof(std::uint32_t));
+        rec.set(std::string(kKernelFieldPrefix) + K, bytes);
+        return {};
+    }
+
+    // 当前 rec 序列化（供写盘持久化）
+    [[nodiscard]] std::string serialize() const { return rec.serialize_v2(); }
 };
 
 } // namespace nn::fused

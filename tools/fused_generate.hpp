@@ -43,7 +43,6 @@
 #include <neuralnet.cpp/core_file.hpp>      // nn::read_pod_span（读 glslc 产物 SPIR-V）
 #include "expr_spec.hpp"
 #include "expr_registry.hpp"
-#include "kernel_cache.hpp"   // .nnk 序列化（generate_kernel_cache 落盘用）
 #include "expr_emitter.hpp"   // IR-D：emitter 抽象（后端选择）
 #include "expr_glsl_gen.hpp"       // 注册 GlslEmitter（默认后端）
 
@@ -853,89 +852,6 @@ inline void run_gen_jobs(const std::string& glslc, std::vector<GenJob>& jobs)
         if (!j.ok) return false;   // [FAIL] 明细已在 run_gen_jobs 内逐条打印
     }
 
-    // ── 可移植算子缓存（kernels.nnk）收集：与下方 kFusedShaders 逐条目同源 ──
-    // 每条目 = {key, spec, spirv(GenJob 已编译), meta}。meta 计算与 header 发射
-    // 完全一致（同一判据、同一 fused_vec_width_for / runtime_view_param_count /
-    // runtime_param_count）；spec 取 canonical 形态（reg.specs 经 canonicalize）。
-    // 保证 .nnk 与（过渡期共存时）header 两产物内容逐条目一致。
-    std::unordered_map<std::string, const GenJob*> job_by_ident;
-    for (const auto& j : jobs) job_by_ident.emplace(j.ident, &j);
-    // ident = GenJob 索引键（base = key；变体 = suffix，如 "key_x"）；vkey = 注册表键（如 "key#x"）
-    const auto collect_kernel = [&](const std::string& vkey, const std::string& ident,
-                                    const nn::ExprSpec& spec, int raxis, int has_mm,
-                                    std::uint32_t vp, std::uint32_t rp, std::uint32_t vw,
-                                    std::uint32_t psig) -> nn::fused::FusedKernel
-    {
-        nn::fused::FusedKernel k;
-        k.key = vkey;
-        k.spec = spec;
-        k.reduce_axis = raxis;
-        k.has_matmul = has_mm;
-        k.view_param_count = vp;
-        k.rparam_count = rp;
-        k.vec_width = vw;
-        k.prec_sig = psig;
-        if (const auto it = job_by_ident.find(ident); it != job_by_ident.end())
-            k.spirv = it->second->spv;
-        return k;
-    };
-    std::vector<nn::fused::FusedKernel> cache;
-    for (const auto& spec : reg.specs)
-    {
-        if (!is_fusable(spec)) continue;
-        const std::string key = nn::expr_spec_key(spec);
-        cache.push_back(collect_kernel(
-            key, key, spec, nn::expr_spec_reduce_axis(spec), spec.matmul ? 1 : 0,
-            nn::expr_spec_runtime_view_param_count(spec), nn::expr_spec_runtime_param_count(spec),
-            fused_vec_width_for(spec, /*alu=*/false), 0u));
-    }
-    for (const auto& ve : emitted_variants)
-    {
-        const nn::ExprSpec& spec = *ve.spec;
-        cache.push_back(collect_kernel(
-            ve.vkey, ve.suffix, spec, nn::expr_spec_reduce_axis(spec), spec.matmul ? 1 : 0,
-            nn::expr_spec_runtime_view_param_count(spec), nn::expr_spec_runtime_param_count(spec),
-            fused_vec_width_for(spec, ve.alu), ve.sig));
-    }
-    for (const auto& be : emitted_batched)
-    {
-        const nn::ExprSpec& spec = *be.spec;
-        cache.push_back(collect_kernel(
-            be.vkey, be.suffix, spec, -1, 0, nn::expr_spec_runtime_view_param_count(spec),
-            nn::expr_spec_runtime_param_count(spec), 1u, be.sig));
-    }
-    for (const auto& fe : emitted_fine)
-    {
-        const nn::ExprSpec& spec = *fe.spec;
-        cache.push_back(collect_kernel(
-            fe.vkey, fe.suffix, spec, nn::expr_spec_reduce_axis(spec), spec.matmul ? 1 : 0,
-            nn::expr_spec_runtime_view_param_count(spec), nn::expr_spec_runtime_param_count(spec),
-            fused_vec_width_for(spec, /*alu=*/false), fe.sig));
-    }
-    for (const auto& ke : emitted_ks)
-    {
-        const nn::ExprSpec& spec = *ke.spec;
-        cache.push_back(collect_kernel(
-            ke.vkey, ke.suffix, spec, nn::expr_spec_reduce_axis(spec), spec.matmul ? 1 : 0,
-            nn::expr_spec_runtime_view_param_count(spec), nn::expr_spec_runtime_param_count(spec),
-            fused_vec_width_for(spec, /*alu=*/false), ke.sig));
-    }
-    for (const auto& ke : emitted_kr)
-    {
-        const nn::ExprSpec& spec = *ke.spec;   // 合成 spec（+部分和 Linear 视图）
-        cache.push_back(collect_kernel(
-            ke.vkey, ke.suffix, spec, nn::expr_spec_reduce_axis(spec), spec.matmul ? 1 : 0,
-            nn::expr_spec_runtime_view_param_count(spec), nn::expr_spec_runtime_param_count(spec),
-            fused_vec_width_for(spec, /*alu=*/false), ke.sig));
-    }
-    // 校验：每个条目都应索引到已编译 SPIR-V（漏配 = .nnk 缺 kernel）
-    for (const auto& k : cache)
-        if (k.spirv.empty())
-        {
-            std::fprintf(stderr, "[FAIL] 条目 %s 缺 SPIR-V（ident 索引失配）\n", k.key.c_str());
-            return false;
-        }
-
     // SPIR-V 数组按 jobs 顺序回填（= 串行版的「基础结构全部在前、变体全部在后」）
     for (const GenJob& j : jobs)
     {
@@ -1044,37 +960,11 @@ inline void run_gen_jobs(const std::string& glslc, std::vector<GenJob>& jobs)
         std::fprintf(stderr, "[FAIL] 无法写入 %s\n", reg_path.c_str());
         return false;
     }
-
-    // ── 可移植算子缓存落盘（kernels.nnk，二进制）─────────────────────────
-    // 内容不变则不动 mtime（与 header 同 restat 语义）。Step C 移除 header
-    // 发射后，此文件即唯一生成产物（A2）。
-    const std::string cache_path = out_dir + "/kernels.nnk";
-    const auto cache_bytes = nn::fused::encode_kernel_cache(cache);
-    bool cache_written = true;
-    {
-        std::ifstream in(cache_path, std::ios::binary);
-        std::ostringstream cur;
-        cur << in.rdbuf();
-        if (cur.str() != std::string(reinterpret_cast<const char*>(cache_bytes.data()),
-                                     cache_bytes.size()))
-        {
-            std::ofstream f(cache_path, std::ios::binary);
-            cache_written = static_cast<bool>(f);
-            if (cache_written) f.write(reinterpret_cast<const char*>(cache_bytes.data()),
-                                       static_cast<std::streamsize>(cache_bytes.size()));
-        }
-    }
-    if (!cache_written)
-    {
-        std::fprintf(stderr, "[FAIL] 无法写入 %s\n", cache_path.c_str());
-        return false;
-    }
     std::printf("[gen] %zu 条融合表达式 + %zu 条精度变体 + %zu 条批量变体 + %zu 条细 tile 变体 + "
                 "%zu 条 K 切分变体(#ks+#kr) -> %s%s\n",
                 reg.specs.size(), emitted_variants.size(), emitted_batched.size(),
                 emitted_fine.size(), emitted_ks.size(), reg_path.c_str(),
                 reg_changed ? "" : "（内容未变化，保持 mtime）");
-    std::printf("[gen] 算子缓存 %zu 条目 -> %s\n", cache.size(), cache_path.c_str());
     return true;
 }
 
