@@ -678,6 +678,11 @@ if(NN_BUILD_APPS)
     nn_add_executable(dataset_convert src/dataset_convert.cpp)
     list(APPEND NN_APP_TARGETS dataset_gen dataset_convert)
     nn_use_modules(dataset_gen tokenizer)
+
+    # ── 运行期 JIT 演示（Phase 2；docs/internal/33）───────────────
+    # 展示"不在内嵌注册表的表达式 → JIT 现编 + .nnk 缓存命中 + CPU 对拍"。
+    # 仅演示用，不注册 ctest、不 install。
+    nn_add_executable(jit_demo src/jit_demo.cpp)
     nn_use_modules(dataset_convert tokenizer)
 
     # ── 层吞吐量基准（CPU/Vulkan GPU；--all 或 --layer <name> 指定） ────────
