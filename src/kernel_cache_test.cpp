@@ -21,6 +21,16 @@ namespace
 {
 int g_fail = 0;
 
+// Windows 无 POSIX setenv/unsetenv：_putenv_s 的空串 = 等效删除
+//（kernel_cache_path_from_env 以空串为"未设置"，见 kernel_cache.hpp）
+#ifdef _WIN32
+inline void test_setenv(const char* n, const char* v) { ::_putenv_s(n, v); }
+inline void test_unsetenv(const char* n) { ::_putenv_s(n, ""); }
+#else
+inline void test_setenv(const char* n, const char* v) { ::setenv(n, v, 1); }
+inline void test_unsetenv(const char* n) { ::unsetenv(n); }
+#endif
+
 void check(bool ok, const char* what)
 {
     if (ok)
@@ -217,18 +227,18 @@ void test_key_encoding()
 void test_cache_path()
 {
     // NN_KERNEL_CACHE_PATH 显式文件优先
-    ::setenv("NN_KERNEL_CACHE_PATH", "/tmp/kc/custom.nnk", 1);
-    ::setenv("NN_KERNEL_CACHE_DIR", "/tmp/kc/dir", 1);
+    test_setenv("NN_KERNEL_CACHE_PATH", "/tmp/kc/custom.nnk");
+    test_setenv("NN_KERNEL_CACHE_DIR", "/tmp/kc/dir");
     check(nn::fused::kernel_cache_path_from_env() == "/tmp/kc/custom.nnk",
           "NN_KERNEL_CACHE_PATH 优先");
 
     // 只设 NN_KERNEL_CACHE_DIR → 目录 + kernels.nnk
-    ::unsetenv("NN_KERNEL_CACHE_PATH");
+    test_unsetenv("NN_KERNEL_CACHE_PATH");
     check(nn::fused::kernel_cache_path_from_env() == "/tmp/kc/dir/kernels.nnk",
           "NN_KERNEL_CACHE_DIR → 目录/kernels.nnk");
 
     // 都不设 → 回退系统缓存目录（非空、以 kernels.nnk 结尾）
-    ::unsetenv("NN_KERNEL_CACHE_DIR");
+    test_unsetenv("NN_KERNEL_CACHE_DIR");
     const std::string def = nn::fused::kernel_cache_path_from_env();
     check(!def.empty() && def.size() >= std::string("kernels.nnk").size() &&
               def.substr(def.size() - std::string("kernels.nnk").size()) == "kernels.nnk",
