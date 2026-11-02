@@ -338,10 +338,16 @@ add_library(nn_core INTERFACE)
 # 主仓库已删除与抽象层重复的接口/值类型头（algebra_* / compute_engine /
 # compute_tensor / core_* / expr_spec 等），同名头一律解析到抽象层 —— 与
 # libnn-cpu.so / libnn-gpu.so（LGPL）按同一份头编译，跨界 ABI 一致。
+# engine/engine/include（LGPL 实现目录）放**最后**兜底：主仓库不再维护
+# 与引擎重复的功能头副本（expr_dsl / expr_fold / expr_registry / ternary_pack /
+# int8_pack / kernel_cache / kernelgen_api / nn_api，2026-11 v1.16.0 后去重），
+# 消费侧头（层/模型/训练/数据集/分词器）仍在主仓库 include/ 优先命中。
 target_include_directories(nn_core INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/engine/include/neuralnet.cpp>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/engine/include>)
 target_link_libraries(nn_core INTERFACE Threads::Threads)
 if(NN_STACKTRACE_LIB)
     target_link_libraries(nn_core INTERFACE ${NN_STACKTRACE_LIB})
