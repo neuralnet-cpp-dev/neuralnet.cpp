@@ -81,7 +81,21 @@ private:
     // 全部 fail-fast（见下面的守卫），避免"以为在训练其实在推一个残层"。
     bool packed_only_ = false;
 
+    // ── 部署构建（免 latent 构建，P2 残差根治，2026-11）───────────────────
+    // true = 本层按"载入部署文件"的形态构建：init **不分配 f32 latent**
+    //（权重完全由随后的 import（TernaryPacked2）提供的打包字 + τ 接管），
+    // 层直接从 packed-only 只读态起步。消除旧流程的**载入期瞬时峰值**——
+    // 旧路径先按规格建出全部 latent（4 B/权重）再被部署条目丢弃，2B4T
+    // 级模型上是 GB 级瞬时显存（docs/internal/21 §4.15 的 P2 残差）。
+    // 只影响构建；与文件角色的关系由调用方裁定（role=Model → inference_only）。
+    bool inference_only_ = false;
+
+    bool act_quant_ = false;  // int8 激活量化（W1.58A8，P3）：见 set_activation_quant
+
     Tensor input_cache_; // forward 输入缓存（backward 用）
+    // int8 激活路径下 input_cache_ 存的是**打包 int8 激活**（1 B/元素），
+    // 本成员存配套的 per-token 尺度 (1,N)（backward 的 dW 需要）
+    Tensor act_scale_;
 
     // ── 量化缓存（F1）：只在**权重变过**时重算 τ/wq ──────────────────────
     // 判据 = `latent_w_.write_epoch()`（存储级写版本，任何经引擎媒介的参数
@@ -97,8 +111,8 @@ private:
     std::uint64_t quantize_calls_ = 0;  // 量化实际执行次数（诊断/测试用）
 
 public:
-    BitLinear(std::size_t in_features, std::size_t out_features)
-        : in_features_(in_features), out_features_(out_features)
+    BitLinear(std::size_t in_features, std::size_t out_features, bool inference_only = false)
+        : in_features_(in_features), out_features_(out_features), inference_only_(inference_only)
     {
     }
 
@@ -116,21 +130,33 @@ public:
 
     [[nodiscard]] Result<void> init_impl(ComputeEngine& engine) override
     {
-        // Xavier 均匀分布（与 Linear 同款）；latent/偏置**恒 f32**
-        //（§4.3.2：param=T1_58 只是一句声明，绝不拿它去 create_tensor）。
-        const Scalar limit = std::sqrt(6.0 / static_cast<Scalar>(in_features_ + out_features_));
-        latent_w_ = engine.create_tensor(out_features_, in_features_, Precision::F32,
-                                         InitSpec::uniform(-limit, limit, kInitSeed));
-        if (!latent_w_.valid()) NN_FAIL("BitLinear: latent 权重初始化失败");
+        // 部署构建（inference_only）：**不分配 latent** —— 权重完全由载入的
+        // 打包字 + τ 接管，层直接从 packed-only 只读态起步（免载入期瞬时峰值）。
+        // 打包/τ 缓冲也留给 import（TernaryPacked2 直接收走 entry 的引擎张量），
+        // 构建期不预先分配 —— 载入前本层的权重足迹只有偏置 (out,1)。
+        if (inference_only_) packed_only_ = true;
+        if (!packed_only_)
+        {
+            // Xavier 均匀分布（与 Linear 同款）；latent/偏置**恒 f32**
+            //（§4.3.2：param=T1_58 只是一句声明，绝不拿它去 create_tensor）。
+            const Scalar limit = std::sqrt(6.0 / static_cast<Scalar>(in_features_ + out_features_));
+            latent_w_ = engine.create_tensor(out_features_, in_features_, Precision::F32,
+                                             InitSpec::uniform(-limit, limit, kInitSeed));
+            if (!latent_w_.valid()) NN_FAIL("BitLinear: latent 权重初始化失败");
+        }
         b_ = engine.create_tensor(out_features_, 1, Precision::F32, InitSpec::zero());
         if (!b_.valid()) NN_FAIL("BitLinear: 偏置初始化失败");
         // 梯度缓冲**不在此分配**（F2）：惰性 + 只训练时分配，见 ensure_grad_()。
         // 量化缓冲：**打包容器**（2 bit/权重，F3）是默认也是唯一形态 ——
         // 能力判断不下沉到层（引擎不支持时由 matmul_q/trit_pack 自行 fail-fast）。
+        // ensure_quant_buffer_ 对 packed_only_ 早退（部署态缓冲由 import 提供）。
         use_packed_ = true;
         ensure_quant_buffer_();
-        tau_ = engine.create_tensor(out_features_, 1, Precision::F32, InitSpec::zero());
-        if (!tau_.valid()) NN_FAIL("BitLinear: 尺度缓冲初始化失败");
+        if (!packed_only_)
+        {
+            tau_ = engine.create_tensor(out_features_, 1, Precision::F32, InitSpec::zero());
+            if (!tau_.valid()) NN_FAIL("BitLinear: 尺度缓冲初始化失败");
+        }
         return {};
     }
 
@@ -147,6 +173,16 @@ public:
         quant_valid_ = false;
         ensure_quant_buffer_();
     }
+
+    // ── int8 激活量化（W1.58A8，P3 显存侧，docs 21 §4.16）──────────────
+    // true = forward 把输入按 per-token absmax 量化到 int8（quantize_i8 +
+    // matmul_q_i8），激活缓存（backward 的 dW 输入）从 f16 2 B/元素降到
+    // 1 B/元素。**数值口径与 BitNet b1.58 训练配方一致**（"trained with
+    // 1.58-bit weights and 8-bit activations"）：量化 GEMM 走打包权重
+    // （需要 use_packed_，否则 forward fail-fast）。
+    // 默认 false ⇒ 既有 f16/f32 路径逐位不变。
+    void set_activation_quant(bool enabled) noexcept { act_quant_ = enabled; }
+    [[nodiscard]] bool activation_quant() const noexcept { return act_quant_; }
 
     // 恢复"按形状自动选"（默认策略）
     void set_ternary_pack_auto()
@@ -356,16 +392,19 @@ public:
         // 只清**激活**缓存。wq_/τ 是**权重派生物**：有效性由写版本决定
         // （needs_quantize_），清掉只会让下一次 forward 白算一遍全量权重。
         input_cache_ = Tensor{};
+        act_scale_ = Tensor{};
     }
 
     [[nodiscard]] std::vector<TensorRef> activation_cache() override
     {
-        // backward 需要 input_cache_（X）。τ **不在**此列：它是权重派生物
-        // （随写版本缓存），不是激活 —— 列进 offload 会被搬到 host 再搬回
-        // （白付一次搬运），清空后还会让缓存判定失效、触发一次全量重算；
-        // 它只有 (out,1)，常驻代价可忽略。
+        // backward 需要 input_cache_（X；int8 路径下是打包 Q）。τ **不在**此列：
+        // 它是权重派生物（随写版本缓存），不是激活 —— 列进 offload 会被搬到 host
+        // 再搬回（白付一次搬运），清空后还会让缓存判定失效、触发一次全量重算；
+        // 它只有 (out,1)，常驻代价可忽略。int8 路径的 per-token 尺度 (1,N) 与
+        // 打包激活配套，必须一并 offload/恢复。
         std::vector<TensorRef> r;
         if (input_cache_.valid()) r.emplace_back(input_cache_);
+        if (act_scale_.valid()) r.emplace_back(act_scale_);
         return r;
     }
 
@@ -377,13 +416,42 @@ public:
         // 部署态：只允许"打包字 + τ"这条路（引擎不支持三值 GEMM 就没法跑）
         if (packed_only_ && !(use_packed_ && wq_packed_.valid() && tau_.valid()))
             NN_FAIL("BitLinear(packed-only)：部署态缺少打包权重/τ（载入失败或缓冲被清）");
-        if (!checkpoint_mode_) input_cache_ = input;
+        // int8 激活需要打包权重路径（matmul_q_i8 的解码基于打包容器）
+        if (act_quant_ && !(use_packed_ && wq_packed_.valid()))
+            NN_FAIL("BitLinear: int8 激活量化需要打包权重路径（set_ternary_pack_enabled(true)）");
         // 缓冲形态：默认跟随引擎能力（分块解码版下训练/解码都不亏，见成员注释）；
         // `set_ternary_pack_enabled` 之后走强制模式。换形态即作废量化缓存。
         sync_buffer_mode_();
         // τ / wq 只在 latent 权重变过时重算（同权重下的 N 次 forward 共享）。
         // 重算失败：直接上抛（不静默沿用上一步的旧缓冲）。
         if (needs_quantize_()) { NN_TRY(q, quantize_weights_()); }
+
+        // ── int8 激活（W1.58A8，P3）：Y = (τ∘W)·(s∘Q) + b ──────────────
+        // s = per-token absmax/127（(1,N)：col_reduce_max(|X|)·(1/127)，docs 21
+        // §4.16 ③ 的 W1.58A8 口径）—— **必须除 127**：原值会让 x/s ∈ [-1,1]、
+        // round 只能落到 {-1,0,1}，激活量化分辨率退化成三值（不是 A8）。
+        // Q = int8 量化（q ≈ 127·x/s ⇒ s·q ≈ x，8-bit 分辨率重建）；
+        // 激活缓存 = 打包 Q + s（1 B/元素 —— f16 的 1/2，训练显存大头削减），
+        // backward 的 dW 直接反量化 Q 使用（STE）。
+        if (act_quant_)
+        {
+            NN_TRY(xabs, dsl::compute(engine, dsl::abs(dsl::leaf(input)), input.rows(),
+                                      input.cols(), Precision::F32));
+            NN_TRY(sraw, engine.col_reduce_max(*xabs, Precision::F32));
+            NN_TRY(ss, engine.scale_inplace(*sraw, 1.0f / 127.0f));
+            (void)ss;
+            NN_TRY(xq, engine.quantize_i8(input, *sraw, /*col_scale=*/true));
+            if (!checkpoint_mode_)
+            {
+                input_cache_ = *xq;
+                act_scale_ = *sraw;
+            }
+            NN_TRY(y, engine.matmul_q_i8(wq_packed_, tau_, *xq, *sraw, p_.compute));
+            return dsl::compute(engine, dsl::leaf(*y) + dsl::row_broadcast(b_), out_features_,
+                                input.cols(), p_.compute);
+        }
+
+        if (!checkpoint_mode_) input_cache_ = input;
         // 打包路径：Y = (τ∘W)·X 是一趟量化 GEMM（权重读 0.25 B/元素），偏置用
         // 一次行广播加（原语不带 bias，见 compute_engine.hpp 的说明）。
         if (use_packed_)
@@ -410,6 +478,8 @@ public:
         ensure_grad_();   // 训练路径：首次反向才建梯度缓冲（F2）
         if (!tau_.valid() || !input_cache_.valid())
             NN_FAIL("bitlinear backward: 必须先 forward（τ/输入缓存未建立）");
+        if (act_quant_ && !act_scale_.valid())
+            NN_FAIL("bitlinear backward: int8 激活路径缺 per-token 尺度（必须先 forward）");
 
         // dX = (τ∘W)ᵀ·dY：τ 是逐输出通道的（落在求和维内），必须在内核里按
         // 存储行取 —— 打包路径直接一趟量化 GEMM（顺带省掉了 dy_scaled 中间量）。
@@ -433,12 +503,30 @@ public:
 
         // dW += (dY·Xᵀ)∘τ（STE：∂wq/∂W ≡ 1，再乘去量化尺度 τ）
         // matmul 段 + 逐行缩放 + 原地累加融合为单次 dispatch（与 Linear 同构）。
-        auto grad_w_acc = dsl::compute_into(
-            engine,
-            dsl::leaf(grad_w_) +
-                dsl::matmul(grad_output, input_cache_, false, true) * dsl::row_broadcast(tau_),
-            grad_w_);
-        NN_TRY_CHECK(grad_w_acc);
+        // int8 激活路径：X 是量化输入（STE 用同一份量化激活做梯度）——
+        // dW = (dY∘s)·Qᵀ·τ：per-token 尺度 s 在求和维（token）内，折进 dY 侧
+        // （(dY∘s) 的 (out,N)），Q 反量化成 f32 整数后直接 matmul。
+        if (act_quant_)
+        {
+            NN_TRY(xq32, engine.unpack_i8(input_cache_, grad_output.cols()));
+            NN_TRY(dys, dsl::compute(engine,
+                                     dsl::leaf(grad_output) * dsl::col_broadcast(act_scale_),
+                                     grad_output.rows(), grad_output.cols(), p_.compute));
+            auto grad_w_acc = dsl::compute_into(
+                engine,
+                dsl::leaf(grad_w_) + dsl::matmul(*dys, *xq32, false, true) * dsl::row_broadcast(tau_),
+                grad_w_);
+            NN_TRY_CHECK(grad_w_acc);
+        }
+        else
+        {
+            auto grad_w_acc = dsl::compute_into(
+                engine,
+                dsl::leaf(grad_w_) +
+                    dsl::matmul(grad_output, input_cache_, false, true) * dsl::row_broadcast(tau_),
+                grad_w_);
+            NN_TRY_CHECK(grad_w_acc);
+        }
 
         // db += Σ_batch dY（归约向量 + 原地累加两步；与 Linear 同款理由：
         // 归约向量输出契约要求输出链只经归约/广播视图访问输入）

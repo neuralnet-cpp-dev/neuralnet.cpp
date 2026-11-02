@@ -750,8 +750,8 @@ bitsandbytes int8 payload 的 8 bit）。
 **诚实标注**：① 30 步合成语料只是"接线 + 量级"证据，**不是收敛结论**（真收敛 A/B
 需要真实语料 + 足够步数，是下一步验收项）；② 与 bitsandbytes 8-bit Adam 仍有差距 ——
 它是 int8 payload + 每块紧凑 absmax（1 B/状态、需融合按块内核），本版 2 B/状态；
-再砍一半的前置是 DSL 的 `round` 算子（§5 的 P3 前置）+ 字节打包容器（M7 或 f16
-容器位打包），按此顺序做收益最大（峰值再约 −12%）。
+**int8 payload 版已落地（§4.19 的 AdamWInt8，~2 B/权重，融合原语路线 —— 打包状态
+DSL 读不了，需单内核解码/更新/编码，不是 DSL round 路线）**，按此顺序做收益最大。
 
 ### 4.14 分块解码 GEMM 收口：轴向修复 + 窄 N 打包 GEMV + CPU 复用稠密微内核（2026-10-11）
 
@@ -886,7 +886,8 @@ ctest **36/36**。
 [4] `peek_model_role` 与文件头一致；[5] 只读态按断点角色导出 → 明确报错；
 [6]（P1-7）`Trainable` 意图载入 ⇒ 可训练态 + 打包字/τ 与文件**逐位一致** + 首次 forward
 与文件里的模型**逐位一致** + 逐行 `absmean(latent) == τ` + 8 步 Adam 后 latent 确实移动。
-历史数字（NNQT 11.9× 更小 / 峰值显存持平 / 免 latent 构建尚缺）见 `docs/history/history.md`。
+历史数字（NNQT 11.9× 更小 / 峰值显存持平）见 `docs/history/history.md`；「免 latent 构建
+尚缺」已由 §4.17 收口（2026-11）。
 
 ### 4.16 P3 起步：int8 点积（W2A8）能力探测与路线判定（2026-10-11）
 
@@ -925,6 +926,125 @@ ctest **36/36**。
   与 BitNet 的 W2A8 口径一致；验收 = 与 f16 累加路径的 loss 曲线同量级 +
   `ternary_gemm_test` 式的跨形状对拍（int8 路径单独一组）。
 
+> **落地状态（2026-11）**：P3 已落地，见 §4.18 —— 引擎原语（`quantize_i8` /
+> `unpack_i8` / `matmul_q_i8`）+ BitLinear 开关（`set_activation_quant`，默认关）+
+> 数值口径修正（**s 必须除 127**：原始 absmax 会让激活量化退化成三值分辨率）。
+
+### 4.17 免 latent 构建（P2 残差根治，2026-11）：推理入口按部署形态建 BitLinear
+
+§4.15 的「推理只读」让 live 权重降到 0.25 B/权重，但**载入路径仍先按架构规格建出全部
+f32 latent**（`build_*_from_spec` → `BitLinear::init` 立即分配，4 B/权重），`load_model`
+载入部署条目后才把 latent 丢弃 —— 载入期瞬时峰值 ≈ 4.25 B/权重，与同尺寸 f32 模型几乎
+一样；且 `text_infer` 载入后从不调 `release_idle_pool_blocks`，空闲 latent 底材留在池里
+不还给驱动 ⇒ **nvidia-smi 停在峰值，"t1_58 完全不省显存"的直接观感来源**（2B4T 级模型
+是 GB 级瞬时，原 §4.15 的「剩余」项）。
+
+**改法**：新增 `inference_only` 构建开关（沿 `weight_quant` 同款工厂链穿线，全带默认值）：
+
+- `BitLinear(in, out, inference_only=false)`：`init_impl` 在开关置位时 `packed_only_=true`，
+  **不分配 latent**；打包/τ 缓冲也不预分配（`import_param` 的 `TernaryPacked2` 分支直接
+  收走 entry 的引擎张量）—— 载入前本层权重足迹只剩偏置 (out,1)；载入前 forward
+  fail-fast（诚实失败：还没有权重）。
+- 穿线：`make_linear_layer` → `AttentionBase`/`CausalSelfAttention`/`FeedForward`/
+  `GPTBlock`/`GPTModel` → `GptConfig`/`build_gpt_model`/`build_gpt_model_from_spec`；
+  MLP 侧 `build_mnist_mlp_model`/`build_mnist_model_from_spec` 同款。
+- CLI：`text_infer`/`mnist_infer` 按 `peek_model_role == Model` 置位（`.nnckpt` 的
+  Checkpoint 角色走正常构建 —— 参数是 latent 形态，仍需要 latent 张量）；载入后各加一次
+  `release_idle_pool_blocks()`（归还载入期解码/中转底材，与训练路径口径一致）。
+- 默认 `false` ⇒ 训练路径（含 `.nnmodel` warm start / `Trainable` 反量化）与全部既有调用
+  零改动、逐位不变。
+
+**验收（实测，本机 clang 24 + Release CPU 树）**：`model_roles_test` 新增 [7] ——
+① 构建后（载入前）`packed_only()`、latent 空、打包/τ 空、forward fail-fast；
+② 载入 `.nnmodel`（默认 Inference）后 latent 恒空、打包字 + τ 就位；
+③ 首次 forward 与「正常构建 + 载入」路径**逐位一致**；④ GPT 路径同断言（text_infer
+目标形态）。`t1_58_test`/`bitnet_struct_test`/`ternary_gemm_test` 全绿 + ctest 77/77。
+
+**边界（如实记录）**：训练侧显存不降是既有结论（§4.11/§4.13，与三值本身无关）；省显存
+的正路 = `--optimizer adamwquant`（状态 8 → ~4 B/权重，−32%）+ 推理部署文件（0.25 B/权重）。
+
+### 4.18 int8 激活量化落地（W1.58A8，P3，2026-11）：quantize_i8 / matmul_q_i8 + BitLinear 接线
+
+§4.16 的 P3（激活 int8 + 整数点积）已落地为 op-level 引擎原语 + BitLinear 开关
+（默认关 ⇒ 既有路径逐位不变）：
+
+- **引擎原语**（抽象层 NVI + `*_impl`，CPU / GPU + shader，
+  `engine/shaders/{quantize_i8,unpack_i8,matmul_q_i8}.comp`）：
+  - `quantize_i8(x (M,N), scale, col_scale)` → 容器 (M, ceil(N/4)) f32（**1 B/元素**）：
+    `q = round(clamp(x/s, -127, 127))`（round-half-away；NaN → 0；s==0 → 0）；
+    col_scale=true 时 scale 是 (1,N)（per-token 激活），false 时 (M,1)（优化器状态/权重侧预留）。
+  - `unpack_i8(packed, cols)` → f32 整数（值 ∈ [-127,127]；STE 的 dW 需要 Xq 的 f32 形式，
+    **不乘尺度** —— 尺度由调用方在表达式里折进）。
+  - `matmul_q_i8(wq (M, ceil(K/16)), τ (M,1), xq (K, ceil(N/4)), s (1,N), P)`
+    → `Y[m,n] = τ_m·s_n·Σ_k trit(m,k)·q(k,n)`（int32 累加 + 双向量缩放；GPU 另有 f16
+    直写变体，CPU 抬 f32 按 P 落回）。
+- **布局**：与 `trit_pack` 同先例 —— 容器 = f32 张量承载原始字（4×int8/字、行内小端、
+  尾部填 0）；`int8_pack.hpp` 是布局/编解码唯一来源（主仓 + 引擎侧各一份，逐字节一致）。
+- **BitLinear 接线**：`set_activation_quant(bool)`（默认关）。forward = 量化
+  （`s = col_reduce_max(|X|)·(1/127)`）→ `quantize_i8` → `matmul_q_i8` + bias，
+  `input_cache_` 存**打包 Q** + `act_scale_`（激活缓存 2 B → 1 B/元素）；backward 的
+  dX 仍走 `matmul_q_t`（与 f16 路径逐位一致），dW 的 STE = `(dY∘s)·Qᵀ·τ`（Q 经
+  `unpack_i8` 反量化）。int8 需要打包权重路径（`use_packed_`，否则 fail-fast）。
+- **数值口径（关键不变量）**：`s` **必须除 127**（本段 ③：`s = absmax(x)/127`）。
+  实现初稿用原始 absmax ⇒ `x/s ∈ [-1,1]`、round 只落 {-1,0,1} —— 激活量化分辨率退化成
+  三值（≈1.58 bit，不是 A8）；已在 BitLinear forward 里补 `scale_inplace(·, 1/127)`。
+
+**实测验收**（`src/int8_act_test.cpp`，注册进 ctest；本机 clang 24 + Release CPU 树）：
+[1] quantize 逐位（round-half-away / s==0 / NaN）+ 打包布局；[2] unpack roundtrip；
+[3] `matmul_q_i8` 与宿主整数参考**逐位一致**（K 非 16 倍数 / N 非 4 倍数 / M 跨 RB=64
+行块边界；GPU 追加 2B4T 量级）；[4] BitLinear int8 vs f16 前向差 ≤ τ·K·(absmax/127)·0.5
+（实测 worst 0.19 ≤ 1）；[5] dX 两条路径逐位一致 + dW 与宿主参考 max_rel 3.9e-7；
+[6] MLP 端到端 300 步 loss 0.755 → 0.034（收敛）。ctest **79/79**（GPU 变体 77=skip）。
+
+**边界（如实记录）**：GPU 数值对拍（`--gpu` / 40HX-850M）待有 GPU 环境（shader 编译 +
+后端接线已由 engine 子仓 GPU 构建验证）；`matmul_q_i8` 当前 = 逐输出元素参考内核
+（正确性优先，宽 batch 性能按 §4.16 ② 的"先量后承诺"流程另行 A/B）；激活量化只在线性
+投影（BitLinear 内部），与 BitNet b1.58 训练配方 W1.58A8 同口径。训练显存账：激活缓存
+1 B/元素（f16 的 1/2）+ 权重已 0.25 B/权重；优化器状态仍是 8 B/权重（正路 =
+`--optimizer adamwquant` §4.13；int8 优化器状态是下一步）。
+
+### 4.19 int8 打包状态优化器 AdamWInt8（2026-11）：~2 B/权重 + 融合原语
+
+§4.13 的 int8 增量（AdamWQuant 的 f16 payload → int8 打包 1 B/元素）已落地：
+
+- **状态账**：8 B（f32 Adam）→ **~2.03 B/权重**（int8 打包 1 B/元素 + 每行 f32 尺度
+  2×4/cols ≈ 0.016 B，cols=512；实测 `state_bytes()` = 2.084 B/权重，含 MNIST 小
+  cols 的尺度占比）。代价 = 8 bit 相对精度（AdamWQuant 的 f16 11 bit 更好 —— 用精度
+  换字节，与 bitsandbytes 8-bit Adam 同量级）。
+- **做法**：与 AdamWQuant 完全同构（有界尺度 + 行归一），只是 payload 换成 int8 打包
+  容器（`int8_pack.hpp` 布局，1 B/元素）。**为什么必须融合引擎原语**：打包状态 DSL 读
+  不了（位打包），若先 `unpack_i8` 再走 DSL 更新再 `quantize_i8`，会物化 f32 全尺寸
+  临时量（4 B/状态 × 2 —— 比省掉的还多）。故新增领域原语 `quantized_adamw_step`
+  （抽象层 NVI + CPU/GPU 实现 + `engine/shaders/quantized_adamw_step.comp`）：单内核内
+  **解码 → 更新 → 编码 → 参数更新**（每线程一个打包字，字内 4 元素串行写回，无字节级
+  竞态）。数学口径与 AdamWQuant 的 DSL 表达式同构（尺度前进仍在优化器层用 DSL 完成，
+  与 AdamWQuant 逐位一致）。
+- **关键数值坑（int8 无次正规兜底，防静默爆炸）**：int8 量化破坏了 f32/f16 状态下
+  `m̂² ≲ v̂` 的比例自洽 —— 小梯度元素 `qv=0`（v_real 小于量化半步长）⇒ `v̂=0` ⇒ 分母
+  退化成 `eps=1e-8` ⇒ 更新爆炸（实测 [3] 端到端前 20 步 loss 2.27 → 1071）。修法 =
+  **解码端 v̂ 下限 = 量化步长 `v_scale_new/127`**（qv=0 时重建为最小可表示值）：最坏比值
+  `|m̂| ≤ sm ⇒ m̂/√v̂ ≤ sm/√(sv/127) ≈ O(1)`，更新量级与 f32 Adam 首步行为同阶且有界。
+
+**实测验收**（`src/adam_int8_test.cpp`，注册进 ctest；本机 clang 24 + Release CPU 树）：
+[1] 原语与宿主参考**逐位一致**（cols 非 4 倍数 / 多行多块，含 v̂ 下限）；[2] 状态账
+2.084 vs 4.054（AdamWQuant）；[3][4] 端到端 120 步：AdamWInt8 loss **0.000147** ≈
+AdamW 0.000165（同量级，含偏置修正；L1 位移同量级）；[5] 零梯度首步无 NaN；[6]
+save/load 往返后 step 与未中断**逐位一致**（含 `t_` 计数器回滚 —— 断点语义 = 状态张量
++ `state_step`，load 后必须 `set_state_step`）。ctest **81/81**（GPU 变体 77=skip）。
+
+**边界（如实记录）**：
+- **v̂ 下限是"保守过估"**：qv=0 的元素以量化步长作为 v̂，更新量级按分辨率下限截断 ——
+  与 bitsandbytes 的块紧凑 absmax 相比，本版每行尺度 + 下限的数值行为更粗糙，但数学有界、
+  实现最小；块量化（每 64 元素尺度）是后续精化方向。
+- **GPU 数值本轮未实测**（沙箱无 GPU）：shader/后端接线已编译验证，`--gpu` 对拍
+  （40HX-850M）待有 GPU 环境。
+- **原语 = 逐元素参考内核**（每线程一个字），宽 batch 性能按"先量后承诺"另行 A/B。
+- **铁律 3 豁免**：`quantized_adamw_step` 把 Adam 数学放进引擎（领域原语，与
+  `matmul_q_i8` 同性质）—— 打包状态无法经 DSL 表达，是必要豁免，数学口径钉死在抽象层
+  公共入口注释。
+- **序列化**：save/load = 每参数 4 张量（m/v 打包容器 + sm/sv 尺度），容器/尺度均 f32
+  张量直接往返（`optimizer_state_test` 已覆盖表级存在性）。
+
 ---
 
 ## 5. 分期与验收
@@ -932,7 +1052,7 @@ ctest **36/36**。
 | 阶段 | 内容 | 落点 | 验收 |
 |---|---|---|---|
 | **P1 ✅（2026-10-10 落地）** 架构统一 + 功能正确<br>（**范围 = MLP 路径**，D5 建议③） | `Precision::T1_58`（含 R4 的序处理、tag 4、`check_precision_supported` 拒绝）；`PrecisionSet` + `Layer::precision_support()` + `init` 校验 + `layer_name()`；`BitLinear`（量化 forward + STE backward）；D3 的 (a)+(b)（§4.3.2）；`scan_exprs` 补 dry-run；spec 的 `weight_quant` 字段；2 个 CLI × 4 flag 的词法 + GUI + `gui_cli_audit` | `precision.hpp` / `compute_layer_base.hpp` / 新 `compute_layer_bitlinear.hpp` / `tools/scan_exprs.cpp` / `model_spec.hpp` / `src/*` / `gui.py` | ① 不兼容组合**初始化期报错**（含 `param=T1_58` + 普通 `Linear` 的反例用例）✅；② latent 权重的 STE 梯度 = 解析式（量化器不可微 → 不做数值 gradcheck，改与宿主参考逐项对拍）✅；③ CPU/GPU 各一个端到端小训练收敛（loss 0.981→0.025，两端逐位相同）✅；④ 既有 ctest 全绿（本机唯一不稳定 = 软件 Vulkan teardown）、L2 审计 0 ✅。**逐文件清单见 §7；逐条差异见 §4.9** |
-| **P2 ✅（2026-10-11 落地，见 §4.12 + §4.14 + §4.15）** 真性能与部署格式：2-bit 定长打包 + `matmul_q`/`matmul_q_t`（CPU/GPU 双端）+ **分块解码 GEMM（轴向修复）+ 窄 N 打包 GEMV + 训练/解码统一走打包 + `layer_bench --op matmul_q` 配对 A/B + CPU 行块解码复用稠密微内核 + base-3（1.6 bpw）部署编码 + `.nnmodel` 只读推理角色（v7 单一格式 + 参数形态协议）** | **剩余 = 免 latent 构建**（载入期瞬时峰值：模型仍按架构规格建 latent 再被部署条目接管 → 2B4T 上是 GB 级瞬时；方案 = `ModelSpec.deploy_packed` + `make_linear_layer(..., inference_only)`）+ 激活 int8 / 整数点积（P3，打包在 GPU 上"打赢"稠密的前提） | 同左（`compute_tensor.hpp` 的 M7 张量 qparam 仍未做：当前容器是"f32 张量当原始字"，够用但没类型约束） | ① `layer_bench` 配对 A/B ✅（`matmul_q`/`matmul_q_t`/`matmul_q_bw` + `--f16`/`--inner`：宽 N 持平~+13%、窄 N 1.1–2.3×、权重 0.25 B/权重）；② 打包往返逐位 ✅（`ternary_gemm_test` [1][2]）；③ 数值与 f16 缓冲路径一致 ✅（同测试 [3][4][5][6][7]，含跨形状对拍）；④ 与 BitNet `gpu/pack_weight.py` 的位宽/码值对齐（**只对编码/解码**；不采用其 CUDA interleave 置换）；⑤ 端到端：训练 2.0 s 持平 / 训练显存 −8.4% / 解码 −30% / 推理显存 −13.6% / CPU 与 f16 稠密打平（§4.14）；⑥ `.nnmodel` 明显更小、载入后前向逐位一致、三值层只读（`model_roles_test`，§4.15） |
+| **P2 ✅（2026-10-11 落地，见 §4.12 + §4.14 + §4.15）** 真性能与部署格式：2-bit 定长打包 + `matmul_q`/`matmul_q_t`（CPU/GPU 双端）+ **分块解码 GEMM（轴向修复）+ 窄 N 打包 GEMV + 训练/解码统一走打包 + `layer_bench --op matmul_q` 配对 A/B + CPU 行块解码复用稠密微内核 + base-3（1.6 bpw）部署编码 + `.nnmodel` 只读推理角色（v7 单一格式 + 参数形态协议）** | **免 latent 构建 ✅（2026-11，见 §4.17）**：推理入口按 role=Model 以 `inference_only` 形态构建 —— BitLinear 不分配 f32 latent（权重由载入的打包字 + τ 接管），载入期瞬时峰值消失；**剩余 = 激活 int8 / 整数点积（P3，打包在 GPU 上"打赢"稠密的前提）** | 同左（`compute_tensor.hpp` 的 M7 张量 qparam 仍未做：当前容器是"f32 张量当原始字"，够用但没类型约束） | ① `layer_bench` 配对 A/B ✅（`matmul_q`/`matmul_q_t`/`matmul_q_bw` + `--f16`/`--inner`：宽 N 持平~+13%、窄 N 1.1–2.3×、权重 0.25 B/权重）；② 打包往返逐位 ✅（`ternary_gemm_test` [1][2]）；③ 数值与 f16 缓冲路径一致 ✅（同测试 [3][4][5][6][7]，含跨形状对拍）；④ 与 BitNet `gpu/pack_weight.py` 的位宽/码值对齐（**只对编码/解码**；不采用其 CUDA interleave 置换）；⑤ 端到端：训练 2.0 s 持平 / 训练显存 −8.4% / 解码 −30% / 推理显存 −13.6% / CPU 与 f16 稠密打平（§4.14）；⑥ `.nnmodel` 明显更小、载入后前向逐位一致、三值层只读（`model_roles_test`，§4.15） |
 | **P1.5 ✅（2026-10-10 落地）** GPT 接入<br>（**范围 = GPT**，RAPT/ViT 见 §4.10 边界） | `make_linear_layer` + `unique_ptr<Layer>` 替换 GPT 侧全部 `Linear` 成员：`AttentionBase` 4 投影、`FeedForward` fc1/fc2、`GPTModel` LM head；`TernaryProfileSplit` 分流规则；`effective_weight_quant` 唯一判据；规格/CLI/扫描同步 | `compute_layer_base.hpp` / `compute_layer_attention.hpp` / `compute_layer_feedforward.hpp` / `compute_layer_gpt.hpp` / `domain_gpt.hpp` / `src/text_train.cpp` / `tools/scan_exprs.cpp` | ① 三值 GPT 端到端训练（2B4T 形状 3.469→0.018；MLP 之外的路径首次可用）✅；② 参数张量形状与 f32 基线逐一相同 + 梯度非零 ✅；③ 既有 f32/f16 路径零回归（`split` 恒等 + ctest 30/30）✅；④ **RAPT/ViT 明确拒绝**而非静默半三值 ✅。逐条记录见 §4.10 |
 | **P3** 计算侧收益<br>**起步（2026-10-11，见 §4.16）**：设备 int8 点积能力探测（引擎私有谓词；对外只经 `describe().int8_dot`/`describe().int8_dot_accelerated` 披露）已落地，**102/40HX 实测两者皆 true** | **剩余 = 配对微基准（`matmul_q` vs `matmul_q_i8`）→ `quantize_act_i8`（per-列 absmax + round/clamp + 4×int8 打包）→ `matmul_q_i8`（DP4A 整数累加 + τ·s 双向量缩放）→ 数值/收敛对拍**；DSL 的 `round`/`clamp` **降级为可选**（手写原语不需要） | `include/neuralnet.cpp/expr_spec.hpp` / `expr_dsl.hpp` / `expr_glsl_gen.hpp`（仅当走 DSL 路线）、新 `.comp` + `compute_*_engine.hpp` 原语 | ① 设备能力探测 ✅（§4.16）；② **准入门槛 = 微基准量出解码折叠 + 激活减半的指令/带宽收益**（DP4A 算力与 vec4 FMA 同量级，且 Vulkan/Turing 无张量核 → 收益上限低于 BitNet 官方）；③ 与 f16 累加路径的 loss 同量级 + 跨形状对拍 |
 

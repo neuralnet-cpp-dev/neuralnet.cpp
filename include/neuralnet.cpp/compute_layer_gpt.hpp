@@ -47,11 +47,12 @@ public:
              ActivationType activation = ActivationType::GeLU,
              NormType norm_type = NormType::LayerNorm,
              PrecisionProfile precision = PrecisionProfile{}, bool subln = false,
-             std::size_t n_head_kv = 0, WeightQuant weight_quant = WeightQuant::None)
+             std::size_t n_head_kv = 0, WeightQuant weight_quant = WeightQuant::None,
+             bool inference_only = false)
         : self_attn_(d_model, num_heads, max_len, seq_len, pos_enc, subln, norm_type, n_head_kv,
-                     weight_quant),
+                     weight_quant, inference_only),
           norm1_(make_norm_layer(d_model, norm_type)),
-          ff_(d_model, d_ff, activation, subln, norm_type, weight_quant),
+          ff_(d_model, d_ff, activation, subln, norm_type, weight_quant, inference_only),
           norm2_(make_norm_layer(d_model, norm_type)), weight_quant_(weight_quant)
     {
         // D7：将精度配置注入所有子层（§9.2）—— override 内已逐子层下传
@@ -303,12 +304,13 @@ public:
              NormType norm_type = NormType::LayerNorm,
              PrecisionProfile precision = PrecisionProfile{}, bool subln = false,
              std::size_t n_head_kv = 0, bool tie_embeddings = false,
-             WeightQuant weight_quant = WeightQuant::None)
+             WeightQuant weight_quant = WeightQuant::None, bool inference_only = false)
         : vocab_size_(vocab_size), d_model_(d_model), seq_len_(seq_len),
           ln_f_(make_norm_layer(d_model, norm_type)),
           // 三值模式：`precision.param == T1_58` 与显式 weight_quant 等价（唯一判据）
           lm_head_(make_linear_layer(d_model, vocab_size,
-                                     effective_weight_quant(precision, weight_quant))),
+                                     effective_weight_quant(precision, weight_quant),
+                                     inference_only)),
           weight_quant_(effective_weight_quant(precision, weight_quant)),
           tie_embeddings_(tie_embeddings)
     {
@@ -345,7 +347,8 @@ public:
         for (std::size_t i = 0; i < num_layers; ++i)
         {
             blocks_.emplace_back(d_model, num_heads, d_ff, seq_len, seq_len, pos_enc_type,
-                                 activation, norm_type, precision, subln, n_head_kv, weight_quant_);
+                                 activation, norm_type, precision, subln, n_head_kv, weight_quant_,
+                                 inference_only);
         }
 
         // 位置编码器是辅助对象（非 Layer）→ profile 需单独下传：

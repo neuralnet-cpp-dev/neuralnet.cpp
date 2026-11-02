@@ -13,6 +13,11 @@
 //       反量化成 f32 latent（可训练）：打包字/τ 与文件逐位一致、首次 forward 与
 //       源模型逐位一致（播种缓存，不重算）、latent == 量化器不动点、8 步 Adam
 //       latent 确实移动；dense 文件两种意图逐位相同。
+//   [7] **免 latent 构建（2026-11，P2 残差根治）**：`build_*_from_spec(..., true)`
+//       按部署形态构建 —— BitLinear **不分配 f32 latent**（载入期瞬时峰值的根治，
+//       docs/internal/21 §4.15 的"剩余"项），权重由载入的打包字 + τ 接管；
+//       MLP 与 GPT 两路：构建态断言（packed_only / 无 latent / 载入前 forward
+//       fail-fast）+ 载入后前向与正常构建路径**逐位一致**。
 //
 // 退出码：0 = 通过，1 = 失败
 // ───────────────────────────────────────────────────────────────────────────
@@ -437,12 +442,135 @@ void test_ternary_warm_start()
     }
 }
 
+// ── [7] 免 latent 构建（2026-11，P2 残差根治）：inference_only 不分配 f32 ──
+// latent，权重由载入的打包字 + τ 接管 —— 消除"先按规格建出全部 latent 再被
+// 部署条目丢弃"的载入期瞬时峰值（docs/internal/21 §4.15 的 P2 残差）。验收：
+//   ① 构建后（载入前）：BitLinear packed_only()、latent 空、打包/τ 空（权重
+//     足迹只剩偏置 (out,1)）；载入前 forward fail-fast（诚实失败：还没有权重）。
+//   ② 载入 .nnmodel（默认 Inference 意图）后：latent 恒空、打包字 + τ 就位。
+//   ③ 首次 forward 与"正常构建 + 载入"路径逐位一致。
+//   ④ GPT 路径（text_infer 的目标形态）：t1_58 GPT .nnmodel 载入 inference-only
+//     构建后前向与正常路径逐位一致。
+void test_inference_only_build()
+{
+    std::puts("[7] 免 latent 构建：inference_only 不分配 latent + 载入后逐位一致");
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
+    const nn::ModelSpec spec = ternary_spec();
+    const nn::PrecisionProfile t1 = nn::profile_t1_58();
+
+    // 源：正常构建（带 latent）→ 保存 .nnmodel（打包形态）
+    auto m_r = nn::build_mnist_model_from_spec(eng, spec, t1);
+    CHECK(m_r.has_value(), "三值源模型构建成功");
+    if (!m_r.has_value()) return;
+    nn::Model& src = *m_r;
+    const nn::Tensor x = upload(eng, random_matrix(IN, B, 31));
+    auto y_r = src.forward(x);
+    CHECK(y_r.has_value(), "源模型前向成功");
+    if (!y_r.has_value()) return;
+    const nn::Matrix y_ref = download(eng, *y_r);
+    const std::string f = "model_roles_inference_only.nnmodel";
+    auto sr = nn::save_model(f, src, spec, {}, nn::ModelRole::Model);
+    CHECK(sr.has_value(), "save_model(Model) 成功");
+    if (!sr.has_value()) return;
+
+    // ① 部署构建：载入前不分配 latent（权重足迹只剩偏置）
+    auto m2_r = nn::build_mnist_model_from_spec(eng, spec, t1, /*inference_only=*/true);
+    CHECK(m2_r.has_value(), "inference_only 构建成功");
+    if (!m2_r.has_value())
+    {
+        std::remove(f.c_str());
+        return;
+    }
+    nn::Model& m2 = *m2_r;
+    nn::BitLinear* bl = first_bitlinear(m2);
+    CHECK(bl != nullptr, "部署构建里有 BitLinear");
+    if (bl != nullptr)
+    {
+        CHECK(bl->packed_only(), "构建即 packed_only（部署只读态）");
+        CHECK(!bl->latent_weights().valid(), "latent 未分配（免 latent 构建核心）");
+        CHECK(!bl->quantized_weights_packed().valid(), "打包缓冲未预分配（留给 import）");
+        auto pre_r = m2.forward(x);
+        CHECK(!pre_r.has_value(), "载入前 forward fail-fast（诚实失败：还没有权重）");
+    }
+
+    // ② 载入（默认 Inference 意图）：打包字 + τ 就位、latent 恒空
+    auto lr = nn::load_model(f, m2);
+    CHECK(lr.has_value(), "inference-only 构建载入 .nnmodel 成功");
+    if (!lr.has_value())
+    {
+        std::printf("    载入失败: %s\n", lr.error().message.c_str());
+        std::remove(f.c_str());
+        return;
+    }
+    if (bl != nullptr)
+    {
+        CHECK(bl->packed_only(), "载入后仍 packed_only");
+        CHECK(!bl->latent_weights().valid(), "载入后 latent 仍为空（部署态核心收益）");
+        CHECK(bl->quantized_weights_packed().valid() && bl->row_scales().valid(),
+              "打包字 + τ 就位（来自文件）");
+    }
+
+    // ③ 首次 forward 与正常路径逐位一致
+    auto y2_r = m2.forward(x);
+    CHECK(y2_r.has_value(), "inference-only 模型前向成功");
+    if (y2_r.has_value())
+        CHECK(matrices_equal(y_ref, download(eng, *y2_r)),
+              "首次 forward 与正常构建路径逐位一致");
+    std::remove(f.c_str());
+
+    // ④ GPT 路径（text_infer 目标形态）
+    const std::size_t V = 32, D = 32, S = 8, H = 4, FF = 64, L = 2, B = 2;
+    nn::ModelSpec gspec = nn::make_gpt_spec(V, D, S, H, FF, L);
+    gspec.as<nn::GptSpec>()->weight_quant = nn::WeightQuant::T1_58;
+    auto g_r = nn::build_gpt_model_from_spec(eng, gspec, t1);
+    CHECK(g_r.has_value(), "三值 GPT 源构建成功");
+    if (!g_r.has_value()) return;
+    nn::Model& gsrc = *g_r;
+    nn::Matrix ids(S, B);
+    std::mt19937 rng(42);
+    std::uniform_int_distribution<int> ud(0, static_cast<int>(V) - 1);
+    for (auto& v : ids.span()) v = static_cast<float>(ud(rng));
+    const nn::Tensor xt = upload(eng, ids);
+    auto gy_r = gsrc.forward(xt);
+    CHECK(gy_r.has_value(), "三值 GPT 前向成功");
+    if (!gy_r.has_value()) return;
+    const nn::Matrix gy_ref = download(eng, *gy_r);
+    const std::string gf = "model_roles_inference_only_gpt.nnmodel";
+    auto gsr = nn::save_model(gf, gsrc, gspec, {}, nn::ModelRole::Model);
+    CHECK(gsr.has_value(), "GPT save_model(Model) 成功");
+    if (!gsr.has_value()) return;
+    auto g2_r = nn::build_gpt_model_from_spec(eng, gspec, t1, /*inference_only=*/true);
+    CHECK(g2_r.has_value(), "GPT inference_only 构建成功");
+    if (!g2_r.has_value())
+    {
+        std::remove(gf.c_str());
+        return;
+    }
+    nn::Model& g2 = *g2_r;
+    auto glr = nn::load_model(gf, g2);
+    CHECK(glr.has_value(), "GPT inference-only 载入成功");
+    if (!glr.has_value())
+    {
+        std::printf("    GPT 载入失败: %s\n", glr.error().message.c_str());
+        std::remove(gf.c_str());
+        return;
+    }
+    auto gy2_r = g2.forward(xt);
+    CHECK(gy2_r.has_value(), "GPT inference-only 前向成功");
+    if (gy2_r.has_value())
+        CHECK(matrices_equal(gy_ref, download(eng, *gy2_r)),
+              "GPT 首次 forward 与正常路径逐位一致（text_infer 目标形态）");
+    std::remove(gf.c_str());
+}
+
 }   // namespace
 
 int main()
 {
     test_model_and_checkpoint_roles();
     test_ternary_warm_start();
+    test_inference_only_build();
     if (g_failures == 0)
     {
         std::printf("\nmodel_roles_test: ALL PASSED\n");

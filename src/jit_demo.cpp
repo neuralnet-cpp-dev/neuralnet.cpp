@@ -7,7 +7,7 @@
 //    · 第二次 → .nnk 缓存命中（纯执行），计时应远小于首次；
 //    · 结果与 CPU 参考对拍；
 //    · 打印 .nnk 缓存里新增的 kernel key（证明 JIT 落盘持久化）。
-//  运行：NN_VULKAN_DEVICE=850M NN_KERNELGEN_PATH=<build>/lib/libnn_kernelgen.so \
+//  运行：NN_VULKAN_DEVICE=850M NN_KERNELGEN_PATH=<build>/lib/libnn_kernelgen.so
 //        NN_KERNEL_CACHE_PATH=/tmp/jit_demo.nnk ./build/jit_demo
 // ═══════════════════════════════════════════════════════════════════════════
 

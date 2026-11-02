@@ -570,22 +570,24 @@ protected:
 public:
     AttentionBase(std::size_t d_model, std::size_t num_heads, std::size_t seq_len = 0,
                   bool subln = false, NormType subln_norm_type = NormType::LayerNorm,
-                  std::size_t n_head_kv = 0, WeightQuant weight_quant = WeightQuant::None)
+                  std::size_t n_head_kv = 0, WeightQuant weight_quant = WeightQuant::None,
+                  bool inference_only = false)
         : d_model_(d_model), num_heads_(num_heads),
           n_head_kv_(n_head_kv == 0 ? num_heads : n_head_kv),
           kv_ratio_(num_heads / (n_head_kv == 0 ? num_heads : n_head_kv)),
           d_k_(d_model / num_heads), seq_len_(seq_len),
           scale_(Scalar{1} / std::sqrt(static_cast<Scalar>(d_model / num_heads))),
-          w_q_(make_linear_layer(d_model, d_model, weight_quant)),
+          w_q_(make_linear_layer(d_model, d_model, weight_quant, inference_only)),
           // Linear(in_features, out_features)：GQA 只收窄**输出**宽度
           // （K/V 的 out = n_head_kv·d_k），输入侧仍是 d_model。
           w_k_(make_linear_layer(d_model,
                                  (n_head_kv == 0 ? num_heads : n_head_kv) * (d_model / num_heads),
-                                 weight_quant)),
+                                 weight_quant, inference_only)),
           w_v_(make_linear_layer(d_model,
                                  (n_head_kv == 0 ? num_heads : n_head_kv) * (d_model / num_heads),
-                                 weight_quant)),
-          w_o_(make_linear_layer(d_model, d_model, weight_quant)), weight_quant_(weight_quant)
+                                 weight_quant, inference_only)),
+          w_o_(make_linear_layer(d_model, d_model, weight_quant, inference_only)),
+          weight_quant_(weight_quant)
     {
         NN_ASSERT_ALWAYS(d_model % num_heads == 0,
                          "AttentionBase: d_model must be divisible by num_heads");
@@ -1223,9 +1225,10 @@ public:
     CausalSelfAttention(std::size_t d_model, std::size_t num_heads, std::size_t /*max_len*/ = 1024,
                         std::size_t seq_len = 0, PosEncodingType pos_enc = PosEncodingType::Learned,
                         bool subln = false, NormType subln_norm_type = NormType::LayerNorm,
-                        std::size_t n_head_kv = 0, WeightQuant weight_quant = WeightQuant::None)
+                        std::size_t n_head_kv = 0, WeightQuant weight_quant = WeightQuant::None,
+                        bool inference_only = false)
         : AttentionBase(d_model, num_heads, seq_len, subln, subln_norm_type, n_head_kv,
-                        weight_quant)
+                        weight_quant, inference_only)
     {
         // ① 位置编码：注意力侧**由本层自持**（RoPE 的 cos/sin 表随层构建；
         //    Learned/Sinusoidal 在注意力侧是恒等 → 交回模型侧施加）。

@@ -38,7 +38,15 @@ nn::Result<int> require_bad()
 
 int run_self(const char* args)
 {
+    // MSVC 的 std::system → cmd /c：命令串以引号开头会触发 cmd 的
+    // "首尾成对剥除"规则（剥掉首引号 → 内层引号失衡 → 整串被当命令名，
+    // 子进程不执行）。加 cmd /c 前缀让字符串不以引号开头 → 引号按字面解析
+    //（发布门禁 MSVC 矩阵实测，2026-11）。
+#ifdef _WIN32
+    const std::string cmd = "cmd /c \"" + g_self + "\" " + args;
+#else
     const std::string cmd = "\"" + g_self + "\" " + args;
+#endif
     const int rc = std::system(cmd.c_str());
     if (rc == -1)
     {
@@ -63,7 +71,11 @@ int normalize_rc(int rc)
 bool child_stderr_contains(const char* args, const std::string& needle)
 {
     const std::string err_path = "assert_test_child_stderr.txt";
+#ifdef _WIN32
+    const std::string cmd = "cmd /c \"" + g_self + "\" " + args + " 2> \"" + err_path + "\"";
+#else
     const std::string cmd = "\"" + g_self + "\" " + args + " 2> \"" + err_path + "\"";
+#endif
     if (std::system(cmd.c_str()) == -1) return false;
     std::FILE* f = std::fopen(err_path.c_str(), "rb");
     if (!f) return false;
