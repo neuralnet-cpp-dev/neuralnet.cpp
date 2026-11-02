@@ -27,6 +27,7 @@
 
 | 版本 | 主题 |
 |---|---|
+| [v1.16.0](v1.16.0.md) | int8 训练显存优化（W1.58A8 激活量化 + AdamWInt8 + 免 latent 部署构建）；正式版承接 rc0（引擎 .so 化 / JIT / C++ 模块 / 子仓合并）+ 发布门禁全量重跑（四编译器矩阵） |
 | [v1.15.0-rc0](v1.15.0-rc0.md) | 预发布候选：引擎 .so 化（双引擎 .so + MIT 抽象层）+ 运行期 JIT 算子缓存（.nnk + kernelgen）+ C++20 模块加载路径 + 5 子仓合并回主仓 + 文档工具链 |
 | [v1.14.1](v1.14.1.md) | 漏洞修复（补写）：断点续训无半提交 + 优化器 t 取权威值 |
 | [v1.14.0](v1.14.0.md) | 训练骨架（`TrainState`/`BatchSource`/`RunDriver`）+ 开放规格（`ModelSpecBase`）+ `Embedding`/`CrossAttention` + 宿主桥公开 API + 全仓格式化基线 |
