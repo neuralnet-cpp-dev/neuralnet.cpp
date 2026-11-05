@@ -18,7 +18,8 @@
 
 #pragma once
 
-#include <iosfwd>  // std::ostream 前向声明
+#include <iostream>  // 默认实参 std::cerr 需要完整定义（头自包含；此前被
+                     // nn.hpp 的 include 顺序掩盖，P4 模块 GMF 首包即暴露）
 #include <memory>
 #include <string>
 

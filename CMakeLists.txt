@@ -458,7 +458,8 @@ function(nn_add_executable name)
 endfunction()
 
 # ══════════════════════════════════════════════════════════════════════════
-#  C++ 模块：粒度导入路径（nn.core / nn.kvrecord / nn.dataset / nn.tokenizer）
+#  C++ 模块：粒度导入路径（P4 后 13 域：core/kvrecord/dataset/tokenizer +
+#  expr/engine/layer/loss/opt/model/train/domain/cli）
 # ══════════════════════════════════════════════════════════════════════════
 # 形态 = 「薄接口」模块（research/modules-import-nn 实证，2026-11-01）：
 #   全局模块片段文本包含域头文件（STL 与库声明留在全局模块，实体仍挂全局
@@ -486,6 +487,7 @@ endfunction()
 set(NN_ABST_INC engine/abstraction/include/neuralnet.cpp)
 set(NN_MOD_CORE_HEADERS
     ${NN_ABST_INC}/core_assert.hpp
+    ${NN_ABST_INC}/core_observer_ptr.hpp
     ${NN_ABST_INC}/core_config.hpp
     ${NN_ABST_INC}/core_errors.hpp
     include/neuralnet.cpp/core_file.hpp
@@ -522,6 +524,311 @@ set(NN_MOD_TOKENIZER_HEADERS
     ${NN_ABST_INC}/precision.hpp
     include/neuralnet.cpp/dataset_format.hpp
     include/neuralnet.cpp/model_keyvalue_record.hpp)
+
+# ── P4 新域闭包（35 号）：跨域头改动触发对应 BMI 重编；宁多勿少 ──────────
+# 由头包含图解析生成（expr 22 / engine 37 / layer 22 / loss 10 / opt 12 /
+# model 31 / train 48 / domain 27 / cli 74）。
+set(NN_MOD_EXPR_HEADERS
+    engine/abstraction/include/neuralnet.cpp/algebra_matrix.hpp
+    engine/abstraction/include/neuralnet.cpp/algebra_ops.hpp
+    engine/abstraction/include/neuralnet.cpp/algebra_span.hpp
+    engine/abstraction/include/neuralnet.cpp/backend/compute_gpu_storage.hpp
+    engine/abstraction/include/neuralnet.cpp/compute_tensor.hpp
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_config.hpp
+    engine/abstraction/include/neuralnet.cpp/core_domain.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/core_parallel.hpp
+    engine/abstraction/include/neuralnet.cpp/core_threadpool.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_graph.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_op_table.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_opt.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_spec.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    engine/engine/include/neuralnet.cpp/expr_dsl.hpp
+    engine/engine/include/neuralnet.cpp/expr_fold.hpp
+    engine/engine/include/neuralnet.cpp/expr_registry.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+)
+set(NN_MOD_ENGINE_HEADERS
+    engine/abstraction/include/neuralnet.cpp/algebra_matrix.hpp
+    engine/abstraction/include/neuralnet.cpp/algebra_ops.hpp
+    engine/abstraction/include/neuralnet.cpp/algebra_span.hpp
+    engine/abstraction/include/neuralnet.cpp/backend/compute_gpu_storage.hpp
+    engine/abstraction/include/neuralnet.cpp/compute_engine.hpp
+    engine/abstraction/include/neuralnet.cpp/compute_tensor.hpp
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_config.hpp
+    engine/abstraction/include/neuralnet.cpp/core_domain.hpp
+    engine/abstraction/include/neuralnet.cpp/core_env.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/core_observer_ptr.hpp
+    engine/abstraction/include/neuralnet.cpp/core_parallel.hpp
+    engine/abstraction/include/neuralnet.cpp/core_profile.hpp
+    engine/abstraction/include/neuralnet.cpp/core_threadpool.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_graph.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_op_table.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_opt.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_spec.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_gpu_tensor_impl.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_memory_pool.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_staging_ring.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend_destroy.inc
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend_frame.inc
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend_ops.inc
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend_pipelines.inc
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_device.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_pipeline_catalog.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_pipeline_specs.hpp
+    engine/engine/include/neuralnet.cpp/int8_pack.hpp
+    engine/engine/include/neuralnet.cpp/kernel_cache.hpp
+    engine/engine/include/neuralnet.cpp/kernelgen_api.h
+    engine/engine/include/neuralnet.cpp/ternary_pack.hpp
+    include/neuralnet.cpp/model_keyvalue_record.hpp
+)
+set(NN_MOD_LAYER_HEADERS
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/compute_layer.hpp
+    include/neuralnet.cpp/compute_layer_attention.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_layer_bitlinear.hpp
+    include/neuralnet.cpp/compute_layer_bundle.hpp
+    include/neuralnet.cpp/compute_layer_conv.hpp
+    include/neuralnet.cpp/compute_layer_embedding.hpp
+    include/neuralnet.cpp/compute_layer_feedforward.hpp
+    include/neuralnet.cpp/compute_layer_gpt.hpp
+    include/neuralnet.cpp/compute_layer_mlp.hpp
+    include/neuralnet.cpp/compute_layer_rapt.hpp
+    include/neuralnet.cpp/compute_layer_softmax.hpp
+    include/neuralnet.cpp/compute_layer_transformer.hpp
+    include/neuralnet.cpp/compute_position_encoding.hpp
+    include/neuralnet.cpp/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+)
+set(NN_MOD_LOSS_HEADERS
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_loss.hpp
+    include/neuralnet.cpp/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+)
+set(NN_MOD_OPT_HEADERS
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_config.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_optimizer.hpp
+    include/neuralnet.cpp/lr_scheduler.hpp
+    include/neuralnet.cpp/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+)
+set(NN_MOD_MODEL_HEADERS
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_config.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/compute_layer.hpp
+    include/neuralnet.cpp/compute_layer_attention.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_layer_bitlinear.hpp
+    include/neuralnet.cpp/compute_layer_bundle.hpp
+    include/neuralnet.cpp/compute_layer_conv.hpp
+    include/neuralnet.cpp/compute_layer_embedding.hpp
+    include/neuralnet.cpp/compute_layer_feedforward.hpp
+    include/neuralnet.cpp/compute_layer_gpt.hpp
+    include/neuralnet.cpp/compute_layer_mlp.hpp
+    include/neuralnet.cpp/compute_layer_rapt.hpp
+    include/neuralnet.cpp/compute_layer_softmax.hpp
+    include/neuralnet.cpp/compute_layer_transformer.hpp
+    include/neuralnet.cpp/compute_optimizer.hpp
+    include/neuralnet.cpp/compute_position_encoding.hpp
+    include/neuralnet.cpp/core_file.hpp
+    include/neuralnet.cpp/core_sha256.hpp
+    include/neuralnet.cpp/model_container.hpp
+    include/neuralnet.cpp/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_serialization.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+    include/neuralnet.cpp/train_state.hpp
+    include/neuralnet.cpp/training_group_session.hpp
+    include/neuralnet.cpp/training_session.hpp
+)
+set(NN_MOD_TRAIN_HEADERS
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_config.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/core_parallel.hpp
+    engine/abstraction/include/neuralnet.cpp/core_threadpool.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/batch_source.hpp
+    include/neuralnet.cpp/compute_layer.hpp
+    include/neuralnet.cpp/compute_layer_attention.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_layer_bitlinear.hpp
+    include/neuralnet.cpp/compute_layer_bundle.hpp
+    include/neuralnet.cpp/compute_layer_conv.hpp
+    include/neuralnet.cpp/compute_layer_embedding.hpp
+    include/neuralnet.cpp/compute_layer_feedforward.hpp
+    include/neuralnet.cpp/compute_layer_gpt.hpp
+    include/neuralnet.cpp/compute_layer_mlp.hpp
+    include/neuralnet.cpp/compute_layer_rapt.hpp
+    include/neuralnet.cpp/compute_layer_softmax.hpp
+    include/neuralnet.cpp/compute_layer_transformer.hpp
+    include/neuralnet.cpp/compute_loss.hpp
+    include/neuralnet.cpp/compute_optimizer.hpp
+    include/neuralnet.cpp/compute_position_encoding.hpp
+    include/neuralnet.cpp/core_file.hpp
+    include/neuralnet.cpp/core_sha256.hpp
+    include/neuralnet.cpp/dataset.hpp
+    include/neuralnet.cpp/dataset_format.hpp
+    include/neuralnet.cpp/dataset_samples.hpp
+    include/neuralnet.cpp/domain_tokenizer.hpp
+    include/neuralnet.cpp/domain_tokenizer_base.hpp
+    include/neuralnet.cpp/domain_tokenizer_bpe.hpp
+    include/neuralnet.cpp/domain_tokenizer_charbpe.hpp
+    include/neuralnet.cpp/lr_scheduler.hpp
+    include/neuralnet.cpp/model_container.hpp
+    include/neuralnet.cpp/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_serialization.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/rl_experience.hpp
+    include/neuralnet.cpp/rl_pipeline.hpp
+    include/neuralnet.cpp/rl_policy.hpp
+    include/neuralnet.cpp/run_driver.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+    include/neuralnet.cpp/text_train_config.hpp
+    include/neuralnet.cpp/text_trainer.hpp
+    include/neuralnet.cpp/train_state.hpp
+    include/neuralnet.cpp/training_session.hpp
+)
+set(NN_MOD_DOMAIN_HEADERS
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/compute_layer.hpp
+    include/neuralnet.cpp/compute_layer_attention.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_layer_bitlinear.hpp
+    include/neuralnet.cpp/compute_layer_bundle.hpp
+    include/neuralnet.cpp/compute_layer_conv.hpp
+    include/neuralnet.cpp/compute_layer_embedding.hpp
+    include/neuralnet.cpp/compute_layer_feedforward.hpp
+    include/neuralnet.cpp/compute_layer_gpt.hpp
+    include/neuralnet.cpp/compute_layer_mlp.hpp
+    include/neuralnet.cpp/compute_layer_rapt.hpp
+    include/neuralnet.cpp/compute_layer_softmax.hpp
+    include/neuralnet.cpp/compute_layer_transformer.hpp
+    include/neuralnet.cpp/compute_position_encoding.hpp
+    include/neuralnet.cpp/domain_cnn.hpp
+    include/neuralnet.cpp/domain_gpt.hpp
+    include/neuralnet.cpp/domain_mnist.hpp
+    include/neuralnet.cpp/domain_rla.hpp
+    include/neuralnet.cpp/model_container.hpp
+    include/neuralnet.cpp/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+)
+set(NN_MOD_CLI_HEADERS
+    engine/abstraction/include/neuralnet.cpp/algebra_matrix.hpp
+    engine/abstraction/include/neuralnet.cpp/algebra_ops.hpp
+    engine/abstraction/include/neuralnet.cpp/algebra_span.hpp
+    engine/abstraction/include/neuralnet.cpp/backend/compute_gpu_storage.hpp
+    engine/abstraction/include/neuralnet.cpp/compute_engine.hpp
+    engine/abstraction/include/neuralnet.cpp/compute_tensor.hpp
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_config.hpp
+    engine/abstraction/include/neuralnet.cpp/core_domain.hpp
+    engine/abstraction/include/neuralnet.cpp/core_env.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/core_parallel.hpp
+    engine/abstraction/include/neuralnet.cpp/core_profile.hpp
+    engine/abstraction/include/neuralnet.cpp/core_threadpool.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_graph.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_op_table.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_opt.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_spec.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/batch_source.hpp
+    include/neuralnet.cpp/cli/cli_engine_factory.hpp
+    include/neuralnet.cpp/cli/cli_gpu_option.hpp
+    include/neuralnet.cpp/cli/cli_help.hpp
+    include/neuralnet.cpp/cli/cli_jit_warmup.hpp
+    include/neuralnet.cpp/cli/cli_lr_scheduler.hpp
+    include/neuralnet.cpp/cli/cli_mnist_io.hpp
+    include/neuralnet.cpp/cli/cli_precision_warning.hpp
+    include/neuralnet.cpp/cli/cli_train_common.hpp
+    include/neuralnet.cpp/cli/text_train_checkpoint.hpp
+    include/neuralnet.cpp/cli/text_train_config.hpp
+    include/neuralnet.cpp/cli/text_train_loop.hpp
+    include/neuralnet.cpp/cli/text_train_recovery.hpp
+    include/neuralnet.cpp/compute_layer.hpp
+    include/neuralnet.cpp/compute_layer_attention.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_layer_bitlinear.hpp
+    include/neuralnet.cpp/compute_layer_bundle.hpp
+    include/neuralnet.cpp/compute_layer_conv.hpp
+    include/neuralnet.cpp/compute_layer_embedding.hpp
+    include/neuralnet.cpp/compute_layer_feedforward.hpp
+    include/neuralnet.cpp/compute_layer_gpt.hpp
+    include/neuralnet.cpp/compute_layer_mlp.hpp
+    include/neuralnet.cpp/compute_layer_rapt.hpp
+    include/neuralnet.cpp/compute_layer_softmax.hpp
+    include/neuralnet.cpp/compute_layer_transformer.hpp
+    include/neuralnet.cpp/compute_loss.hpp
+    include/neuralnet.cpp/compute_optimizer.hpp
+    include/neuralnet.cpp/compute_position_encoding.hpp
+    include/neuralnet.cpp/core_file.hpp
+    include/neuralnet.cpp/core_sha256.hpp
+    include/neuralnet.cpp/dataset.hpp
+    include/neuralnet.cpp/dataset_format.hpp
+    include/neuralnet.cpp/dataset_samples.hpp
+    include/neuralnet.cpp/domain_cnn.hpp
+    include/neuralnet.cpp/domain_gpt.hpp
+    include/neuralnet.cpp/domain_mnist.hpp
+    include/neuralnet.cpp/domain_rla.hpp
+    include/neuralnet.cpp/domain_tokenizer.hpp
+    include/neuralnet.cpp/domain_tokenizer_base.hpp
+    include/neuralnet.cpp/domain_tokenizer_bpe.hpp
+    include/neuralnet.cpp/domain_tokenizer_charbpe.hpp
+    include/neuralnet.cpp/lr_scheduler.hpp
+    include/neuralnet.cpp/model_container.hpp
+    include/neuralnet.cpp/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_serialization.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/run_driver.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+    include/neuralnet.cpp/text_train_config.hpp
+    include/neuralnet.cpp/text_trainer.hpp
+    include/neuralnet.cpp/train_state.hpp
+    include/neuralnet.cpp/training_session.hpp
+)
 
 # ── 模块注册：nn_add_module(<短名> <模块源> DEPS <依赖短名...> HEADERS <闭包头...>) ──
 # 短名 = "core" / "kvrecord" / "dataset" / "tokenizer"；C++ 模块全名 = nn.<短名>。
@@ -640,6 +947,17 @@ nn_add_module(dataset     modules/nn.dataset.cpp
 nn_add_module(tokenizer   modules/nn.tokenizer.cpp
     DEPS core kvrecord dataset
     HEADERS ${NN_MOD_TOKENIZER_HEADERS})
+
+# ── P4 新域（35 号）：全部 DEPS core（薄模块 + 命名空间导出，DAG 无域间环）──
+nn_add_module(expr     modules/nn.expr.cpp     DEPS core HEADERS ${NN_MOD_EXPR_HEADERS})
+nn_add_module(engine   modules/nn.engine.cpp   DEPS core HEADERS ${NN_MOD_ENGINE_HEADERS})
+nn_add_module(layer    modules/nn.layer.cpp    DEPS core HEADERS ${NN_MOD_LAYER_HEADERS})
+nn_add_module(loss     modules/nn.loss.cpp     DEPS core HEADERS ${NN_MOD_LOSS_HEADERS})
+nn_add_module(opt      modules/nn.opt.cpp      DEPS core HEADERS ${NN_MOD_OPT_HEADERS})
+nn_add_module(model    modules/nn.model.cpp    DEPS core HEADERS ${NN_MOD_MODEL_HEADERS})
+nn_add_module(train    modules/nn.train.cpp    DEPS core HEADERS ${NN_MOD_TRAIN_HEADERS})
+nn_add_module(domain   modules/nn.domain.cpp   DEPS core HEADERS ${NN_MOD_DOMAIN_HEADERS})
+nn_add_module(cli      modules/nn.cli.cpp      DEPS core HEADERS ${NN_MOD_CLI_HEADERS})
 
 # ── 测试/验证目标开关（默认关闭） ──────────────────────────────────────
 # 默认只构建应用与基准工具目标，避免生成大量验证程序；
