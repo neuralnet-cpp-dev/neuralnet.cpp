@@ -12,6 +12,7 @@
 #include <neuralnet.cpp/model_serialization.hpp>
 #include <neuralnet.cpp/domain_gpt.hpp>
 #include <neuralnet.cpp/cli/cli_engine_factory.hpp>
+#include <neuralnet.cpp/cli/cli_jit_warmup.hpp>
 #include <neuralnet.cpp/cli/cli_gpu_option.hpp>
 #include <neuralnet.cpp/cli/cli_help.hpp>
 
@@ -57,6 +58,9 @@ void print_usage(const char* prog)
     help.opt("--repeat-penalty <f>", "重复惩罚 (>1 抑制重复；默认: 1.0=关闭)");
     help.opt("--repeat-window <n>", "重复惩罚只看最近 n 个 token (默认: 0=全部上下文)");
     help.opt("--seed <n>", "随机种子 (给了就固定种子 ⇒ 同 prompt 输出可复现)");
+    help.opt("--no-warmup",
+             "跳过 JIT 预热（GPU 默认加载后跑一遍代表性 forward，\n"
+             "表达式预编进 kernels.nnk，消除首 token JIT 冷启动）");
     help.opt("--show-tokens", "显示 token ID (调试用)");
     help.opt("--gpu [索引|名称]",
              "启用 GPU 加速 (需要 Vulkan SDK)\n空格形式只收枚举索引；名称子串用 --gpu=<名称>，如 "
@@ -82,6 +86,7 @@ struct InferConfig
     std::uint64_t seed = 0;
     bool has_seed = false;
     bool prompt_given = false;   // --prompt / 位置参数显式出现
+    bool jit_warmup = true;      // --no-warmup：跳过 JIT 预热（P3/D5）
     bool interactive = false;
     bool show_tokens = false;
     bool gpu_enabled = false;
@@ -190,6 +195,10 @@ InferConfig parse_args(int argc, char* argv[])
                 std::exit(1);
             }
             cfg.repeat_window = static_cast<std::size_t>(*v);
+        }
+        else if (arg == "--no-warmup")
+        {
+            cfg.jit_warmup = false;
         }
         else if (arg == "--seed" && i + 1 < argc)
         {
@@ -496,6 +505,13 @@ int main(int argc, char* argv[])
 
     const std::size_t seq_len = v_seq_len;
     const std::size_t eos_id = tokenizer->eos_id();
+
+    // ── JIT 预热（P3/D5）：GPU 上 (seq_len,1) 全零 token-id forward → .nnk ──
+    {
+        nn::Tensor warm_x =
+            engine->create_tensor(seq_len, 1, nn::Precision::F32, nn::InitSpec::zero());
+        NN_EXIT(nn::cli::jit_warmup(model, *engine, warm_x, cfg.jit_warmup), 1, "预热失败: ");
+    }
 
     // ── 交互模式 ─────────────────────────────────────────────
     if (cfg.interactive)

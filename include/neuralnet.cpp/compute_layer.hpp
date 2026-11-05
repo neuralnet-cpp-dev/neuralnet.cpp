@@ -3,7 +3,7 @@
 // ── compute_layer.hpp — 引擎化计算层（聚合头） ───────────────────────────
 //
 // 按逻辑域拆分为多个 compute_layer_*.hpp 子文件，此文件按依赖顺序聚合，
-// 保持对既有代码（nn.hpp / scan_exprs / 测试 / src）的单一入口兼容。
+// 保持对既有代码（nn.hpp / 测试 / src）的单一入口兼容。
 //
 // 架构铁律：
 //   1. Layer 的 forward/backward 只写一次，通过 ComputeEngine 参数自动适配

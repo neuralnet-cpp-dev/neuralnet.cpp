@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -620,7 +621,7 @@ void test_bitlinear_shapes(nn::ComputeEngine& eng, const char* tag)
         {70, 150, 100},   // 两向都多块 + 尾块
         {256, 64, 9},     // 窄 N 刚过分派门（9 > 8 → 分块内核）+ K 整块
         {256, 64, 4},     // 窄 N 落在 GEMV 门内（4 ≤ 8 → 打包 GEMV 内核）
-        {17, 65, 520},    // 宽 N + 行尾块
+        {17, 65, 520},    // 宽 N + 行尾块（f16 缓冲 4B 对齐回归锁，P3 门 D）
     };
     for (int p = 0; p < 2; ++p)
     {

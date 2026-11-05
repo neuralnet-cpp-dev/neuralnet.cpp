@@ -37,7 +37,7 @@ option(NN_BUILD_APPS "Build neuralnet.cpp application/bench executables"
 # ── GPU（Vulkan）开关：消费方在自己工程里一行控制 NN_HAS_VULKAN ───────────
 #   AUTO（默认）= 探测到 Vulkan+glslc 就启用，否则纯 CPU（本仓历史行为）
 #   ON          = 强制要求，缺 Vulkan 或 glslc 直接配置失败（fail-fast）
-#   OFF         = 完全跳过：不探测 Vulkan、不生成 shader、不编 scan_exprs
+#   OFF         = 完全跳过：不探测 Vulkan（AOT 收集链已随 P3 删除，35 号）
 # 嵌入方写法：在 add_subdirectory **之前** set(NN_ENABLE_GPU OFF)（或 -D）。
 set(NN_ENABLE_GPU "AUTO" CACHE STRING "GPU support: AUTO (detect) / ON (require) / OFF (disable)")
 set_property(CACHE NN_ENABLE_GPU PROPERTY STRINGS AUTO ON OFF)
@@ -46,10 +46,10 @@ if(NOT NN_ENABLE_GPU MATCHES "^(AUTO|ON|OFF)$")
 endif()
 
 # ── 本仓源/构建根（CACHE，全局可见）─────────────────────────────────────
-# CMake 函数体在**调用方作用域**求值：消费方调用 nn_enable_gpu_fusion 时，
-# CMAKE_SOURCE_DIR/CMAKE_BINARY_DIR 会解析到消费方的目录（实测报错/路径错）。
-# 因此把本仓的根路径烘焙进 CACHE（INTERNAL 隐含 FORCE，每次配置刷新），
-# 函数体内一律引用这两个变量，与调用方是谁无关。
+# CMake 函数体在**调用方作用域**求值：历史上的 nn_enable_gpu_fusion（已随
+# P3 删除，35 号 D4）在消费方作用域展开时 CMAKE_SOURCE_DIR 会解析错目录。
+# 根路径仍烘焙进 CACHE（INTERNAL 隐含 FORCE），nn_add_module 等一律引用
+# 这两个变量，与调用方是谁无关。
 set(NN_LIB_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE INTERNAL
     "neuralnet.cpp source root (stable under add_subdirectory)")
 set(NN_LIB_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}" CACHE INTERNAL
@@ -269,10 +269,11 @@ find_package(Threads REQUIRED)
 # GCC 14+ 和 Clang (使用 libstdc++) 都需要链接实验性库才能使用 std::stacktrace。
 # GCC 使用 stdc++exp，Clang 可能需要 stdc++exp 或 stdc++_libbacktrace。
 # 探测一次，成功后通过 nn_core INTERFACE 传播给所有目标。
-# ⚠ **只有 `tools/scan_exprs.cpp` 用 std::stacktrace**（库头文件零使用，已 grep
-#   确认）；嵌入（add_subdirectory）消费方编译头文件根本不需要它。因此 GNU 下
-#   探测失败时：顶层工程仍 FATAL_ERROR（保住既有行为），嵌入方降级为警告 +
-#   留空——否则消费方会为了一个用不到的库在配置期被卡死。
+# ⚠ 库头文件零 std::stacktrace 使用（全仓 grep 证实）。历史用户
+#   `tools/scan_exprs.cpp` 已随 AOT 收集链删除（P3/D4，35 号）——**本探测
+#   目前无消费者**，保留仅为不改动既有链接口径（nn_core 仍 LINK stdc++exp）；
+#   后续清理时可整体移除以放宽 GNU 顶层配置的 FATAL 条件。嵌入方失败仍
+#   降级为警告 + 留空。
 
 set(NN_STACKTRACE_FATAL ${PROJECT_IS_TOP_LEVEL})
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -299,7 +300,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         elseif(NN_STACKTRACE_FATAL)
             message(FATAL_ERROR "std::stacktrace 需要 stdc++exp 或 stdc++_libbacktrace")
         else()
-            message(WARNING "std::stacktrace 库未找到（嵌入模式降级：仅 tools/scan_exprs 受影响）")
+            message(WARNING "std::stacktrace 库未找到（嵌入模式降级；当前无消费者，见上方注释）")
             set(NN_STACKTRACE_LIB "")
         endif()
     endif()
@@ -394,11 +395,10 @@ endif()
 #      + **GPU 开启时**的四项附加（在下方 `if(Vulkan_FOUND)` 块内补：
 #      NN_HAS_VULKAN 宏 + generated/ 嵌入头目录 + Vulkan::Vulkan + shader
 #      生成依赖）。
-# ⚠ 刻意与 nn_core 分离的原因：
-#   ① `scan_exprs` / 收集器必须保持**无 NN_HAS_VULKAN**（AOT 闭合世界，
-#      AGENTS §7 铁律），它们只链 nn_core；
-#   ② 下方这些「编译选项」只该给**真正的库使用者**（库内目标已从本文件的
-#      目录级 add_compile_options 拿到，重复传递会让命令行出现两份相同 flag）。
+# ⚠ 刻意与 nn_core 分离的原因（AOT 收集器已随 P3 删除，35 号 D4——原 ① 的
+#   "收集器无 NN_HAS_VULKAN" 约束随之消失，本分离保留）：
+#   下方这些「编译选项」只该给**真正的库使用者**（库内目标已从本文件的
+#   目录级 add_compile_options 拿到，重复传递会让命令行出现两份相同 flag）。
 add_library(neuralnet_cpp INTERFACE)
 target_link_libraries(neuralnet_cpp INTERFACE nn_core)
 
@@ -434,10 +434,8 @@ add_library(neuralnet::nn ALIAS neuralnet_cpp)
 # 所有候选目标的编译条件完全相同 → 只编**一份** PCH 供它们复用（REUSE_FROM）：
 # 31 份逐目标 PCH 合计约 780s CPU，共享后只剩 1 份。见文件末尾的落地块。
 # 关掉：-DNN_ENABLE_PCH=OFF。
-# ⚠ **收集器目标不套 PCH**：`scan_exprs.cpp` 是在**源文件内**（include 之前）
-#   自行 `#define NN_EXPR_SCAN` 的——PCH 会在该宏生效前把 nn.hpp 预编译进 AST，
-#   导致 DSL 收集钩子整体失效（注册表空 → 构建硬失败）。故只有经
-#   `nn_add_executable` 建的应用/测试目标进入候选。
+# 候选 = 经 `nn_add_executable` 建的应用/测试目标（历史上的 NN_EXPR_SCAN
+# 收集器不套 PCH 的约束已随 AOT 收集链删除，35 号 D4）。
 option(NN_ENABLE_PCH "Precompile nn.hpp once and reuse it across targets" ON)
 
 # ── 便捷函数：统一添加可执行目标 ────────────────────────────────────────
@@ -629,8 +627,8 @@ function(nn_use_modules target)
 endfunction()
 
 # ── 四个叶子域模块（DAG：core → kvrecord → dataset → tokenizer）──────────
-# 域边界 = 合并回主仓的四个子仓域；全部不依赖 GPU/AOT 扫描（NN_EXPR_SCAN 的
-# 宏收集无法进模块，engine/layers/model/train 域本轮不模块化，见研究 README）。
+# 域边界 = 合并回主仓的四个子仓域；AOT 宏收集链已随 P3 删除（35 号 D4），
+# 其余域的模块化按 35 号 P4 铺开。
 nn_add_module(core        modules/nn.core.cpp
     HEADERS ${NN_MOD_CORE_HEADERS})
 nn_add_module(kvrecord    modules/nn.kvrecord.cpp
@@ -705,6 +703,12 @@ if(NN_BUILD_APPS)
     # 仅演示用，不注册 ctest、不 install。
     nn_add_executable(jit_demo src/jit_demo.cpp)
     nn_use_modules(dataset_convert tokenizer)
+
+    # ── 构建期/发布期 JIT 预热目标（P3/D5，docs/internal/35）─────────────────
+    # 常用架构 × 代表性 shape 过 GPU forward → kernels.nnk（随发布物分发，
+    # 部署首跑免 kernelgen 现编；与各 app 的 model_warmup/--no-warmup 配套）。
+    nn_add_executable(nn_warmup src/nn_warmup.cpp)
+    list(APPEND NN_APP_TARGETS nn_warmup)
 
     # ── 层吞吐量基准（CPU/Vulkan GPU；--all 或 --layer <name> 指定） ────────
     nn_add_executable(layer_bench src/layer_bench.cpp)

@@ -39,6 +39,7 @@
 #include <neuralnet.cpp/precision.hpp>
 #include <neuralnet.cpp/text_trainer.hpp>   // 训练工厂（数据集 + 样本 + 循环）
 #include <neuralnet.cpp/cli/cli_engine_factory.hpp>
+#include <neuralnet.cpp/cli/cli_jit_warmup.hpp>
 #include <neuralnet.cpp/cli/cli_precision_warning.hpp>
 #include <neuralnet.cpp/cli/text_train_checkpoint.hpp>
 #include <neuralnet.cpp/cli/text_train_config.hpp>
@@ -386,6 +387,17 @@ namespace
     nn::TextTrainer trainer = std::move(*trainer_r);
 
     std::cout << "训练窗口样本数: " << trainer.sample_count() << "\n" << std::endl;
+
+    // ── JIT 预热（P3/D5）：GPU 上跑一遍代表性 forward（micro-batch 形状的
+    //    全零 token-id 窗口；值不参与 JIT 键，形状即结构）→ .nnk 缓存。──────
+    {
+        const std::size_t micro = cfg.batch_size / cfg.accum_steps;
+        nn::Tensor warm_x =
+            engine->create_tensor(cfg.seq_len, micro > 0 ? micro : 1, nn::Precision::F32,
+                                  nn::InitSpec::zero());
+        NN_EXIT(nn::cli::jit_warmup(trainer.session().model(), *engine, warm_x, cfg.jit_warmup), 1,
+                "预热失败: ");
+    }
 
     // ── 训练循环（库层 TextTrainer；CLI 只装诊断/断点 hooks）──────────────
     NN_TRY_MSG(loop_r, "训练循环失败",

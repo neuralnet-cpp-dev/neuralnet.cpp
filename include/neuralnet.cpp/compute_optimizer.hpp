@@ -493,15 +493,25 @@ public:
         // 写穿 + K3 中间量 + K4 目标传递融合为**每张量一个多输出 kernel**（f32
         // 下 4 节点金刚石单 kernel 3 extras；混精度按门禁自动分裂），替代逐表达式
         // 数百个小 dispatch（P2 前实测 266 设备 kernel/步、host 提交 4.5ms/步）。
-        // CPU begin/end 为 no-op（行为不变）；NN_EXPR_SCAN 下本段把复合 spec
-        // 登记进注册表（scan_exprs 的优化器 dry-run 正是经此登记）。
-        NN_TRY(b, engine_.begin_expr());
-        ExprSegment seg(engine_owner_);
+        // CPU begin/end 为 no-op（行为不变）。
+        // ⚠ optimizer=f16 **不录制**（P3 验收门 D 实测）：m/v 状态为 f16 时，
+        //   录制/降级派发链路在第 2 步即把参数打成 NaN（同表达式直求值全绿、
+        //   f32 optimizer 图融合正常、NN_NO_GRAPH A/B 实证）。根因收敛到
+        //   "IR-C 录制 × f16 状态"组合且未再下钻——full-f16 本是告警级配方
+        //   （docs/internal/24 §2），正确性优先：该配方退回直求值；f32
+        //   optimizer（推荐默认 --f16 的 optimizer 槽）保持图融合性能。
+        const bool graph_ok = precision_bytes(p_.optimizer) >= 4;
+        if (graph_ok)
+        {
+            NN_TRY(b, engine_.begin_expr());
+        }
+        std::optional<ExprSegment> seg;
+        if (graph_ok) seg.emplace(engine_owner_);
         for (std::size_t i = 0; i < params_.size(); ++i)
         {
             NN_TRY(ur, adam_update_(i, inv_bc1, inv_bc2));
         }
-        NN_TRY_CHECK(seg.end());
+        if (graph_ok) NN_TRY_CHECK(seg->end());
         t_ = t_next;  // 全部参数成功才推进步数（失败时不推进）
         return {};
     }
@@ -579,8 +589,14 @@ public:
         // （稳定拓扑序保持列表序），故 decay 必须写在 adam_update_ 之前
         // （先衰减后更新 = AdamW 语义）；两者不连通 → 各自独立 kernel，天然
         // 顺序执行，不会同 kernel 双写 p。
-        NN_TRY(b, engine_.begin_expr());
-        ExprSegment seg(engine_owner_);
+        // ⚠ optimizer=f16 不录制（同 Adam::step，P3 门 D 实测）
+        const bool graph_ok = precision_bytes(p_.optimizer) >= 4;
+        if (graph_ok)
+        {
+            NN_TRY(b, engine_.begin_expr());
+        }
+        std::optional<ExprSegment> seg;
+        if (graph_ok) seg.emplace(engine_owner_);
         for (std::size_t i = 0; i < params_.size(); ++i)
         {
             // 权重衰减解耦：p = (1 - lr*wd) * p（目标传递：原地、单 dispatch）
@@ -594,7 +610,7 @@ public:
             // Adam 更新
             NN_TRY(ur, adam_update_(i, inv_bc1, inv_bc2));
         }
-        NN_TRY_CHECK(seg.end());
+        if (graph_ok) NN_TRY_CHECK(seg->end());
         t_ = t_next;  // 全部参数成功才推进步数（失败时不推进）
         return {};
     }
@@ -1223,12 +1239,11 @@ public:
 };
 
 // ── 优化器元数据表（RV-04：新增一个优化器不再要改 5~6 处）─────────────────
-// **名单的唯一真源**。此前同一份名单散落六处：本文件工厂、text_train 的硬编码
-// 白名单、mnist_train 帮助文本、gui.py 的 OPTIMIZER_OPTIONS、scan_exprs 的
-// dry-run 列表、mem_probe 的状态缓冲分支（AGENTS §3 把"别忘了改这几处"写成提醒
+// **名单的唯一真源**。此前同一份名单散落多处：本文件工厂、text_train 的硬编码
+// 白名单、mnist_train 帮助文本、gui.py 的 OPTIMIZER_OPTIONS、
+// mem_probe 的状态缓冲分支等（AGENTS §3 把"别忘了改这几处"写成提醒
 // ——提醒本身就说明设计有问题）。现在全部查表：
 //   · CLI 校验 / 帮助文本  → find_optimizer / optimizer_names
-//   · scan_exprs dry-run   → optimizer_table() 逐项建优化器
 //   · mem_probe 状态预算   → state_bufs / half_state
 //   · GUI 选项             → CLI --help（由本表生成）+ bench/gui_cli_audit.py 断言
 // 新增优化器只需：① 在本表加一行；② 在下方 create_optimizer 加一个分支

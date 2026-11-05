@@ -851,7 +851,7 @@ void run_suite(const char* label, nn::ComputeEngine& raw, nn::ComputeEngine& ada
     test_f32_zero_regression(raw, adapter);
     test_f16_move(raw, adapter);
     test_f16_reduce_matmul(raw, adapter);
-    // 任意表达式（DSL）在 GPU 上优先命中构建期 scan_exprs 登记过的结构
+    // 任意表达式（DSL）在 GPU 上经 JIT 现编/缓存命中执行（AOT 登记已删，P3）
     // （未登记走 JIT 兜底、有冷启动开销）。故这里只在 CPU 跑任意表达式；
     // GPU 的 DSL / 原地 / 端到端由 test_f16_model_e2e（Layer 结构 = 已登记结构）覆盖。
     if (allow_arbitrary_expr)

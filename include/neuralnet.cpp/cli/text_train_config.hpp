@@ -155,6 +155,9 @@ void print_text_train_usage(const char* prog)
 
     help.section("Batch 录制粒度");
     help.opt("--flush-interval <n>", "每 N 个 Transformer block flush 一次 (默认: 1)");
+    help.opt("--no-warmup",
+             "跳过 JIT 预热（GPU 默认开训前跑一遍代表性 forward，\n"
+             "表达式预编进 kernels.nnk，消除首步 JIT 冷启动）");
     help.note("按层切 batch 缩短 D1 延迟销毁锁窗、拆分大提交防 TDR；\n非阻塞提交后细粒度 flush "
               "的额外 submit 代价不在关键路径，\n不影响 batch_size 和训练质量");
 
@@ -178,6 +181,9 @@ struct TrainConfig : nn::TextTrainConfig
 {
     // ── 入口相关（不属于训练配方）────────────────────────────────────────
     std::string text_path;
+    // JIT 预热（P3/D5）：GPU 上开训前跑一遍代表性 forward（表达式现编进
+    // .nnk 缓存）。--no-warmup 逃生；CPU 路径本就跳过。
+    bool jit_warmup = true;
     // 推理模型（.nnmodel，Model 角色）：只含推理所需参数（三值层写打包形态）。
     std::string save_path = "gpt_model.nnmodel";
     std::string resume_path;
@@ -594,6 +600,10 @@ TrainConfig parse_text_train_args(int argc, char* argv[])
                           << "，可选: fixed, cosine, step_cosine\n";
                 std::exit(1);
             }
+        }
+        else if (arg == "--no-warmup")
+        {
+            cfg.jit_warmup = false;
         }
         else if (arg == "--warmup-epochs" && i + 1 < argc)
         {

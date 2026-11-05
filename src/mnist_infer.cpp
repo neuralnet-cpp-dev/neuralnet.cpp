@@ -13,6 +13,7 @@
 #include <neuralnet.cpp/model_serialization.hpp>
 #include <neuralnet.cpp/domain_mnist.hpp>
 #include <neuralnet.cpp/cli/cli_engine_factory.hpp>
+#include <neuralnet.cpp/cli/cli_jit_warmup.hpp>
 #include <neuralnet.cpp/cli/cli_gpu_option.hpp>
 #include <neuralnet.cpp/cli/cli_help.hpp>
 
@@ -44,6 +45,9 @@ void print_usage(const char* prog)
     help.opt("--model <path>", "模型文件路径 (默认: pretrained/model.bin)");
     help.opt("--topk <n>", "显示前 n 个预测结果 (默认: 3)");
     help.opt("--show-pixels", "显示像素矩阵 (调试用)");
+    help.opt("--no-warmup",
+             "跳过 JIT 预热（GPU 默认加载后跑一遍代表性 forward，\n"
+             "表达式预编进 kernels.nnk）");
     help.opt("--gpu [索引|名称]",
              "启用 GPU 加速 (需要 Vulkan SDK)\n空格形式只收枚举索引；名称子串用 --gpu=<名称>，如 "
              "--gpu=NVIDIA / --gpu=40HX");
@@ -59,6 +63,7 @@ struct InferConfig
     bool show_pixels = false;
     bool gpu_enabled = false;
     std::string gpu_device;      // --gpu 的可选设备选择子（空 = 自动选卡）
+    bool jit_warmup = true;      // --no-warmup：跳过 JIT 预热（P3/D5）
 };
 
 nn::Result<InferConfig> parse_args(int argc, char* argv[])
@@ -83,6 +88,10 @@ nn::Result<InferConfig> parse_args(int argc, char* argv[])
             if (*v > static_cast<int>(nn::MNIST_NUM_CLASSES))
                 NN_FAIL("--topk 不能超过类别数 " + std::to_string(nn::MNIST_NUM_CLASSES));
             cfg.topk = *v;
+        }
+        else if (arg == "--no-warmup")
+        {
+            cfg.jit_warmup = false;
         }
         else if (arg == "--show-pixels") { cfg.show_pixels = true; }
         else if (auto dev = nn::cli::parse_gpu_option(argc, argv, i))
@@ -263,6 +272,13 @@ int main(int argc, char* argv[])
                   << std::endl;
         // 载入期的解码/中转底材已无活跃引用 → 归还整块空闲池底材
         NN_EXIT(engine->release_idle_pool_blocks(), 1, "显存回收失败: ");
+    }
+
+    // ── JIT 预热（P3/D5）：GPU 上 (784,1) 全零 forward → .nnk ─────────────
+    {
+        nn::Tensor warm_x = engine->create_tensor(784, 1, nn::Precision::F32,
+                                                  nn::InitSpec::zero());
+        NN_EXIT(nn::cli::jit_warmup(model, *engine, warm_x, cfg.jit_warmup), 1, "预热失败: ");
     }
 
     // 推理模式：BatchNorm 使用保存的 running 统计量（batch 可能为 1，不能算 batch 统计）
