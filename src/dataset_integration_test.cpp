@@ -22,12 +22,7 @@
 #include <system_error>
 #include <vector>
 
-#ifdef NN_USE_MODULES
 import nn.tokenizer;
-#else
-#include <neuralnet.cpp/dataset.hpp>
-#include <neuralnet.cpp/domain_tokenizer.hpp>
-#endif
 
 int g_fail = 0;
 

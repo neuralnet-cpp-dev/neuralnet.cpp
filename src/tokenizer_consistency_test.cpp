@@ -20,11 +20,7 @@
 #include <string_view>
 #include <vector>
 
-#ifdef NN_USE_MODULES
 import nn.tokenizer;
-#else
-#include <neuralnet.cpp/domain_tokenizer.hpp>
-#endif
 #include "test_common.hpp"
 
 using nn::BPETokenizer;

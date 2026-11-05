@@ -470,26 +470,14 @@ endfunction()
 #   `export import nn.<依赖域>` 让消费方只 import 最顶域即可连带拿到依赖域
 #   名字（C++ 模块的 import **不可传递**，必须显式 re-export）。
 # 约束（实证，README §4）：
-#   · 宏（NN_TRY / NN_UNWRAP / NN_ASSERT_* 等）**不可导出** → 消费者双轨：
-#     `import nn.<域>` + 按需 `#include <neuralnet.cpp/core_errors.hpp>` 宏头；
-#   · STL 留在全局片段 → 消费者自带用到的 STL 头；
-#   · 仅 GNU 驱动 Clang（GCC / cl.exe / clang-cl 无等效显式 -fmodule-file
-#     姿势，NN_MODULES_ENABLED 自动为 OFF，消费方回落 include 分支）。
+#   · 宏（NN_TRY / NN_UNWRAP / NN_ASSERT_* 等）**不可导出** → 消费者
+#     `import nn.<域>` + 按需 `#include <nn_error_macros.hpp>` 宏岛头；
+#   · STL 留在全局片段 → 消费者自带用到的 STL 头。
 # 构建 = 显式 BMI 自定义命令（clang --precompile）+ -fmodule-file 经
 #   INTERFACE 目标传播，不开 CMake 模块扫描（见文件头注释的成本说明）。
-# 嵌入消费方默认 OFF（PROJECT_IS_TOP_LEVEL = ON 才默认开）。
-option(NN_ENABLE_MODULES
-    "Build granular C++20 modules (nn.core/nn.kvrecord/nn.dataset/nn.tokenizer) \
-     and switch leaf consumers to import (clang only; embedders default OFF)"
-    ${PROJECT_IS_TOP_LEVEL})
-if(NN_ENABLE_MODULES AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND NOT MSVC)
-    set(NN_MODULES_ENABLED ON)
-else()
-    set(NN_MODULES_ENABLED OFF)
-endif()
-message(STATUS "C++ modules (import nn.<domain>): "
-               "${NN_MODULES_ENABLED} (NN_ENABLE_MODULES=${NN_ENABLE_MODULES}, "
-               "compiler=${CMAKE_CXX_COMPILER_ID})")
+# **无条件构建（P1/D2）**：不设开关、不做编译器识别——BMI 姿势固定为
+#   GNU 驱动 Clang（--precompile / -fmodule-file=），不支持的编译器直接
+#   构建报错（用户定调，见 docs/internal/35 D2）。
 
 # ── 各域头文件闭包（nn_add_module 的 DEPENDS；跨域头改动触发对应 BMI 重编）──
 # 闭包 = 模块单元文本包含的全部 nn 头（含传递）。宁多勿少：多列只会偶发
@@ -542,13 +530,10 @@ set(NN_MOD_TOKENIZER_HEADERS
 # 产出：
 #   · <build>/modules/nn.<短名>.pcm —— BMI（自定义命令，DEPENDS 头闭包 + 依赖 BMI）
 #   · nn_mod_<短名>（INTERFACE）—— 消费方 target_link_libraries 即得
-#     -fmodule-file=nn.<短名>=<bmi>（依赖域的标志经 INTERFACE 传递）+ NN_USE_MODULES
+#     -fmodule-file=nn.<短名>=<bmi>（依赖域的标志经 INTERFACE 传递）
 #   · nn_<短名>_bmi（custom target）—— BMI 产物聚合，nn_use_modules 挂到消费方
 function(nn_add_module modname source)
     cmake_parse_arguments(NNM "" "" "DEPS;HEADERS" ${ARGN})
-    if(NOT NN_MODULES_ENABLED)
-        return()
-    endif()
     set(_cpp "nn.${modname}")
     set(_bmi "${NN_LIB_BINARY_DIR}/modules/${_cpp}.pcm")
     # ── BMI 编译标志 = 目标编译命令**镜像**（P0/D1，docs/internal/35 §0.2）──
@@ -564,7 +549,7 @@ function(nn_add_module modname source)
     #   ⑥ 探针门 + GPU 引擎宏（nn_gpu 在 add_subdirectory(engine) 才创建，
     #      晚于模块注册 → 用生成期求值的 TARGET_EXISTS 规避顺序问题）
     #   ⑦ include 路径 = nn_core 的 5 条，顺序亦一致
-    # 刻意不加 NN_USE_MODULES（任何头都不读它，见 D2/0.2 注）。
+    # 刻意不加任何模块消费宏（宏开关已随 P1 删除；任何头都不读它，见 D2 注）。
     set(_flags "")
     separate_arguments(_user_flags UNIX_COMMAND "${CMAKE_CXX_FLAGS}")
     list(APPEND _flags ${_user_flags})
@@ -616,7 +601,6 @@ function(nn_add_module modname source)
     )
     add_library(nn_mod_${modname} INTERFACE)
     target_compile_options(nn_mod_${modname} INTERFACE "-fmodule-file=${_cpp}=${_bmi}")
-    target_compile_definitions(nn_mod_${modname} INTERFACE NN_USE_MODULES)
     foreach(d IN LISTS NNM_DEPS)
         target_link_libraries(nn_mod_${modname} INTERFACE nn_mod_${d})
     endforeach()
@@ -629,14 +613,11 @@ function(nn_add_module modname source)
 endfunction()
 
 # ── 消费方接入：nn_use_modules(<目标> <模块...>) ──────────────────────────
-# 链接模块 INTERFACE（-fmodule-file 链 + NN_USE_MODULES 宏）并把目标从共享
-# PCH 候选剔除——模块消费方的 TU 同时带 nn.hpp 的 PCH 与模块 BMI 时，同一
-# 实体两处声明（PCH 按 NN_HAS_VULKAN 编、BMI 不带）存在分歧风险，叶子目标
-# 编译量小，直接各自解析更稳。
+# 链接模块 INTERFACE（-fmodule-file 链）并把目标从共享 PCH 候选剔除——
+# 模块消费方的 TU 同时带 nn.hpp 的 PCH 与模块 BMI 时，同一实体两处声明
+# （PCH 按 NN_HAS_VULKAN 编、BMI 不带）存在分歧风险，叶子目标编译量小，
+# 直接各自解析更稳。
 function(nn_use_modules target)
-    if(NOT NN_MODULES_ENABLED)
-        return()
-    endif()
     foreach(m IN LISTS ARGN)
         if(TARGET nn_mod_${m})
             target_link_libraries(${target} PRIVATE nn_mod_${m})

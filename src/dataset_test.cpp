@@ -24,11 +24,7 @@
 #include <system_error>
 #include <vector>
 
-#ifdef NN_USE_MODULES
 import nn.dataset;
-#else
-#include <neuralnet.cpp/dataset.hpp>
-#endif
 
 int g_fail = 0;
 
