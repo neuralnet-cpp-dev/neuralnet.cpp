@@ -125,15 +125,21 @@ if(MSVC)
     # train_state）；Linux 默认 8 MB。统一抬到 8 MB，与 Linux 口径对齐。
     add_link_options(/STACK:8388608)
 else()
-    add_compile_options(-fno-exceptions -Wall -Wextra -Wpedantic -Werror)
+    # ── NN_COMMON_COMPILE_OPTIONS：公共编译选项**单一真源**（P0/D1）────────
+    # 目录级 add_compile_options 与 nn_add_module 的 BMI 自定义命令共用本
+    # 变量——两处曾各写一份，任何一侧漂移都会让 PCM 加载报
+    # "configuration mismatch"（-pthread / 工具链 flags / -D 缺失均属此类）。
+    set(NN_COMMON_COMPILE_OPTIONS
+        -fno-exceptions -Wall -Wextra -Wpedantic -Werror)
     # GCC 15.2 在 -O3 + PCH 下对 std::optional / std::unique_ptr 的**内联析构**
     # 报 -Wmaybe-uninitialized 假阳性（诊断里的内存位置全是 <unknown>；实测
     # src/layer_lifetime_test.cpp 的 `unique_ptr<nn::Model>` 析构路径，成员已由
     # make_unique/默认初始化，无真实未初始化读取）。Clang 不产生该告警，因此
     # 只对 GNU 关闭此子告警；-Wuninitialized 保持开启。
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        add_compile_options(-Wno-maybe-uninitialized)
+        list(APPEND NN_COMMON_COMPILE_OPTIONS -Wno-maybe-uninitialized)
     endif()
+    add_compile_options(${NN_COMMON_COMPILE_OPTIONS})
 endif()
 
 # ── LTO（链接期优化，2026-11：Clang thin LTO）──────────────────────────
@@ -142,6 +148,9 @@ endif()
 # 的组合噪音）。NN_ENABLE_LTO=OFF 可关闭（A/B 或排障）。需 clang + lld。
 option(NN_ENABLE_LTO "Clang thin LTO（需 LLD）" ON)
 if(NN_ENABLE_LTO AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND NOT MSVC)
+    # -flto=thin 进 NN_COMMON（P0/D1）：消费方目标与 BMI 同源。--precompile
+    # 只做前端、不 codegen，实测该 flag 可接受（拒绝时再排除并注释）。
+    list(APPEND NN_COMMON_COMPILE_OPTIONS -flto=thin)
     add_compile_options(-flto=thin)
     add_link_options(-flto=thin -fuse-ld=lld)
     message(STATUS "LTO: Clang thin LTO + LLD 已启用（NN_ENABLE_LTO=OFF 可关闭）")
@@ -158,9 +167,10 @@ endif()
 # ── 编译器特有选项 ───────────────────────────────────────────────────────
 # -fexperimental-library 仅 Clang 识别；GCC 不识别会产生警告
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
-    add_compile_options(-fexperimental-library)
     # f16 矩阵乘法（MatrixT<F16>）无原生 x86 SIMD → 优化器无法向量化是预期行为
     # （§7.2 兼容路径：f32 参考计算 + f16 舍入），抑制 -Wpass-failed 避免 -Werror 下编译失败
+    list(APPEND NN_COMMON_COMPILE_OPTIONS -fexperimental-library -Wno-pass-failed)
+    add_compile_options(-fexperimental-library)
     add_compile_options(-Wno-pass-failed)
 endif()
 # C++ 标准库由编译器默认决定（见文件开头的说明），此处不再显式指定 -stdlib。
@@ -541,25 +551,53 @@ function(nn_add_module modname source)
     endif()
     set(_cpp "nn.${modname}")
     set(_bmi "${NN_LIB_BINARY_DIR}/modules/${_cpp}.pcm")
-    # 编译标志 = 库内目标同款（目录级 add_compile_options 不作用于自定义命令，
-    # 必须在此显式列出；优化标志与消费方同档，避免"同实体两种 -O"的度量失真；
-    # 探针门保持与 nn_core INTERFACE 同值，见该变量注释）。
+    # ── BMI 编译标志 = 目标编译命令**镜像**（P0/D1，docs/internal/35 §0.2）──
+    # 目录级 add_compile_options 不作用于自定义命令，须在此显式重放消费方
+    # 命令行的每一段；任何缺项都会让 PCM 加载报 configuration mismatch：
+    #   ① 调用方/工具链全局 flags（NDK --target=、-stdlib= 等）
+    #   ② 构建类型 flags（CMAKE_CXX_FLAGS_<CONFIG>：Release -O3 -DNDEBUG / Debug -g）
+    #   ③ 公共选项单一真源（-fno-exceptions/-W*/-flto=thin/-fexperimental-library…）
+    #   ④ 优化档（DEBUG/RELEASE_FLAGS，与消费方目录级 genex 同值）+ 方言标准
+    #   ⑤ Threads::Threads 的 INTERFACE_COMPILE_OPTIONS 原样镜像（消费方经
+    #      nn_core 拿到的就是这份；NDK 等环境为 -pthread，glibc≥2.34 为空——
+    #      判据直接取目标属性，与消费方严格同源）
+    #   ⑥ 探针门 + GPU 引擎宏（nn_gpu 在 add_subdirectory(engine) 才创建，
+    #      晚于模块注册 → 用生成期求值的 TARGET_EXISTS 规避顺序问题）
+    #   ⑦ include 路径 = nn_core 的 5 条，顺序亦一致
+    # 刻意不加 NN_USE_MODULES（任何头都不读它，见 D2/0.2 注）。
+    set(_flags "")
+    separate_arguments(_user_flags UNIX_COMMAND "${CMAKE_CXX_FLAGS}")
+    list(APPEND _flags ${_user_flags})
+    if(CMAKE_BUILD_TYPE)
+        # cache 变量名是大写（CMAKE_CXX_FLAGS_RELEASE），直接嵌套
+        # ${CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE}} 会拼出 CMAKE_CXX_FLAGS_Release → 空。
+        string(TOUPPER "${CMAKE_BUILD_TYPE}" _cfg_type)
+        separate_arguments(_cfg_flags UNIX_COMMAND
+            "${CMAKE_CXX_FLAGS_${_cfg_type}}")
+        list(APPEND _flags ${_cfg_flags})
+        unset(_cfg_type)
+    endif()
+    list(APPEND _flags ${NN_COMMON_COMPILE_OPTIONS})
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         set(_opt ${DEBUG_FLAGS})
     else()
         set(_opt ${RELEASE_FLAGS})
     endif()
-    set(_flags
-        "-std=c++${CMAKE_CXX_STANDARD}"
-        -fno-exceptions -Wall -Wextra -Wpedantic -Werror
-        -fexperimental-library -Wno-pass-failed
-        ${_opt}
-        -I "${NN_LIB_SOURCE_DIR}/include"
-        -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include"
-        -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp")
+    list(APPEND _flags ${_opt} "-std=c++${CMAKE_CXX_STANDARD}")
+    get_target_property(_thread_opts Threads::Threads INTERFACE_COMPILE_OPTIONS)
+    if(_thread_opts)
+        list(APPEND _flags ${_thread_opts})
+    endif()
     if(NN_ENABLE_PROBES)
         list(APPEND _flags -DNN_ENABLE_PROBES=1)
     endif()
+    list(APPEND _flags "$<$<TARGET_EXISTS:nn_gpu>:-DNN_GPU_ENGINE=1>")
+    list(APPEND _flags
+        -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp"
+        -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include"
+        -I "${NN_LIB_SOURCE_DIR}/include"
+        -I "${NN_LIB_SOURCE_DIR}/engine/engine/include/neuralnet.cpp"
+        -I "${NN_LIB_SOURCE_DIR}/engine/engine/include")
     set(_file_deps "")
     foreach(d IN LISTS NNM_DEPS)
         list(APPEND _flags "-fmodule-file=nn.${d}=${NN_LIB_BINARY_DIR}/modules/nn.${d}.pcm")
