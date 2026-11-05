@@ -45,7 +45,7 @@ using nn::Scalar;
 // GPT 架构在 P1 **还没有**三值线性层（docs 21 §4.8 P1.5），但词法上照样接受：
 // 不兼容组合由 `Layer::init` 的能力校验给出"层 X 不支持 param=t1_58"的报错，
 // 这正是设计意图（§4.1）—— CLI 不加模型白名单。
-nn::Precision parse_precision_arg(const std::string& name, const char* flag,
+inline nn::Precision parse_precision_arg(const std::string& name, const char* flag,  // inline：同 parse_text_train_args（P5）
                                   bool allow_t1_58 = false)
 {
     if (name == "f16" || name == "half") return nn::Precision::F16;
@@ -63,7 +63,7 @@ nn::Precision parse_precision_arg(const std::string& name, const char* flag,
 }
 
 // ==================== 帮助信息 ====================
-void print_text_train_usage(const char* prog)
+inline void print_text_train_usage(const char* prog)  // inline：同 parse_text_train_args（P5 模块化）
 {
     nn::cli::Help help(std::cout, prog, "GPT 文本生成训练程序");
 
@@ -308,7 +308,7 @@ precision_offload_combo_error(const TrainConfig& cfg)
                        "  请改用 --checkpoint-every，或去掉 --activation-offload。\n");
 }
 
-TrainConfig parse_text_train_args(int argc, char* argv[])
+inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：模块化后消费方无文本包含，需可由 BMI 发射定义（P5）
 {
     TrainConfig cfg;
     // 配方默认值继承自 nn::TextTrainConfig；seq_len 的 CLI 默认是 GPT 序列长度，

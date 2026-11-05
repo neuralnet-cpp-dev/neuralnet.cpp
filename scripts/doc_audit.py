@@ -31,6 +31,8 @@ HISTORICAL_FILES = [
     'ternary_deploy.hpp',                    # NNQT 独立部署格式，随库级清理（internal/23）删除
     '08-object-lifetimes.md',                # 2026-11 文档重构删除的转发页（真源 = 07-engine-ownership.md）
     'doc_align_audit.ps1',                   # 文档审计由 scripts/doc_audit.py 承担（口径见文档规范 §5）
+    'scan_exprs.cpp', 'fused_generate.hpp',  # 35 号 P3 删 AOT 收集/生成链（归档 history）；
+                                             # 02/18/35 与历史 release-notes 的提及待 P6 正文改写后复核摘除
 ]
 
 # [B] 已删除符号（命中行若带"不存在/已删除"等否定语境则跳过）
@@ -54,6 +56,8 @@ EXTERNAL_FLAGS = {
     '--diff', '--recurse-submodules', '--tags', '--recursive',
     # clang 编译器选项（research/modules-import-nn 构建 BMI 的 clang 命令用）
     '--precompile',
+    # git 自带选项：git submodule update --init --depth 1（35 号 §4 实施前置）
+    '--depth',
 }
 # [D] 已在文档中明确标注"已移除"的历史参数
 REMOVED_FLAGS = {
@@ -88,6 +92,8 @@ HEADER_EXEMPT = [
     re.compile(r'^docs/history/history\.md$'),
     re.compile(r'^docs/release-notes/v[\d.]+(-rc[\d.]+)?\.md$'),
     re.compile(r'^docs/benchmarks/.+\.md$'),
+    # 用户提供的只读实施文档（头部由用户撰写并锁定；实施状态语义见其头部自述）
+    re.compile(r'^docs/internal/35-modules-migration-implementation\.md$'),
 ]
 # [E] 状态词表（封闭集合）
 VALID_STATUS = {'现行', '冻结', 'TODO', '转发页', '已归档'}

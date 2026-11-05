@@ -12,7 +12,6 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/nn.hpp>
 
 #include "test_common.hpp"   // M1 访问收口：upload（宿主 Matrix 进引擎张量）
 
@@ -21,12 +20,25 @@
 #include <memory>
 #include <random>
 #include <string>
-
-using nn::ComputeEngine;
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::dsl::relu;
 using nn::ComputeEngine;
 using nn::Matrix;
 using nn::Scalar;
 using nn::Tensor;
+
 using namespace nn::dsl;
 
 namespace

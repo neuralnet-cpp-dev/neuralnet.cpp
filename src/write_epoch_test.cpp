@@ -25,13 +25,27 @@
 #include <string>
 #include <vector>
 
-#include "neuralnet.cpp/cli/cli_engine_factory.hpp"
-#include "neuralnet.cpp/compute_layer_bitlinear.hpp"
-#include "neuralnet.cpp/compute_optimizer.hpp"
-#include "neuralnet.cpp/expr_dsl.hpp"
 
 #define NN_TEST_COUNTER g_failures
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::EngineConfig;
+using nn::dsl::compute;
+using nn::dsl::compute_into;
+using nn::cli::create_engine;
+using nn::dsl::leaf;
 
 namespace
 {

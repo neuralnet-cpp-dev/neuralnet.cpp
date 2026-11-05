@@ -34,18 +34,36 @@
 #include <vector>
 
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/domain_gpt.hpp>
-#include <neuralnet.cpp/precision.hpp>
-#include <neuralnet.cpp/text_trainer.hpp>   // 训练工厂（数据集 + 样本 + 循环）
-#include <neuralnet.cpp/cli/cli_engine_factory.hpp>
-#include <neuralnet.cpp/cli/cli_jit_warmup.hpp>
-#include <neuralnet.cpp/cli/cli_precision_warning.hpp>
-#include <neuralnet.cpp/cli/text_train_checkpoint.hpp>
-#include <neuralnet.cpp/cli/text_train_config.hpp>
-#include <neuralnet.cpp/cli/text_train_loop.hpp>
-#include <neuralnet.cpp/cli/text_train_recovery.hpp>
-#include <neuralnet.cpp/core_profile.hpp>
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::EngineConfig;
+using nn::cli::ResumeStateAdoption;
+using nn::cli::TextTrainMemProbe;
+using nn::cli::TrainConfig;
+using nn::cli::adopt_resume_state;
+using nn::cli::create_engine;
+using nn::prof::dump;
+using nn::prof::enabled;
+using nn::cli::jit_warmup;
+using nn::cli::load_optimizer_state;
+using nn::cli::make_text_train_mem_probe;
+using nn::cli::precision_offload_combo_error;
+using nn::cli::resume_text_train;
+using nn::cli::run_text_train_loop;
+using nn::cli::save_text_train_model;
+using nn::cli::text_train_ckpt_exit_code;
+using nn::cli::verify_dataset_identity;
 
 namespace
 {

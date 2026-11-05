@@ -8,14 +8,8 @@
 // 引擎选择：--gpu 启用 GpuEngine（需要 Vulkan），否则 CpuEngine。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <cmath>
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/model_serialization.hpp>
-#include <neuralnet.cpp/domain_mnist.hpp>
-#include <neuralnet.cpp/cli/cli_engine_factory.hpp>
-#include <neuralnet.cpp/cli/cli_jit_warmup.hpp>
-#include <neuralnet.cpp/cli/cli_gpu_option.hpp>
-#include <neuralnet.cpp/cli/cli_help.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -28,10 +22,27 @@
 #include <string>
 #include <utility>
 #include <vector>
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::EngineConfig;
+using nn::cli::Help;
+using nn::cli::create_engine;
+using nn::cli::parse_gpu_option;
+using nn::Scalar;
 
 namespace fs = std::filesystem;
 
-using nn::Scalar;
 
 // ==================== 帮助信息 ====================
 void print_usage(const char* prog)

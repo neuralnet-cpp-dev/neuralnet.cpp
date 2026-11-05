@@ -29,14 +29,26 @@
 #include <utility>
 #include <vector>
 
-#include "neuralnet.cpp/nn.hpp"
-#include "neuralnet.cpp/cli/text_train_checkpoint.hpp"
-#include "neuralnet.cpp/cli/text_train_config.hpp"
-#include "neuralnet.cpp/cli/text_train_loop.hpp"   // save_ckpt_with_state（P1-2 接线）
-#include "neuralnet.cpp/cli/text_train_recovery.hpp"
 
 #define NN_TEST_COUNTER g_fail
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::TextTrainCheckpointLog;
+using nn::cli::is_forbidden_resume_flag;
+using nn::cli::save_text_train_model;
+using nn::cli::text_train_ckpt_path;
 
 namespace
 {

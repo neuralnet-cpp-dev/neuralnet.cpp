@@ -9,7 +9,6 @@
 #include <string>
 
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/cli/cli_engine_factory.hpp>
 
 #define main test_rapt_gradcheck
 #include "rapt_gradcheck.cpp"
@@ -21,6 +20,9 @@
 
 #define main test_rapt_checkpoint
 #include "rapt_checkpoint_test.cpp"
+import nn.cli;
+using nn::cli::EngineConfig;
+using nn::cli::create_engine;
 #undef main
 
 int main(int argc, char* argv[])

@@ -20,10 +20,22 @@
 #include <string_view>
 #include <vector>
 
-import nn.tokenizer;
 #include "test_common.hpp"
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 using nn::BPETokenizer;
+
 
 namespace
 {
@@ -32,11 +44,15 @@ int g_fail = 0;
 
 // ── 参考实现：pre_tokenize 的独立朴素实现（标记切分 + 纯文本 sregex_iterator）─
 // 正则切分路径独立于被测的手写状态机（pre_match_len），作为逐字节对拍的基准。
+// markers 用 string_view（而非库侧的 std::string）：刻意打破与
+// domain_tokenizer_bpe.hpp 构造的同形——clang 24 在「多模块 import × 同 TU 两个
+// identical static local 构造」组合下产出错误代码（-O0/-O3 均复现，纯代码与 gcc
+// 全过），见 docs/internal/36 号台账 C6。语义不变（longest-match 对拍保留）。
 std::vector<std::string> old_pre_tokenize(std::string_view text)
 {
-    static const std::vector<std::string> markers = []
+    static const std::vector<std::string_view> markers = []
     {
-        std::vector<std::string> m = {
+        std::vector<std::string_view> m = {
             "<|system|>",      "<|end_of_system|>", "<|user|>",
             "<|end_of_user|>", "<|assistant|>",     "<|end_of_assistant|>",
             "<|end_of_turn|>", "<|sep|>",           "<|tool|>",

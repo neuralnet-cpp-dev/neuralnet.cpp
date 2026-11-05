@@ -12,8 +12,6 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/cli/cli_gpu_option.hpp>
 
 #include <cstdio>
 #include <cstdlib>
@@ -23,10 +21,27 @@
 #include <random>
 #include <string>
 #include <vector>
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::dsl::compute_into;
+using nn::dsl::leaf;
+using nn::cli::parse_gpu_option;
+using nn::dsl::rparam;
 using nn::Matrix;
 using nn::Precision;
 using nn::Scalar;
+
 
 namespace
 {

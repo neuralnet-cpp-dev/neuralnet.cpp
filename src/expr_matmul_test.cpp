@@ -23,17 +23,14 @@
 #include <vector>
 
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/compute_tensor.hpp>
-#include <neuralnet.cpp/expr_dsl.hpp>
-#include <neuralnet.cpp/expr_spec.hpp>
-#include <neuralnet.cpp/expr_opt.hpp>
-#include <neuralnet.cpp/engine.hpp>
 #include "test_common.hpp"
+import nn.engine;
+import nn.expr;
+using nn::Scalar;
 
 // 测试写在全局作用域（非 namespace nn），避免 ADL 把匹配拉进 nn 命名空间。
 using namespace nn::dsl;
 namespace dsl = nn::dsl; // 别名：全局作用域可用 dsl::leaf 等限定调用
-using nn::Scalar;
 
 namespace
 {

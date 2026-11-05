@@ -8,13 +8,6 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/model_serialization.hpp>
-#include <neuralnet.cpp/domain_gpt.hpp>
-#include <neuralnet.cpp/cli/cli_engine_factory.hpp>
-#include <neuralnet.cpp/cli/cli_jit_warmup.hpp>
-#include <neuralnet.cpp/cli/cli_gpu_option.hpp>
-#include <neuralnet.cpp/cli/cli_help.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -24,8 +17,22 @@
 #include <memory>
 #include <string>
 #include <vector>
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::Help;
 using nn::Scalar;
+
 
 // ==================== 帮助信息 ====================
 void print_usage(const char* prog)

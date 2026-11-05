@@ -17,8 +17,6 @@
 // ───────────────────────────────────────────────────────────────────────────
 
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/expr_fold.hpp>   // fold v1 样例（结构 key 与对拍同源）
 
 #include "test_common.hpp"   // M1 访问收口：upload/download（库外经引擎进出张量）
 
@@ -29,8 +27,27 @@
 #include <random>
 #include <string>
 #include <vector>
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::dsl::compute;
+using nn::dsl::matmul;
+using nn::dsl::row_broadcast;
 using nn::Scalar;
+using nn::ComputeEngine;
+using nn::Matrix;
+using nn::Tensor;
+
 
 #ifndef NN_GPU_ENGINE
 
@@ -42,9 +59,6 @@ int main()
 }
 #else
 
-using nn::ComputeEngine;
-using nn::Matrix;
-using nn::Tensor;
 
 // ── 辅助：最大绝对误差 ────────────────────────────────────────────────────
 Scalar max_abs_diff(const Matrix& a, const Matrix& b)

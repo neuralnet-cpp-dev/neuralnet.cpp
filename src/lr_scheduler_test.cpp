@@ -18,20 +18,32 @@
 #include <cstdio>
 #include <vector>
 
-#include "neuralnet.cpp/lr_scheduler.hpp"
 
 #define NN_TEST_COUNTER g_fail
 #include "test_common.hpp"
-
-namespace
-{
-int g_fail = 0;
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 using nn::compute_epoch_lr;
 using nn::compute_step_lr;
 using nn::LrScheduleConfig;
 using nn::Scalar;
 using nn::StepLrScheduleConfig;
+
+namespace
+{
+int g_fail = 0;
+
 
 // 相对容差比较（float 调度曲线）
 [[nodiscard]] bool near(Scalar a, Scalar b, Scalar tol = Scalar(1e-5))

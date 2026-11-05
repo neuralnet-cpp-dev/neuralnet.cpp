@@ -15,17 +15,6 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/model_serialization.hpp>
-#include <neuralnet.cpp/domain_mnist.hpp>
-#include <neuralnet.cpp/precision.hpp>
-#include <neuralnet.cpp/cli/cli_engine_factory.hpp>
-#include <neuralnet.cpp/cli/cli_jit_warmup.hpp>
-#include <neuralnet.cpp/cli/cli_help.hpp>
-#include <neuralnet.cpp/cli/cli_lr_scheduler.hpp>
-#include <neuralnet.cpp/cli/cli_mnist_io.hpp>
-#include <neuralnet.cpp/cli/cli_train_common.hpp>
-#include <neuralnet.cpp/cli/cli_precision_warning.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -40,8 +29,22 @@
 #include <string>
 #include <utility>
 #include <vector>
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::Help;
 using nn::Scalar;
+
 
 // ── 精度解析辅助 ─────────────────────────────────────────────────────────
 // allow_t1_58：三值（T1_58）**只适用于 param 槽**（"该层权重是三值"），

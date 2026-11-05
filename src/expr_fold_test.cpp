@@ -30,13 +30,12 @@
 #include <string>
 #include <vector>
 
-#include <neuralnet.cpp/compute_tensor.hpp>
-#include <neuralnet.cpp/engine.hpp>
-#include <neuralnet.cpp/expr_fold.hpp>
-#include <neuralnet.cpp/compute_layer_attention.hpp> // 注意力 fold 构造（定义于 Layer：表达式文本只写在 Layer）
 #include "test_common.hpp" // M1：upload/download（库外经引擎进出张量）
-
+import nn.engine;
+import nn.expr;
+import nn.layer;
 using nn::Scalar;
+
 
 int test_expr_fold()
 {

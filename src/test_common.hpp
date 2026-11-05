@@ -29,10 +29,20 @@
 #include <cstdio>
 #include <iostream>
 #include <string>
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 
-#include "neuralnet.cpp/algebra_matrix.hpp"  // Matrix / Scalar
-#include "neuralnet.cpp/compute_tensor.hpp"  // Tensor
-#include "neuralnet.cpp/compute_engine.hpp"  // ComputeEngine（M1：库外经引擎上传/下载）
 
 // ── 失败断言宏 ─────────────────────────────────────────────────────────────
 #ifndef NN_TEST_COUNTER

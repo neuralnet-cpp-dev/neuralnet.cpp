@@ -15,6 +15,7 @@
 // 退出码：0 = 通过，1 = 失败，77 = 跳过（--gpu 且无设备）
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <random>
 #include <nn_error_macros.hpp>
 #include <algorithm>
 #include <cmath>
@@ -25,12 +26,27 @@
 #include <string>
 #include <vector>
 
-#include "neuralnet.cpp/cli/cli_engine_factory.hpp"
-#include "neuralnet.cpp/compute_optimizer.hpp"
-#include "neuralnet.cpp/int8_pack.hpp"
 
 #define NN_TEST_COUNTER g_failures
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::expr::row_mod;
+using nn::i8_pack::at;
+using nn::i8_pack::pack_row;
+using nn::i8_pack::quantize;
+using nn::i8_pack::words_per_row;
 
 namespace
 {

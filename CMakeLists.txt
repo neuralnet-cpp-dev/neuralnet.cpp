@@ -202,18 +202,13 @@ if(NOT NN_COMPILER_LAUNCHER AND NOT CMAKE_CXX_COMPILER_LAUNCHER AND PROJECT_IS_T
     endif()
 endif()
 if(NN_COMPILER_LAUNCHER AND (NN_COMPILER_LAUNCHER_EXPLICIT OR PROJECT_IS_TOP_LEVEL))
-    # ── ccache × PCH：把 sloppiness 钉进编译命令 ──────────────────────────
-    # ccache 手册《Precompiled headers》要求 Clang 侧**三项同时满足**才能缓存
-    # "用了 PCH 的 TU"：① sloppiness 含 `pch_defines,time_macros`；② 以
-    # `-include-pch` 使用 PCH（CMake 就是这么传的）；③ 编译带
-    # `-fno-pch-timestamp`（见文件末尾 PCH 落地块）。缺 ①/③ 时 ccache 对**每个**
-    # 用 PCH 的 TU 都记 "Could not use precompiled header" → 全部不可缓存，
-    # 而本仓 42+ 个目标的编译**全部**走 PCH，等于缓存形同虚设。
-    # 这里用 `cmake -E env` 把 sloppiness 钉在命令前缀里，**不依赖用户全局
-    # ccache 配置**（避免"换个机器/换个人就悄悄失效，还看不出慢在哪"）。
-    # 两项 sloppiness 对本仓安全：全仓无 `__DATE__` / `__TIME__` / `__TIMESTAMP__`
-    # （`pch_defines` 只在"用 PCH + 源内 #define 影响 PCH 内容"的写法下才有风险，
-    # 而 PCH 是强制前置包含、源内 #define 影响不到它）。
+    # ── ccache：把 sloppiness 钉进编译命令 ────────────────────────────────
+    # `time_macros`：本仓无 `__DATE__`/`__TIME__`/`__TIMESTAMP__`，钉上是防御性
+    # 配置（防未来头引入时间宏后 ccache 静默退化为预处理模式不命中）。
+    # `pch_defines`：本仓共享 PCH 已随 35 号 D9 删除，此项仅作无害冗余保留
+    #（若个别环境的工具链自带前置包含仍用得上）。
+    # 用 `cmake -E env` 钉在命令前缀里，**不依赖用户全局 ccache 配置**
+    #（避免"换个机器/换个人就悄悄失效，还看不出慢在哪"）。
     if(NN_COMPILER_LAUNCHER MATCHES "ccache")
         # ⚠ 必须写成**单个**字符串：写成两个相邻的带引号参数会变成 CMake 列表
         #   （分号连接）→ 命令行里被 `sh` 当成第二个命令，实测报
@@ -429,31 +424,25 @@ add_library(neuralnet::nn ALIAS neuralnet_cpp)
 # ── 预编译头（PCH）：本项目编译时间的最大头 ──────────────────────────────
 # 库是 header-only，每个 TU 都要把 `nn.hpp`（→ 全部 Layer/Loss/Optimizer/
 # Engine + 构建期嵌入的 36 份原语 SPIR-V + AOT 融合注册表，合计 ~7MB 头文本）
-# 从头 parse 一遍。实测（Debug / clang / 本机）单 TU：
-#   无 PCH 17.5s → 有 PCH 9.8s（-44%）。
-# 所有候选目标的编译条件完全相同 → 只编**一份** PCH 供它们复用（REUSE_FROM）：
-# 31 份逐目标 PCH 合计约 780s CPU，共享后只剩 1 份。见文件末尾的落地块。
-# 关掉：-DNN_ENABLE_PCH=OFF。
-# 候选 = 经 `nn_add_executable` 建的应用/测试目标（历史上的 NN_EXPR_SCAN
-# 收集器不套 PCH 的约束已随 AOT 收集链删除，35 号 D4）。
-option(NN_ENABLE_PCH "Precompile nn.hpp once and reuse it across targets" ON)
+# 从头 parse 一遍。历史上用共享 PCH（`nn.hpp` 预编译一次 + `REUSE_FROM`）提速；
+# src/ 全量模块化（35 号 D8）后消费方改经 `-fmodule-file` 取声明、候选清零，
+# PCH 机制整体删除（35 号 D9）。
 
 # ── 便捷函数：统一添加可执行目标 ────────────────────────────────────────
-# PCH **不在这里挂**：目标编译条件（NN_HAS_VULKAN / include 目录）要到文件
-# 末尾的 GPU 循环才定型，提前挂会与共享 PCH 目标的属性对不上（REUSE_FROM
-# 要求两边完全一致）。这里只登记候选，末尾统一落地。
 function(nn_add_executable name)
     add_executable(${name} ${ARGN})
     target_link_libraries(${name} PRIVATE nn_core)
     # GPU 块按这份名单统一挂 NN_HAS_VULKAN / Vulkan::Vulkan。名单与创建点
     # 同源，避免"测试目标只在 NN_ENABLE_TESTS=ON 时才进 GPU 名单"这类漏配：
     # 编译门是 NN_BUILD_APPS OR NN_ENABLE_TESTS（默认 Release 也会编出全部
-    # 测试程序），漏挂时共享 PCH 里的 NN_HAS_VULKAN 会泄漏进 TU，表现为
-    # 链接期整屏 `undefined reference to vk*`。
+    # 测试程序）。
     list(APPEND NN_EXECUTABLE_TARGETS ${name})
     set(NN_EXECUTABLE_TARGETS ${NN_EXECUTABLE_TARGETS} PARENT_SCOPE)
-    if(NN_ENABLE_PCH)
-        set(NN_PCH_CANDIDATES ${NN_PCH_CANDIDATES} ${name} PARENT_SCOPE)
+    # P5/D8（35 号）：单点接线——全部可执行目标自动挂全部域模块
+    #（-fmodule-file 链）。同 TU 混用（import + 文本 include 同头）已实测
+    # 合法（thin 模块全局实体）。
+    if(DEFINED NN_ALL_MODULES)
+        nn_use_modules(${name} ${NN_ALL_MODULES})
     endif()
 endfunction()
 
@@ -929,8 +918,17 @@ function(nn_use_modules target)
             add_dependencies(${target} nn_${m}_bmi)
         endif()
     endforeach()
-    list(REMOVE_ITEM NN_PCH_CANDIDATES ${target})
-    set(NN_PCH_CANDIDATES ${NN_PCH_CANDIDATES} PARENT_SCOPE)
+    # ── 模块消费方必须绕开编译 launcher（ccache/sccache）────────────────
+    # 根因（ccache 4.13 手册明言 "does currently not support standard C++
+    # modules"）：ccache 的 key 不含 -fmodule-file 的 BMI 内容——direct 模式
+    # 的 depfile 只记录**文本包含**的头，import 进来的头（公共头改 inline、
+    # 改实现）完全不可见。于是"BMI 重编 + 消费方源码没动"时 ccache 会吐出
+    # **inline 语义改动前的旧 .o**（实测：text_train.cpp 的
+    # parse_text_train_args 加 inline 后，dev 目录链出 undefined symbol、
+    # 绕过 ccache 手工编译即正常）。禁用后正确性由 ninja 依赖（源 + BMI
+    # mtime + depfile）保证；命中率损失可忽略——BMI 变化与文本头变化强相关，
+    # 两种口径下消费方本来都会真实重编。
+    set_property(TARGET ${target} PROPERTY RULE_LAUNCH_COMPILE "")
 endfunction()
 
 # ── 四个叶子域模块（DAG：core → kvrecord → dataset → tokenizer）──────────
@@ -958,6 +956,11 @@ nn_add_module(model    modules/nn.model.cpp    DEPS core HEADERS ${NN_MOD_MODEL_
 nn_add_module(train    modules/nn.train.cpp    DEPS core HEADERS ${NN_MOD_TRAIN_HEADERS})
 nn_add_module(domain   modules/nn.domain.cpp   DEPS core HEADERS ${NN_MOD_DOMAIN_HEADERS})
 nn_add_module(cli      modules/nn.cli.cpp      DEPS core HEADERS ${NN_MOD_CLI_HEADERS})
+
+# 全域清单（D8 单点接线用；保持与上方注册一致——新增域必须同步追加）
+set(NN_ALL_MODULES
+    core kvrecord dataset tokenizer
+    expr engine layer loss opt model train domain cli)
 
 # ── 测试/验证目标开关（默认关闭） ──────────────────────────────────────
 # 默认只构建应用与基准工具目标，避免生成大量验证程序；
@@ -1007,21 +1010,17 @@ if(NN_BUILD_APPS)
     nn_add_executable(tokenizer_train src/tokenizer_train.cpp)
     nn_add_executable(tokenizer_infer src/tokenizer_infer.cpp)
     list(APPEND NN_APP_TARGETS text_train text_infer tokenizer_train tokenizer_infer)
-    nn_use_modules(tokenizer_train tokenizer)
-    nn_use_modules(tokenizer_infer tokenizer)
-
+        
     # ── 数据集工具（生成器 + 旧格式转换器）────────────────────────────────
     nn_add_executable(dataset_gen src/dataset_gen.cpp)
     nn_add_executable(dataset_convert src/dataset_convert.cpp)
     list(APPEND NN_APP_TARGETS dataset_gen dataset_convert)
-    nn_use_modules(dataset_gen tokenizer)
-
+    
     # ── 运行期 JIT 演示（Phase 2；docs/internal/33）───────────────
     # 展示"不在内嵌注册表的表达式 → JIT 现编 + .nnk 缓存命中 + CPU 对拍"。
     # 仅演示用，不注册 ctest、不 install。
     nn_add_executable(jit_demo src/jit_demo.cpp)
-    nn_use_modules(dataset_convert tokenizer)
-
+    
     # ── 构建期/发布期 JIT 预热目标（P3/D5，docs/internal/35）─────────────────
     # 常用架构 × 代表性 shape 过 GPU forward → kernels.nnk（随发布物分发，
     # 部署首跑免 kernelgen 现编；与各 app 的 model_warmup/--no-warmup 配套）。
@@ -1392,11 +1391,7 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     list(APPEND NN_TEST_TARGETS nnvocab_test)
     nn_add_executable(dataset_integration_test src/dataset_integration_test.cpp)
     list(APPEND NN_TEST_TARGETS dataset_integration_test)
-    nn_use_modules(dataset_test dataset)
-    nn_use_modules(tokenizer_test tokenizer)
-    nn_use_modules(nnvocab_test tokenizer)
-    nn_use_modules(dataset_integration_test tokenizer)
-
+                
 endif()
 
 # ── 测试目标统一处理：输出到 <构建根>/test ──────────────────────────────
@@ -1533,45 +1528,3 @@ if(TARGET nn_gpu)
     target_compile_definitions(nn_core INTERFACE NN_GPU_ENGINE=1)
 endif()
 
-# ══════════════════════════════════════════════════════════════════════════
-#  PCH 落地（所有目标创建完、编译条件定型之后再挂）
-# ══════════════════════════════════════════════════════════════════════════
-# 候选目标的编译条件逐项相同（nn_core 的 include：主仓库 include/ +
-# submodule abstraction/），因此**一份 PCH 全目标共享**（REUSE_FROM）。
-# 引擎 .so 化后 nn.hpp 不再含引擎实现/shader 嵌入头 → PCH 体积大幅缩小。
-# 代价对比（本机 Debug 全量构建，旧版）：31 份逐目标 PCH ≈ 780s CPU → 1 份。
-if(NN_ENABLE_PCH AND NN_PCH_CANDIDATES)
-    add_library(nn_pch OBJECT ${CMAKE_CURRENT_SOURCE_DIR}/cmake/nn_pch_stub.cpp)
-    target_link_libraries(nn_pch PRIVATE nn_core)
-    target_precompile_headers(nn_pch PRIVATE [["neuralnet.cpp/nn.hpp"]])
-
-    # ── ccache × PCH 的第三项要求：`-fno-pch-timestamp` ────────────────────
-    # ccache 手册（Precompiled headers）明确：Clang 侧必须用该选项编 PCH，否则
-    # ccache 拒绝把"用了 PCH 的编译"入缓存（统计计数 Could not use precompiled
-    # header）。它会让 PCH 不嵌写入时间戳 —— 顺带让 PCH 内容可复现。
-    # ⚠ 这是 cc1 开关：驱动不认 `-fno-pch-timestamp`，必须 `-Xclang` 形式；ccache
-    #   是逐 token 匹配该字面量，`-Xclang -fno-pch-timestamp` 满足它的检查
-    #   （实测：开了之后同一 TU 从 30.2s 掉到 0.11s，见 docs/history/history.md）。
-    # ⚠ PCH 生成方（nn_pch）与所有使用方必须带同一份选项：CMake 的 REUSE_FROM
-    #   要求双方编译选项一致，故下面两处都加（对非同族的 sccache 也无害）。
-    # ⚠ 已知未覆盖：GCC 侧要缓存"用了 PCH 的 TU"须另加 `-fpch-preprocess`（手册），
-    #   它改变预处理输出、影响 depfile 口径，故本轮不擅自打开——GCC + PCH 的编译
-    #   仍不可缓存（CI 用 Clang，不受影响）。要用就显式 -DNN_COMPILER_LAUNCHER 自己加。
-    set(NN_PCH_COMPAT_OPTIONS "")
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
-        set(NN_PCH_COMPAT_OPTIONS "-Xclang" "-fno-pch-timestamp")
-    endif()
-    target_compile_options(nn_pch PRIVATE ${NN_PCH_COMPAT_OPTIONS})
-
-    set(NN_PCH_OWN_TARGETS "")
-    foreach(_pch_tgt IN LISTS NN_PCH_CANDIDATES)
-        target_compile_options(${_pch_tgt} PRIVATE ${NN_PCH_COMPAT_OPTIONS})
-        target_precompile_headers(${_pch_tgt} REUSE_FROM nn_pch)
-    endforeach()
-    list(LENGTH NN_PCH_CANDIDATES _nn_pch_n)
-    list(LENGTH NN_PCH_OWN_TARGETS _nn_pch_own)
-    message(STATUS "PCH: nn.hpp precompiled once, shared by "
-                   "${_nn_pch_n} targets (${_nn_pch_own} own PCH)")
-elseif(NN_ENABLE_PCH)
-    message(STATUS "PCH: no candidate targets")
-endif()

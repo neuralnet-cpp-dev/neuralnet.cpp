@@ -26,6 +26,7 @@
 
 | 文档 | 何时读 |
 |------|--------|
+| [`35-modules-migration-implementation.md`](35-modules-migration-implementation.md) | **src/ 全量 import 化与 AOT 收集 → JIT 预热实施文档（只读，用户提供）**：P0–P6 分阶段任务、验收门 A–G、D1–D9 清单；配套台账 = 36 号 |
 | [`36-compromise-ledger.md`](36-compromise-ledger.md) | **模块迁移妥协式设计台账（35 号配套，最终验收门 G 前必须清零）**：为解锁验收门引入的绕行（optimizer=f16 跳录制 / NN_NO_GRAPH 旁路 / 诊断改道 / A/B 残留）逐条登记 + 消灭方案与时机；根因级修复不入表 |
 | [`00-code-review-remediation.md`](00-code-review-remediation.md) | **2026-10-11 代码审查整改立项台账**：审查发现的问题逐条立项（现象/证据/根因/方案/验收/优先级） |
 | [`18-roadmap.md`](18-roadmap.md) | **"某件事该不该做"的唯一入口**：未来 6–12 个月方向 + 未完成项**裁定**台账（做 / 条件触发 / 不做）+ 验收口径 + 现状实测；**§4.5 P4 = 持续优化方向**（性能利用率 / 算子性能 / 显存开销 + API 易用性与 Fold 自动化扫描）。**不含执行计划**（见下一行） |

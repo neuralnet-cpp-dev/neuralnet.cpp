@@ -9,17 +9,18 @@
 //                        BPE 能学会合并常见中文词组（更适合小模型）
 // ─────────────────────────────────────────────────────────────────────────
 
-import nn.tokenizer;
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/cli/cli_help.hpp>
 
 #include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <memory>
 #include <string>
-
+import nn.tokenizer;
+import nn.cli;
+using nn::cli::Help;
 using nn::Scalar;
+
 
 // ==================== 帮助信息 ====================
 void print_usage(const char* prog)

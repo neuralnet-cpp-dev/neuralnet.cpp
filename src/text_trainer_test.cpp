@@ -25,11 +25,22 @@
 #include <utility>
 #include <vector>
 
-#include "neuralnet.cpp/nn.hpp"
-#include "neuralnet.cpp/text_trainer.hpp"   // 训练工厂（L5；不在 nn.hpp 聚合头内）
 
 #define NN_TEST_COUNTER g_failures
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 
 int g_failures = 0;
 

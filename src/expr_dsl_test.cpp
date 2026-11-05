@@ -18,15 +18,18 @@
 #include <cstdio>
 #include <vector>
 
-#include <neuralnet.cpp/compute_tensor.hpp>
-#include <neuralnet.cpp/expr_dsl.hpp>
-#include <neuralnet.cpp/expr_spec.hpp>
-#include <neuralnet.cpp/engine.hpp>
 #include "test_common.hpp"
+import nn.engine;
+import nn.expr;
+using nn::dsl::eval_cpu;
+using nn::dsl::leaf;
+using nn::dsl::relu;
+using nn::dsl::rotate_half;
+using nn::dsl::to_expr_spec;
+using nn::Scalar;
 
 // 测试写在全局作用域（非 namespace nn），避免 ADL 把匹配拉进 nn 命名空间。
 using namespace nn::dsl;
-using nn::Scalar;
 
 namespace
 {

@@ -14,8 +14,6 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/cli/cli_engine_factory.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -24,12 +22,27 @@
 #include <limits>
 #include <random>
 #include <string>
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::EngineConfig;
+using nn::cli::create_engine;
 using nn::ComputeEngine;
 using nn::Matrix;
 using nn::MaxPool2D;
 using nn::Scalar;
 using nn::Tensor;
+
 
 namespace
 {

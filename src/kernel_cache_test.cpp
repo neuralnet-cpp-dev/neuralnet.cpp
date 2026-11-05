@@ -15,7 +15,13 @@
 #include <unordered_map>
 #include <vector>
 
-#include <neuralnet.cpp/kernel_cache.hpp>
+import nn.engine;
+import nn.expr;
+using nn::ExprOp;
+using nn::ExprOperandKind;
+using nn::ExprSpec;
+using nn::FoldSpec;
+using nn::MatmulSpec;
 
 namespace
 {

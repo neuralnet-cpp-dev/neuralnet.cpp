@@ -9,6 +9,7 @@
 //   [6] 无固定 epoch 的 Pull 源（steps_per_epoch = nullopt）骨架退化语义
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <any>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -17,8 +18,8 @@
 #include <utility>
 #include <vector>
 
-#include <neuralnet.cpp/batch_source.hpp>
 #include <nn_error_macros.hpp>
+import nn.train;
 
 static int g_fail = 0;
 #define CHECK(cond, msg)                                                    \

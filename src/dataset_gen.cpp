@@ -10,9 +10,7 @@
 //              [--license <file>] [--source <name>]
 // ─────────────────────────────────────────────────────────────────────────
 
-import nn.tokenizer;
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/cli/cli_help.hpp>
 
 #include <chrono>
 #include <fstream>
@@ -22,6 +20,9 @@ import nn.tokenizer;
 #include <optional>
 #include <string>
 #include <vector>
+import nn.tokenizer;
+import nn.cli;
+using nn::cli::Help;
 
 // ==================== 帮助信息 ====================
 void print_usage(const char* prog)

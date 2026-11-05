@@ -15,7 +15,6 @@
         "CMAKE_BUILD_TYPE": "Release",
         "NN_BUILD_APPS": "ON",
         "NN_ENABLE_NATIVE": "ON",
-        "NN_ENABLE_PCH": "ON",
         "NN_ENABLE_TESTS": "OFF",
         "NN_ENABLE_PROBES": "OFF",
         "NN_ENABLE_GPU": "AUTO"

@@ -15,12 +15,11 @@
 #include <string>
 #include <type_traits>
 
-#include <neuralnet.cpp/engine.hpp>
-#include <neuralnet.cpp/compute_tensor.hpp>
-#include <neuralnet.cpp/expr_dsl.hpp>
-#include <neuralnet.cpp/expr_opt.hpp>
-#include <neuralnet.cpp/expr_registry.hpp>
-#include <neuralnet.cpp/expr_spec.hpp>
+import nn.engine;
+import nn.expr;
+using nn::dsl::grouped_reduce_sum;
+using nn::dsl::rotate_half;
+using nn::dsl::row_access;
 
 namespace
 {

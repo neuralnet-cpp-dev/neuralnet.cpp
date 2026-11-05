@@ -23,15 +23,31 @@
 //            ctest --test-dir build -R optimizer_test
 // ───────────────────────────────────────────────────────────────────────────
 
+#include <memory>
 #include <cmath>
 #include <cstdio>
 #include <span>
 #include <string>
 #include <vector>
 
-#include <neuralnet.cpp/nn.hpp>
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::expr::cst;
+using nn::expr::input;
+using nn::Linear;
 using nn::Scalar;
+
 
 namespace
 {

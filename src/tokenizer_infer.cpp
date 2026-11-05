@@ -9,9 +9,7 @@
 // 支持交互模式和命令行模式。
 // ─────────────────────────────────────────────────────────────────────────
 
-import nn.tokenizer;
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/cli/cli_help.hpp>
 
 #include <algorithm>
 #include <fstream>
@@ -24,6 +22,9 @@ import nn.tokenizer;
 #include <string_view>
 #include <utility>
 #include <vector>
+import nn.tokenizer;
+import nn.cli;
+using nn::cli::Help;
 
 // ==================== 帮助信息 ====================
 void print_usage(const char* prog)

@@ -23,10 +23,22 @@
 #include <string>
 #include <vector>
 
-#include "neuralnet.cpp/nn.hpp"
 
 #define NN_TEST_COUNTER g_fail
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 
 namespace
 {

@@ -14,20 +14,31 @@
 // 退出码：0 = 通过，1 = 失败，77 = 跳过（--gpu 且无设备）
 // ───────────────────────────────────────────────────────────────────────────
 
+#include <memory>
 #include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "neuralnet.cpp/cli/cli_engine_factory.hpp"
-#include "neuralnet.cpp/compute_loss.hpp"
-#include "neuralnet.cpp/compute_optimizer.hpp"
-#include "neuralnet.cpp/domain_mnist.hpp"
-#include "neuralnet.cpp/model_container.hpp"
 
 #define NN_TEST_COUNTER g_failures
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::EngineConfig;
+using nn::cli::create_engine;
 
 namespace
 {
