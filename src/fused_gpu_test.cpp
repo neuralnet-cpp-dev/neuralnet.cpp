@@ -16,6 +16,7 @@
 //  用法：fused_gpu_test
 // ───────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/nn.hpp>
 #include <neuralnet.cpp/expr_fold.hpp>   // fold v1 样例（与 scan_exprs 同源 → key 一致）
 

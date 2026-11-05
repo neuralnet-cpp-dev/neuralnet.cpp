@@ -7,6 +7,7 @@
 //   [4] overall/group normalization（总体标准差、零方差）。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>

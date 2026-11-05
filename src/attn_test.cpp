@@ -5,6 +5,7 @@
 //       MHA 双向语义探针（fold 掩码回归钉子）+ CPU/GPU 一致性
 // ───────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cstdio>
 #include <iostream>
 

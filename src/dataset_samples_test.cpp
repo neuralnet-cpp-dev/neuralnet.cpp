@@ -11,6 +11,7 @@
 //   [6] 断点状态段的旧键 `dataset_windows` 兼容读（rc0 → rc0.1）
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>

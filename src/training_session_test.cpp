@@ -9,6 +9,7 @@
 //   [6] 未知优化器 / 未绑定引擎 → Result 错误
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <memory>

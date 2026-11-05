@@ -20,7 +20,7 @@
 #include <string>
 #include <utility>
 
-#include <neuralnet.cpp/core_errors.hpp>
+#include <nn_error_macros.hpp>
 
 #ifndef _WIN32
 #include <sys/wait.h>

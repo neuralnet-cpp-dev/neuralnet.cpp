@@ -20,6 +20,7 @@
 // 退出码：0 = 通过，1 = 失败，77 = 跳过（--gpu 且无设备）
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <algorithm>
 #include <bit>
 #include <cmath>

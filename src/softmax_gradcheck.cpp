@@ -7,6 +7,7 @@
 // 用法：softmax_gradcheck [--gpu] [--rows N] [--cols N] [--tol <f>]
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/nn.hpp>
 #include <neuralnet.cpp/cli/cli_engine_factory.hpp>
 

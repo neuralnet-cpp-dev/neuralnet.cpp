@@ -28,6 +28,7 @@
 #include <utility>
 #include <vector>
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/nn.hpp>
 #include <neuralnet.cpp/cli/cli_engine_factory.hpp>
 #include <neuralnet.cpp/cli/cli_help.hpp>

@@ -4,6 +4,7 @@
 //       （Conv2D 的单层参考比对仍在 layer_gradcheck_test 的 conv2d 段）
 // ───────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cstdio>
 #include <iostream>
 #include <string>

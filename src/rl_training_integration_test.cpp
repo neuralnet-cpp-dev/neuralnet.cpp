@@ -5,6 +5,7 @@
 // 与 policy/value 分支参数实际移动。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>

@@ -18,6 +18,7 @@
 // 退出码：0 = 通过，1 = 失败，77 = 跳过（未构建 text_infer 时的 CLI 半边）
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>

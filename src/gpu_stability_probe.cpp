@@ -26,6 +26,7 @@
 //   设备选择在首个 GpuBackend::shared() 之前注入 NN_VULKAN_DEVICE。
 // ────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>

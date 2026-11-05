@@ -10,6 +10,7 @@
 // 无 Vulkan 构建 / 无 GPU 设备 → 返回 77 = ctest SKIP。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/nn.hpp>
 #include <neuralnet.cpp/cli/cli_engine_factory.hpp>
 

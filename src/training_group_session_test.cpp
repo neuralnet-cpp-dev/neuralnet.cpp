@@ -7,6 +7,7 @@
 //   [4] group move 后 Session/optimizer TensorRef 仍可训练。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <memory>
 #include <string>
 #include <utility>

@@ -7,6 +7,7 @@
 //   [4] hooks 顺序、buffer clear 策略、非法 sampler/config 错误。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <memory>

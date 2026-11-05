@@ -10,6 +10,7 @@
 // doc-aware=2），batch>1 覆盖（铁律 5）由 causal/doc-aware 段保证。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/nn.hpp>
 #include <neuralnet.cpp/cli/cli_engine_factory.hpp>
 

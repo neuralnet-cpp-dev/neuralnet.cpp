@@ -8,6 +8,7 @@
 //   [5] ModelSpec output_schema/output_packing 往返，旧键缺失兼容。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>

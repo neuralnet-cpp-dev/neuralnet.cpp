@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <vector>
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/compute_tensor.hpp>
 #include <neuralnet.cpp/expr_dsl.hpp>
 #include <neuralnet.cpp/expr_spec.hpp>

@@ -11,6 +11,7 @@
 //   4. 容差 tol：重计算路径与基线应在浮点重算误差范围内一致。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>

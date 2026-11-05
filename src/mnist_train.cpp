@@ -14,6 +14,7 @@
 // 架构选择：--arch mlp|transformer（默认 mlp，从已保存模型 resume 时自动识别）
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/nn.hpp>
 #include <neuralnet.cpp/model_serialization.hpp>
 #include <neuralnet.cpp/domain_mnist.hpp>

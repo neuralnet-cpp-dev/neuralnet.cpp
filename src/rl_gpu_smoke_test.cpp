@@ -5,6 +5,7 @@
 // 专门抓 AOT 结构漏登记与 GPU 设备域错误。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>

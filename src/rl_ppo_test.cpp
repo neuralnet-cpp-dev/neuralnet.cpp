@@ -8,6 +8,7 @@
 //   [5] 缺少 old_log_prob / old_value 明确报错。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>

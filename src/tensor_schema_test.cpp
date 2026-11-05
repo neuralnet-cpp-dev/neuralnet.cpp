@@ -8,6 +8,7 @@
 //   [5] NamedTensorSet / GradientBundle 共享 schema 语义。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <optional>
 #include <cstdint>
 #include <string>

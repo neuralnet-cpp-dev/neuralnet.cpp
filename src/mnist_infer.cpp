@@ -8,6 +8,7 @@
 // 引擎选择：--gpu 启用 GpuEngine（需要 Vulkan），否则 CpuEngine。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/nn.hpp>
 #include <neuralnet.cpp/model_serialization.hpp>
 #include <neuralnet.cpp/domain_mnist.hpp>

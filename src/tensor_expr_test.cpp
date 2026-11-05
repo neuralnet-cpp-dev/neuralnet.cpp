@@ -11,6 +11,7 @@
 // 任意表达式未必被扫描覆盖，故只在 CPU 上验证。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/nn.hpp>
 
 #include "test_common.hpp"   // M1 访问收口：upload（宿主 Matrix 进引擎张量）

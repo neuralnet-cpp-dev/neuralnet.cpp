@@ -33,6 +33,7 @@
 #include <sys/wait.h>
 #endif
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/nn.hpp>   // Matrix / Tensor / sample_next_token_
 
 #include "test_common.hpp"

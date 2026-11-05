@@ -15,6 +15,7 @@
 // ReLULinearAttention 对 checkpoint_mode_ 的响应是否完整。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>

@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <nn_error_macros.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>

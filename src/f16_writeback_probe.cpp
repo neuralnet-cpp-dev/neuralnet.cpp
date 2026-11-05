@@ -11,6 +11,7 @@
 // 用法：f16_writeback_probe [--gpu[=名称]]
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/nn.hpp>
 #include <neuralnet.cpp/cli/cli_gpu_option.hpp>
 

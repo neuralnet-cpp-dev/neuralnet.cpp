@@ -8,6 +8,7 @@
 #include <iostream>
 #include <string>
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/cli/cli_engine_factory.hpp>
 
 #define main test_rapt_gradcheck

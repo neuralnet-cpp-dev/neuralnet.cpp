@@ -18,7 +18,7 @@
 #include <vector>
 
 #include <neuralnet.cpp/batch_source.hpp>
-#include <neuralnet.cpp/core_errors.hpp>
+#include <nn_error_macros.hpp>
 
 static int g_fail = 0;
 #define CHECK(cond, msg)                                                    \

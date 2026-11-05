@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/nn.hpp>
 
 #include "test_common.hpp"

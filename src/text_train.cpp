@@ -33,6 +33,7 @@
 #include <utility>
 #include <vector>
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/nn.hpp>
 #include <neuralnet.cpp/domain_gpt.hpp>
 #include <neuralnet.cpp/precision.hpp>

@@ -21,8 +21,8 @@
 #include <utility>
 #include <vector>
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/batch_source.hpp>
-#include <neuralnet.cpp/core_errors.hpp>
 #include <neuralnet.cpp/run_driver.hpp>
 #include <neuralnet.cpp/training_session.hpp>
 

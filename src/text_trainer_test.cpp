@@ -10,6 +10,7 @@
 //   [5] 前置条件：batch=0 / log_interval=0 / 配方与 Session 不一致 → Result 错误
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstddef>

@@ -10,6 +10,7 @@
 //   [5] 数值梯度检查（grad_query 与 grad_memory 各一轮，CPU 小规模）
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <vector>

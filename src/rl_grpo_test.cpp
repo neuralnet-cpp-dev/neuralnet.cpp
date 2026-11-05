@@ -7,6 +7,7 @@
 //   [4] 单组、少样本组与缺少 old_log_prob 的失败路径。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>

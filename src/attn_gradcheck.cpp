@@ -8,6 +8,7 @@
 // 用法：attn_gradcheck [--gpu] [--batch N] [--seq N] [--tol <f>] [--doc]
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/nn.hpp>
 #include <neuralnet.cpp/cli/cli_engine_factory.hpp>
 

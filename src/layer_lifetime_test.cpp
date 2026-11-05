@@ -13,6 +13,7 @@
 //   [7] Layer init 失败回滚与 profile 注入
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>

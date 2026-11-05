@@ -8,6 +8,7 @@
 //   [5] objective 的无上下文 Loss 入口明确报错。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>

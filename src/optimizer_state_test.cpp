@@ -14,6 +14,7 @@
 // 退出码：0 = 通过，1 = 失败。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>

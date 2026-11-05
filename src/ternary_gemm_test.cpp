@@ -21,6 +21,7 @@
 // 退出码：0 = 通过，1 = 失败，77 = 跳过（--gpu 且无设备，或引擎无打包能力）
 // ───────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <algorithm>
 #include <bit>
 #include <cmath>

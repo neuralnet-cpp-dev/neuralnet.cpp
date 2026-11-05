@@ -12,6 +12,7 @@
 //   [7] 失败路径无半提交：Strict 校验失败后模型参数逐位不变（issue #43）
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>

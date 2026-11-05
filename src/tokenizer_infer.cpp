@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import nn.tokenizer;
-#include <neuralnet.cpp/core_errors.hpp>   // 宏（NN_TRY/NN_EXIT 等不可随模块导出，双轨）
+#include <nn_error_macros.hpp>
 #include <neuralnet.cpp/cli/cli_help.hpp>
 
 #include <algorithm>

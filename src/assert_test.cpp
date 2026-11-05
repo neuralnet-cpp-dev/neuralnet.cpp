@@ -18,7 +18,7 @@
 #include <sys/wait.h>
 #endif
 
-#include <neuralnet.cpp/core_assert.hpp>
+#include <nn_error_macros.hpp>
 
 int g_fail = 0;
 
