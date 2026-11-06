@@ -92,11 +92,9 @@ target_link_libraries(my_app PRIVATE neuralnet::nn)
 | `NN_ENABLE_GPU` | `AUTO` / `ON` / `OFF` | `AUTO` | `AUTO` = 探测到 Vulkan + glslc 就启用 GPU；`ON` = 强制要求，缺依赖则**配置期失败**（不静默降级）；`OFF` = 完全跳过（不探测、不编 `scan_exprs`、不生成 shader → 纯 CPU 最快路径） |
 | `NN_BUILD_APPS` | `ON` / `OFF` | **嵌入时 OFF**（顶层工程 ON） | 是否构建本仓 app / 基准可执行文件。嵌入时默认 OFF —— 消费方只拿库目标 |
 | `NN_ENABLE_TESTS` | `ON` / `OFF` | `OFF` | 是否构建并注册本仓测试目标（`list(APPEND NN_TEST_TARGETS ...)` 收集） |
-| `NN_ENABLE_PCH` | `ON` / `OFF` | `ON` | 本仓共享 PCH（`nn.hpp` 预编译一次，多目标 `REUSE_FROM`）。无 app 目标时自动无候选、无副作用 |
 | `NN_ENABLE_NATIVE` | `ON` / `OFF` | `ON` | `-march=native`（只作用于本仓目标，不影响消费方编译选项）。分发 / CI 用 `OFF` 生成可移植基线 |
 | `NN_ENABLE_PROBES` | `ON` / `OFF` | `OFF` | **探针编译门**：打开才编译库内热路径探针并创建探针目标（`mem_probe` / `f16_cpu_probe` / `gpu_stability_probe`）。会改变库头语义 → **不可与默认构建的对象 / 缓存混用** |
-| `NN_ENABLE_MODULES` | `ON` / `OFF` | 顶层 `ON` / 嵌入 `OFF` | **粒度 C++ 模块**（`nn.core` / `nn.kvrecord` / `nn.dataset` / `nn.tokenizer`，见 §0/「C++ 模块」小节）：构建四个薄接口模块的 BMI，并把本仓叶子消费者切到 `import nn.<域>`（双轨 `#ifdef NN_USE_MODULES`）。仅 GNU 驱动 Clang 生效（GCC / cl.exe / clang-cl 自动关闭，消费方回落 include）；嵌入默认 `OFF`，不打扰消费方 |
-| `NN_COMPILER_LAUNCHER` | path | 自动探测 ccache / sccache | 编译器缓存启动器；显式传空串 = 禁用 |
+| `NN_COMPILER_LAUNCHER` | path | 自动探测 ccache / sccache | 编译器缓存启动器；显式传空串 = 禁用。**模块消费方一律绕开**（ccache 4.13 不支持标准 C++ modules，见「C++ 模块」小节） |
 
 ```cmake
 # 例：纯 CPU、不编本仓应用
@@ -204,67 +202,64 @@ include 路径全部来自 `target_include_directories`（`include/` +
 ## 8. 编译耗时
 
 本工程 header-only，单 TU 首次 parse `nn.hpp`（含 44 份原语 SPIR-V 嵌入头 + AOT 融合注册表，
-约 7MB 头文本）较慢——本机实测约 17.5s 无 PCH。已落地四项提速（默认开启，无需配置）：
+约 7MB 头文本）较慢——本机实测约 17.5s 无 PCH。src/ 全量模块化（P5，docs/internal/35 D8）
+后**共享 PCH 机制已整体删除**（D9），消费方经 `-fmodule-file` 从 BMI 取声明；落地提速项
+（默认开启，无需配置）：
 
-1. `NN_ENABLE_PCH`：`nn.hpp` 预编译一次，由编译条件相同的目标 `REUSE_FROM` 共享
-   （本机 Debug 全量 125.5s → 72.7s）；
-2. `CMAKE_CXX_SCAN_FOR_MODULES OFF`：本仓 C++ 模块走**显式接线**（见下「C++ 模块」小节），
-   不开 CMake 模块扫描 → 只有 4 个模块单元 + 9 个消费方参与，其余 ~270 个 TU 零扫描；
-3. `scan_exprs` 的 glslc **并行**（环境变量 `NN_SCAN_JOBS=<n>` 覆盖，`=1` 回串行）
+1. `CMAKE_CXX_SCAN_FOR_MODULES OFF`：本仓 C++ 模块走**显式接线**（见 8.1「C++ 模块」小节），
+   不开 CMake 模块扫描 → 只有 13 个模块单元参与，其余 ~270 个 TU 零扫描；
+2. `scan_exprs` 的 glslc **并行**（环境变量 `NN_SCAN_JOBS=<n>` 覆盖，`=1` 回串行）
    + `fused_registry.hpp` 内容稳定写入（内容不变则不动 mtime，靠 `restat` 掐断下游重编）；
-4. 编译器缓存探测扩到 ccache / sccache（可用 `-DNN_COMPILER_LAUNCHER=<path>` 指定）。
-5. **ccache 与共享 PCH 的兼容**（2026-10-11）：ccache 手册要求 Clang 侧**三项同时满足**
-   才能缓存"用了 PCH 的 TU"——`sloppiness` 含 `pch_defines,time_macros`、以 `-include-pch`
-   使用 PCH、编译带 `-fno-pch-timestamp`。前两项由构建系统补齐（sloppiness 用
-   `cmake -E env` 钉在 `RULE_LAUNCH_COMPILE` 前缀里，**不依赖用户全局 ccache 配置**），
-   第三项由 `NN_ENABLE_PCH` 路径自动加到 PCH 生成方与所有使用方。修复前**每一个**用 PCH
-   的 TU 都被记 "Could not use precompiled header" = 全部不可缓存。
+3. 编译器缓存探测扩到 ccache / sccache（可用 `-DNN_COMPILER_LAUNCHER=<path>` 指定），
+   但**模块消费方一律绕开 launcher**（ccache 4.13 不支持标准 C++ modules，key 不含
+   `-fmodule-file` 的 BMI 内容 → "BMI 重编 + 消费方源码没动"时会吐出旧 .o）；
+4. **BMI 是消费方 TU 的真实编译依赖**（P6 修复，2026-11-06）：`nn_use_modules` 经
+   `OBJECT_DEPENDS` 把 pcm 挂进每个源文件编译边——`add_dependencies` 在 ninja 里是
+   order-only（pcm mtime 变不触发 TU 重编）且 clang 的 `-MD` depfile 不记录 pcm，
+   缺了它改公共头只重编 BMI、消费方 .o 保留旧实例化（陈旧代码）。
 
-**实测数字**（本机 8 核，Release + 测试 + GPU，全量构建）：
+**实测数字**（本机 8 核，clang 24 / Linux / Release + 测试 + GPU，P5/P6 后口径）：
 
 | 口径 | 时间 |
 |------|------|
-| 冷构建（无缓存） | **13 min 26 s**（189 个构建边；单个 TU 约 30 s，PCH 约 54 s） |
-| 命中 ccache 的重建（`ninja -t clean` 后同目录重跑） | **58.8 s**（13m26s → 58.8s；55/55 次编译命中，剩余时间是 shader 生成与链接） |
-| 单 TU（Release，PCH 已就绪） | 修复前 30.2 s → 命中缓存 **0.11 s** |
+| 冷构建（无缓存） | 见 `research/modules-import-nn/README.md` §6.3（PCH 时代 13m26s / 189 边；P5 后每 TU 全量解析，更慢） |
+| 改 consumer 源（mnist_train 单 TU + LTO 链接） | **≈79 s**（无 ccache 命中、无 PCH 的解析+优化+代码生成） |
+| 改公共头 → 全量增量 | **≈35 min**（82 消费方 TU + 13 BMI + 全链接；`OBJECT_DEPENDS` 传导，正确性必需） |
 
-> 时间构成的实测归因（`-ftime-trace`，Release / 单个 TU）：**后端 29.1 s / 总计 33.1 s**，
-> 其中优化器 16.6 s、代码生成 12.5 s；前端只占 4.0 s（无 PCH 时前端 16.8 s、总计 45.8 s）。
-> 也就是说 **PCH 之后编译时间的大头已经是 LLVM 的优化/代码生成**，不是头文件解析——
-> 继续压这一侧要靠减少每 TU 的代码量（拆目标/拆 TU），而不是再加 PCH 花活。
-
-**消费方**加速：对自己的目标用
-`target_precompile_headers(my_app PRIVATE <path>/neuralnet.cpp/nn.hpp)`。
-
-> ⚠ 两条不变量：① 收集器目标（`scan_exprs`、`*_nnfusion_collect`）**不套 PCH**；
-> ② 新写「生成物参与 PCH」的场景必须显式 `add_dependencies(<pch_target>, <生成边>)`。
+> 历史归因（PCH 时代，`-ftime-trace`）：后端 29.1 s / 总计 33.1 s（优化器 16.6 s、代码
+> 生成 12.5 s），前端只占 4.0 s（无 PCH 时前端 16.8 s、总计 45.8 s）——**编译时间大头是
+> LLVM 优化/代码生成**，不是头解析。此结论 P5 后仍然成立（PCH 删后前端回归全量解析，
+> 每 TU 成本整体上移，见 §8.1）。
 
 ---
 
-## 8.1 C++ 模块（粒度导入，`NN_ENABLE_MODULES`）
+## 8.1 C++ 模块（粒度导入，无条件构建）
 
-自 2026-11-01 起本仓提供**粒度 C++20 模块**消费路径：`nn.core` / `nn.kvrecord` /
-`nn.dataset` / `nn.tokenizer` 四个薄接口模块（`modules/nn.{core,kvrecord,dataset,tokenizer}.cpp`），
-DAG 依赖链 `nn.core → nn.kvrecord → nn.dataset → nn.tokenizer`。动机与实测结论见
-`research/modules-import-nn/README.md` §6（**非提速路径**，价值 = 标准符合性 + 精确依赖 +
-消费方摆脱 PCH 依赖）。
+自 2026-11-01 起本仓提供**粒度 C++20 模块**消费路径；P5（2026-11-06）铺满 **13 个域模块**
+（`nn.core` / `nn.kvrecord` / `nn.dataset` / `nn.tokenizer` + expr/engine/layer/loss/opt/
+model/train/domain/cli，DAG 叶子链 `core→kvrecord→dataset→tokenizer`、P4 新域全部 DEPS core），
+src/ 全量 import 化。动机与实测结论见 `research/modules-import-nn/README.md` §6
+（**非提速路径**，价值 = 标准符合性 + 精确依赖 + 摆脱 PCH）。
 
-- **开关**：`NN_ENABLE_MODULES`（顶层默认 `ON`，嵌入 `add_subdirectory` 默认 `OFF`）。
-  仅 **GNU 驱动 Clang** 生效（GCC / cl.exe / clang-cl 自动关闭）。
+- **开关**：**无**——模块构建无条件（P1 删 `NN_ENABLE_MODULES`/`NN_USE_MODULES` 宏传播、
+  P5/D9 删 `NN_ENABLE_PCH`）；仅 **GNU 驱动 Clang** 支持（GCC / cl.exe / clang-cl 构建直接失败，35 号 D2）。
 - **形态**：每个模块单元 = 全局模块片段文本包含域头 + `export module nn.<域>` +
   `export namespace nn { using nn::X; … }` 逐符号 re-export + `export import nn.<依赖域>`
   （C++ 模块的 import **不可传递**，必须显式 re-export，消费方只 `import nn.tokenizer` 即
-  连带拿到全部四域名字）。
+  连带拿到依赖域名字）。
 - **构建**：显式 BMI 自定义命令（`clang++ --precompile`，`-fmodule-file` 逐依赖传入）+
-  INTERFACE 目标 `nn_mod_<域>` 传播标志与 `NN_USE_MODULES` 宏。`CMAKE_CXX_SCAN_FOR_MODULES`
-  保持 `OFF`——只有模块单元与消费方参与，其余 TU 零扫描。
-- **消费方接入**：`nn_use_modules(<目标> <域...>)`（链接模块 INTERFACE + 从共享 PCH 候选
-  剔除）。源码双轨：`#ifdef NN_USE_MODULES / import nn.<域> / #else / #include … / #endif`。
-- **硬约束**：宏（`NN_TRY` / `NN_UNWRAP` 等）不可导出 → 消费方显式 include `core_errors.hpp`；
-  STL 留在全局片段 → 消费方自带用到的 STL 头（缺了会报 "missing '#include'"）。engine /
-  layers / model / train 域依赖 `NN_EXPR_SCAN` 宏收集（注册表铁律）→ 本轮不模块化。
-- **嵌入消费方**：默认 `OFF`（不编译模块、不切换任何目标）；消费方要启用就
-  `set(NN_ENABLE_MODULES ON)` 于 `add_subdirectory` 之前。
+  INTERFACE 目标 `nn_mod_<域>` 传播标志（`nn_add_module`）。`CMAKE_CXX_SCAN_FOR_MODULES`
+  保持 `OFF`——只有模块单元参与，其余 TU 零扫描。
+- **消费方接入**：`nn_add_executable` 单点接线（P5/D8）——全部可执行目标自动
+  `nn_use_modules(<目标> ${NN_ALL_MODULES})`：链接模块 INTERFACE + **`OBJECT_DEPENDS` 把
+  BMI 挂进每个源文件编译边**（真实依赖，见 §8 第 4 条）+ 绕开 ccache launcher。
+  残留 `#include <neuralnet.cpp/…>` 由 configure 期 `nn-gate` 门禁拦截（P6-2）。
+- **硬约束**：宏（`NN_TRY` / `NN_UNWRAP` 等）不可导出 → 消费方显式 include **宏岛头**
+  `nn_error_macros.hpp`（P2/D3 拆出，`core_errors.hpp`/`core_assert.hpp` 经它提供宏）；
+  STL 留在全局片段 → 消费方自带用到的 STL 头（缺了会报 "missing '#include'"）。`NN_EXPR_SCAN`
+  宏收集链已随 P3 拆除（AOT 收集由运行期 JIT 预热替代，35 号 D4），无域再依赖该宏。
+- **嵌入消费方**：`add_subdirectory` 后 `neuralnet::nn` 门面照常（`#include <nn.hpp>` 文本
+  路径不依赖模块）；模块/门禁只作用于本仓 src/ 目标（`NN_BUILD_APPS` / `NN_ENABLE_TESTS`）。
 
 ---
 

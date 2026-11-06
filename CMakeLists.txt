@@ -916,6 +916,24 @@ function(nn_use_modules target)
         if(TARGET nn_mod_${m})
             target_link_libraries(${target} PRIVATE nn_mod_${m})
             add_dependencies(${target} nn_${m}_bmi)
+            # ── BMI 必须是消费方 TU 的**真实编译依赖**（P6 修复，2026-11-06）─
+            # add_dependencies 在 ninja 里是 order-only（| 前缀）：BMI mtime 变
+            # 不触发 TU 重编，且 clang 的 -MD depfile **不记录** -fmodule-file
+            # 的 pcm（实测 .ninja_deps 无 pcm 条目）→ 改域头（inline 实现）
+            # 只重编 BMI，import 它的消费方 .o 保留旧实例化 = 陈旧代码。
+            # OBJECT_DEPENDS 是 build 边的真实依赖（P5 前 PCH 时代由 PCH 重编
+            # 承担同一职责，P5 删 PCH 后必须显式补上）。代价 = 改公共头时
+            # 消费方全量真实重编（正确行为，35 §2.4 口径预期）。
+            get_target_property(_mod_srcs ${target} SOURCES)
+            if(_mod_srcs)
+                foreach(s IN LISTS _mod_srcs)
+                    # OBJECT_DEPENDS 路径按绝对路径解析（相对路径以构建目录为基）
+                    get_filename_component(_s_abs "${s}" ABSOLUTE
+                        BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+                    set_property(SOURCE ${_s_abs} APPEND PROPERTY
+                        OBJECT_DEPENDS "${NN_LIB_BINARY_DIR}/modules/nn.${m}.pcm")
+                endforeach()
+            endif()
         endif()
     endforeach()
     # ── 模块消费方必须绕开编译 launcher（ccache/sccache）────────────────
@@ -930,6 +948,24 @@ function(nn_use_modules target)
     # 两种口径下消费方本来都会真实重编。
     set_property(TARGET ${target} PROPERTY RULE_LAUNCH_COMPILE "")
 endfunction()
+
+# ── 门禁：src/ 全量 import 化后不得残留文本 include 库头（P6-2，35 号）────
+# src/*.cpp（含测试聚合体）一律经 `import nn.*` 取声明（P5/D8）；残留
+# `#include <neuralnet.cpp/…>` 会绕过模块边界（GMF 文本包含 + import 同实体
+# 的 ODR 隐患），且自 D8 起已无任何必要。合法例外：`<nn_error_macros.hpp>`
+#（宏岛头，不带 neuralnet.cpp/ 前缀，宏不可导出——P2/D3）。
+if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
+    file(GLOB _nn_src_files CONFIGURE_DEPENDS src/*.cpp)
+    foreach(_f IN LISTS _nn_src_files)
+        file(READ "${_f}" _nn_src_content)
+        if(_nn_src_content MATCHES "#include <neuralnet\\.cpp/")
+            message(FATAL_ERROR
+                "[nn-gate] ${_f} 残留文本 include 库头：src/ 已全量 import 化"
+                "（35 号 D8，P5），请改用 `import nn.*`（合法 include 仅"
+                " `<nn_error_macros.hpp>` 宏岛头与 STL）")
+        endif()
+    endforeach()
+endif()
 
 # ── 四个叶子域模块（DAG：core → kvrecord → dataset → tokenizer）──────────
 # 域边界 = 合并回主仓的四个子仓域；AOT 宏收集链已随 P3 删除（35 号 D4），

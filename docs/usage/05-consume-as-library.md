@@ -53,7 +53,6 @@ target_link_libraries(my_app PRIVATE neuralnet::nn)
 | `NN_BUILD_APPS` | `ON` / `OFF` | **嵌入时 OFF** | 是否构建本仓 app/基准可执行文件（探针目标另受 `NN_ENABLE_PROBES` 控制）。顶层工程默认 ON，`add_subdirectory` 嵌入默认 OFF——消费方只拿到库目标，不被迫编译整个应用集 |
 | `NN_ENABLE_PROBES` | `ON` / `OFF` | `OFF` | **探针编译门**：打开才编译库内热路径探针（`nn_dbg_scan`/`NN_F16_DEBUG`、`NN_PREC_TRACE` 归因、`NN_NAN_TRACE`、`NN_MEM_STATS`）并创建探针目标（`mem_probe`/`f16_cpu_probe`/`gpu_stability_probe`）。默认关闭时这些代码不参与编译、相关环境变量一律无效（详见 AGENTS §2；打开会改变库头语义，不可与默认构建的对象/缓存混用） |
 | `NN_ENABLE_TESTS` | `ON` / `OFF` | `OFF` | 本仓 24 个 ctest 用例（嵌入场景一般不开） |
-| `NN_ENABLE_PCH` | `ON` / `OFF` | `ON` | 本仓共享 PCH（无 app 目标时自动无候选、无副作用） |
 | `NN_ENABLE_NATIVE` | `ON` / `OFF` | `ON` | `-march=native`（只作用于本仓目标，不影响消费方编译选项） |
 | `NEURALNET_CPP_DIR` | 路径 | `../..` | 仅 `examples/downstream` 样例用：库位置（可指向 3rd_party 摆放处） |
 
