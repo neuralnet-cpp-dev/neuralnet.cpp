@@ -18,6 +18,7 @@
 #include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
+#include <span>
 #include <string>
 #include <vector>
 

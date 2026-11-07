@@ -12,6 +12,14 @@ cmake_minimum_required(VERSION 3.30)
 # 它只是元数据——发版时同步到最新 tag，实际版本以 git tag / gh release 为准）
 project(neuralnet.cpp VERSION 1.14.1 LANGUAGES CXX)
 
+# ── Windows：MSVC CRT 的 insecure 弃用（getenv 等）在 clang -Werror 下报错 ──
+# _CRT_SECURE_NO_WARNINGS 是 MSVC CRT 官方逃生阀（cl / clang-cl / clang++ 通用）。
+# 40HX（Windows + clang 23 + MSVC STL + GPU）实测必需：nn_warmup / GPU 引擎头
+# 的 std::getenv 在 -Wdeprecated-declarations -Werror 下直接编译失败。
+if(WIN32)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif()
+
 # GNUInstallDirs：定义 CMAKE_INSTALL_LIBDIR/BINDIR/INCLUDEDIR（install 布局用，
 # docs/internal/34 §5 与 33 §4.3 的 bin/ + lib/ + include/ 干净产物）。
 include(GNUInstallDirs)
@@ -863,6 +871,13 @@ function(nn_add_module modname source)
         set(_opt ${RELEASE_FLAGS})
     endif()
     list(APPEND _flags ${_opt} "-std=c++${CMAKE_CXX_STANDARD}")
+    if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        # Windows + clang（GNU 驱动）：CMake 给消费方编译加 -D_DLL -D_MT
+        # -Xclang --dependent-lib=msvcrt（/MD 动态 CRT），BMI 自定义命令必须
+        # 同值——否则 pcm 记录 MT_StaticRelease linker options，import 传播
+        # 与消费方本地 MD 冲突（lld-link RuntimeLibrary mismatch，40HX 实测）。
+        list(APPEND _flags -D_DLL -D_MT -Xclang --dependent-lib=msvcrt)
+    endif()
     get_target_property(_thread_opts Threads::Threads INTERFACE_COMPILE_OPTIONS)
     if(_thread_opts)
         list(APPEND _flags ${_thread_opts})

@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <random>
+#include <span>
 #include <string>
 #include <vector>
 
