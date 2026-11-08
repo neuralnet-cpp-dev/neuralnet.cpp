@@ -386,7 +386,6 @@ protected:
         const Scalar one_minus_beta1 = Scalar{1} - beta1_;
         const Scalar one_minus_beta2 = Scalar{1} - beta2_;
         const Tensor& g = grads_[i];
-        const std::size_t rows = g.rows(), cols = g.cols();
 
         // ── 状态缩放 S（F5，2026-10-14）───────────────────────────────────
         // 动机：Adam 的二阶矩 v ≈ (1-β2)·g²。f16 存储时 g ~ 1e-5 ⇒ v ~ 1e-10
@@ -420,25 +419,18 @@ protected:
                            dsl::leaf(g) * dsl::leaf(g) * dsl::rparam(one_minus_beta2 * s2),
                        v_[i]));
 
-        // K3: p -= lr * (inv_bc1*m) / (sqrt(inv_bc2*v)+eps)（全链单 kernel 融合；
+        // K3: p ← p - lr * (inv_bc1*m) / (sqrt(inv_bc2*v)+eps)（全链单 kernel 融合；
         //     依赖刚更新的 m_[i]/v_[i]，偏置修正系数 inv_bc1/inv_bc2 逐步变化
         //     由 RParam 承载，不进 key → 共享 shader）
-        //     更新量精度 = **目标参数的存储精度**：通常就是 p_.param（省一次 cast），
-        //     但当 param 槽不是"存储精度"时必须以张量自身为准 —— 例如 BitLinear 的
-        //     T1_58（latent 恒 f32）：照搬 p_.param 会拿非存储精度去建张量
-        //     （CPU 走 f32 兜底、GPU 在 check_precision_supported 处硬报错 =
-        //      两端行为不一致）。见 docs/internal/21-quantized-weights.md §4.3.2。
-        const Precision upd_prec =
-            (precision_bytes(p_.param) != 0) ? p_.param : params_[i].get().precision();
-        auto delta = dsl::compute(
-            engine_,
-            -dsl::rparam(lr_) *
-                ((dsl::leaf(m_[i]) * dsl::rparam(inv_bc1)) /
-                 (dsl::sqrt(dsl::leaf(v_[i]) * dsl::rparam(inv_bc2)) + dsl::rparam(eps_scaled))),
-            rows, cols, upd_prec);
-        NN_TRY_CHECK(delta);
-        // p += delta（目标传递：原地、单 dispatch，不额外分配）
-        auto r = dsl::compute_into(engine_, dsl::leaf(params_[i]) + dsl::leaf(*delta), params_[i]);
+        //     更新量**直接写回 p 的既有存储**（目标传递）：不再先物化等尺寸
+        //     delta。旧写法在录制段内每参数各建一张全尺寸占位张量（5× 状态量
+        //     峰值的主因，审查 §1 #L1）；融合在 f32 空间算、末次按 p 的存储精度
+        //     落回——f32 参数与"先算 delta 再加"逐位一致，f16 参数少一次中间舍入。
+        auto up = dsl::leaf(m_[i]) * dsl::rparam(inv_bc1);
+        auto den = dsl::sqrt(dsl::leaf(v_[i]) * dsl::rparam(inv_bc2)) + dsl::rparam(eps_scaled);
+        auto r = dsl::compute_into(engine_,
+                                   dsl::leaf(params_[i]) - dsl::rparam(lr_) * (up / den),
+                                   params_[i]);
         NN_TRY_CHECK(r);
         return {};
     }

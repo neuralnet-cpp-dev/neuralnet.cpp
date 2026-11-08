@@ -622,18 +622,25 @@ private:
         ComputeEngine& engine = engine_ref();
         const Scalar inv_in = Scalar{1} / static_cast<Scalar>(in_features_);
 
-        NN_TRY(tau, dsl::compute_reduce(
-                        engine,
-                        dsl::row_reduce_sum(dsl::abs(dsl::leaf(latent_w_)) * dsl::rparam(inv_in)),
-                        out_features_, in_features_, Precision::F32));
-        tau_ = std::move(*tau);
+        // τ：写进 init 期预分配的持久缓冲（原地重算，不替换张量对象）。
+        // 旧写法 `tau_ = std::move(*tau)` 每步在 batch 内（瞬态池）新建
+        // (out,1)，旧缓冲进延迟销毁队列，且持久成员钉住瞬态底材不放 ——
+        // T1_58 显存逐 step 累积的根因之一（审查 §1 #L2/#L6）。
+        if (!tau_.valid()) NN_FAIL("BitLinear::quantize_weights_: τ 缓冲未就绪");
+        NN_TRY_CHECK(dsl::compute_reduce_into(
+            engine,
+            dsl::row_reduce_sum(dsl::abs(dsl::leaf(latent_w_)) * dsl::rparam(inv_in)),
+            out_features_, in_features_, tau_));
 
         // 打包路径（F3）：一趟 trit_pack 直接出 2 bit/权重容器（8.25 B/元素
         // 流量 vs f16 缓冲路径的 10 B/元素，且常驻从 2 B → 0.25 B/权重）。
         if (use_packed_)
         {
-            NN_TRY(packed, engine.trit_pack(latent_w_, tau_));
-            wq_packed_ = std::move(*packed);
+            // 容器必须原地写（init 期已分配）；缺了就报错，不在 batch 内重建。
+            if (!wq_packed_.valid()) ensure_quant_buffer_();
+            if (!wq_packed_.valid())
+                NN_FAIL("BitLinear::quantize_weights_: 打包容器未就绪（init 未分配）");
+            NN_TRY_CHECK(engine.trit_pack_into(latent_w_, tau_, wq_packed_));
             quant_epoch_ = latent_w_.write_epoch();
             quant_valid_ = true;
             ++quantize_calls_;
