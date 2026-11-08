@@ -782,6 +782,7 @@ set(NN_MOD_CLI_HEADERS
     include/neuralnet.cpp/cli/cli_jit_warmup.hpp
     include/neuralnet.cpp/cli/cli_lr_scheduler.hpp
     include/neuralnet.cpp/cli/cli_mnist_io.hpp
+    include/neuralnet.cpp/cli/cli_precision.hpp
     include/neuralnet.cpp/cli/cli_precision_warning.hpp
     include/neuralnet.cpp/cli/cli_train_common.hpp
     include/neuralnet.cpp/cli/text_train_checkpoint.hpp

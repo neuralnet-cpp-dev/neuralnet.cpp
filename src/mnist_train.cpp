@@ -46,25 +46,7 @@ using nn::cli::Help;
 using nn::Scalar;
 
 
-// ── 精度解析辅助 ─────────────────────────────────────────────────────────
-// allow_t1_58：三值（T1_58）**只适用于 param 槽**（"该层权重是三值"），
-// compute/stable/optimizer 出现它一律在参数解析处拒绝，而不是拖到 init 期才报
-// 能力校验错误（docs/internal/21-quantized-weights.md §4.1）。
-nn::Precision parse_precision(const std::string& name, const char* flag, bool allow_t1_58 = false)
-{
-    if (name == "f16" || name == "half") return nn::Precision::F16;
-    if (name == "f32" || name == "float") return nn::Precision::F32;
-    if (name == "t1_58")
-    {
-        if (allow_t1_58) return nn::Precision::T1_58;
-        std::cerr << "无效 --" << flag << ": t1_58（三值权重只适用于 --precision-param）"
-                  << "，可选: f16, f32\n";
-        std::exit(1);
-    }
-    std::cerr << "无效 --" << flag << ": " << name
-              << "，可选: " << (allow_t1_58 ? "f16, f32, t1_58" : "f16, f32") << "\n";
-    std::exit(1);
-}
+// 精度解析统一走 nn.cli 导出的 nn::cli::parse_precision（#R8 共用实现）。
 
 enum class ArchType
 {
@@ -498,20 +480,20 @@ TrainConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--precision-param" && i + 1 < argc)
         {
-            cfg.precision.param = parse_precision(argv[++i], "precision-param",
-                                                  /*allow_t1_58=*/true);
+            cfg.precision.param = nn::cli::parse_precision(argv[++i], "precision-param",
+                                                          /*allow_t1_58=*/true);
         }
         else if (arg == "--precision-compute" && i + 1 < argc)
         {
-            cfg.precision.compute = parse_precision(argv[++i], "precision-compute");
+            cfg.precision.compute = nn::cli::parse_precision(argv[++i], "precision-compute");
         }
         else if (arg == "--precision-stable" && i + 1 < argc)
         {
-            cfg.precision.stable = parse_precision(argv[++i], "precision-stable");
+            cfg.precision.stable = nn::cli::parse_precision(argv[++i], "precision-stable");
         }
         else if (arg == "--precision-optimizer" && i + 1 < argc)
         {
-            cfg.precision.optimizer = parse_precision(argv[++i], "precision-optimizer");
+            cfg.precision.optimizer = nn::cli::parse_precision(argv[++i], "precision-optimizer");
         }
         else
         {

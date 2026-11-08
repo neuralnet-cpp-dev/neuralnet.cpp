@@ -10,6 +10,7 @@ module;
 #include <neuralnet.cpp/cli/cli_gpu_option.hpp>
 #include <neuralnet.cpp/cli/cli_lr_scheduler.hpp>
 #include <neuralnet.cpp/cli/cli_mnist_io.hpp>
+#include <neuralnet.cpp/cli/cli_precision.hpp>
 #include <neuralnet.cpp/cli/cli_precision_warning.hpp>
 #include <neuralnet.cpp/cli/cli_train_common.hpp>
 #include <neuralnet.cpp/cli/text_train_checkpoint.hpp>
@@ -38,6 +39,7 @@ export namespace nn {
         using nn::cli::load_optimizer_state;
         using nn::cli::make_text_train_mem_probe;
         using nn::cli::parse_gpu_option;
+        using nn::cli::parse_precision;
         using nn::cli::parse_text_train_args;
         using nn::cli::parse_train_common_args;
         using nn::cli::precision_offload_combo_error;

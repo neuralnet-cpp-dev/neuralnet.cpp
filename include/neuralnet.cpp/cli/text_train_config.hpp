@@ -35,32 +35,13 @@
 #include "neuralnet.cpp/text_train_config.hpp"  // nn::TextTrainConfig（配方唯一真源）
 #include "neuralnet.cpp/cli/cli_gpu_option.hpp"    // nn::cli::parse_gpu_option
 #include "neuralnet.cpp/cli/cli_help.hpp"          // nn::cli::Help
+#include "neuralnet.cpp/cli/cli_precision.hpp"     // nn::cli::parse_precision
 
 namespace nn::cli
 {
 using nn::Scalar;
 
-// ── 精度解析辅助 ─────────────────────────────────────────────────────────
-// allow_t1_58：三值（T1_58）只适用于 param 槽（"该层权重是三值"）；本入口的
-// GPT 架构在 P1 **还没有**三值线性层（docs 21 §4.8 P1.5），但词法上照样接受：
-// 不兼容组合由 `Layer::init` 的能力校验给出"层 X 不支持 param=t1_58"的报错，
-// 这正是设计意图（§4.1）—— CLI 不加模型白名单。
-inline nn::Precision parse_precision_arg(const std::string& name, const char* flag,  // inline：同 parse_text_train_args（P5）
-                                  bool allow_t1_58 = false)
-{
-    if (name == "f16" || name == "half") return nn::Precision::F16;
-    if (name == "f32" || name == "float") return nn::Precision::F32;
-    if (name == "t1_58")
-    {
-        if (allow_t1_58) return nn::Precision::T1_58;
-        std::cerr << "无效 --" << flag << ": t1_58（三值权重只适用于 --precision-param）"
-                  << "，可选: f16, f32\n";
-        std::exit(1);
-    }
-    std::cerr << "无效 --" << flag << ": " << name
-              << "，可选: " << (allow_t1_58 ? "f16, f32, t1_58" : "f16, f32") << "\n";
-    std::exit(1);
-}
+// 精度解析统一走 cli_precision.hpp 的 nn::cli::parse_precision（#R8）。
 
 // ==================== 帮助信息 ====================
 inline void print_text_train_usage(const char* prog)  // inline：同 parse_text_train_args（P5 模块化）
@@ -577,20 +558,20 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--precision-param" && i + 1 < argc)
         {
-            cfg.precision.param = parse_precision_arg(argv[++i], "precision-param",
-                                                      /*allow_t1_58=*/true);
+            cfg.precision.param = parse_precision(argv[++i], "precision-param",
+                                                  /*allow_t1_58=*/true);
         }
         else if (arg == "--precision-compute" && i + 1 < argc)
         {
-            cfg.precision.compute = parse_precision_arg(argv[++i], "precision-compute");
+            cfg.precision.compute = parse_precision(argv[++i], "precision-compute");
         }
         else if (arg == "--precision-stable" && i + 1 < argc)
         {
-            cfg.precision.stable = parse_precision_arg(argv[++i], "precision-stable");
+            cfg.precision.stable = parse_precision(argv[++i], "precision-stable");
         }
         else if (arg == "--precision-optimizer" && i + 1 < argc)
         {
-            cfg.precision.optimizer = parse_precision_arg(argv[++i], "precision-optimizer");
+            cfg.precision.optimizer = parse_precision(argv[++i], "precision-optimizer");
         }
         else if (arg == "--lr-schedule" && i + 1 < argc)
         {
