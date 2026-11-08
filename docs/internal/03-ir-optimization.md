@@ -54,7 +54,7 @@ Layer 内联表达式 → to_expr_spec 折叠 → ExprSpec → glsl_gen → GLSL
 | **算法文本只在 Layer** | 公式只写在 `compute_layer.hpp` / `compute_loss.hpp` |
 | **引擎只提供 op-level 原语** | 引擎认"结构"（`reduce(matmul(A,B))`），绝不认"算法名" |
 | **融合/优化逻辑归工具/引擎内部** | IR、pass、emitter 都在引擎/工具内部，Layer 无感知 |
-| **Shader 是内部实现** | 融合 shader 只存在于 `shaders/` + 引擎 |
+| **Shader 是内部实现** | 融合 shader 只存在于 `engine/engine/shaders/` + 引擎 |
 
 IR 属于"引擎/工具内部"，**完全落在红线允许区**，且强化"引擎认结构不认算法名"的哲学。
 

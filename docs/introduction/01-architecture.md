@@ -62,7 +62,7 @@
 
 ### 可选：理解 GPU 后端（5-7 天）
 **目标**：理解 GPU 加速
-- **文件**：`compute_gpu_engine.hpp`、`shaders/`
+- **文件**：`compute_gpu_engine.hpp`、`engine/engine/shaders/`
 - **关键概念**：Vulkan、command buffer、SPIR-V
 - **注意**：这是最复杂的部分，可以跳过
 

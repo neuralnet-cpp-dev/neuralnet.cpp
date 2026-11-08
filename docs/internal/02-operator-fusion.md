@@ -63,7 +63,7 @@
 | **引擎只提供 op-level 原语** | `ComputeEngine` 只能有 `matmul`/`reduce`/`broadcast`/`elementwise` 这类通用原语；**绝不允许出现 `softmax`/`attention`/`layernorm` 命名的接口** |
 | **算法文本只在 Layer** | ReLU/GeLU/Softmax/LayerNorm/Attention/CrossEntropy 的公式只写在 `compute_layer.hpp` / `compute_loss.hpp` |
 | **融合逻辑归工具/引擎内部** | `glsl_gen` / 生成阶段 / 各引擎实现负责"怎么融"，Layer 只写"是什么" |
-| **Shader 是引擎内部实现** | 融合 shader 只存在于 `shaders/` + 各引擎，用户不可见 |
+| **Shader 是引擎内部实现** | 融合 shader 只存在于 `engine/engine/shaders/` + 各引擎，用户不可见 |
 
 > 设计原则：**原语可以多、可以专（matmul+归约、matmul+exp+sum 都是合法原语），但原语必须"通用可复用、不叫算法名"。** 引擎可以认"结构"（`reduce(matmul(A,B))`、`matmul→softmax→matmul`），绝不认"算法名"。
 
@@ -201,7 +201,7 @@ struct MatmulSpec {
 | 后端 | 文件 | 实现 |
 |------|------|------|
 | CPU | `compute_cpu_engine.hpp` | `eval_expr` 扩展归约语义与 matmul 段（matmul 预计算 + 逐元素链，`eval_expr_reduce` 经归约指令消费 matmul 输出）；`dsl::compute` 的纯逐元素路径走编译期模板内联 |
-| GPU (Vulkan) | `compute_gpu_engine.hpp` + `shaders/*.comp` + `backend/compute_vk_backend.hpp` | `eval_expr` 查 `fused_registry`；`glsl_gen` 生成归约 / fold（分块流式）/ matmul 结构 shader |
+| GPU (Vulkan) | `compute_gpu_engine.hpp` + `engine/engine/shaders/*.comp` + `backend/compute_vk_backend.hpp` | `eval_expr` 查 `fused_registry`；`glsl_gen` 生成归约 / fold（分块流式）/ matmul 结构 shader |
 
 > 注：CUDA 后端已整体移除（`cuda/`、`NN_HAS_CUDA` 均不存在），本文只覆盖 CPU / GPU（Vulkan）两后端。
 

@@ -773,7 +773,7 @@ DSL 读不了，需单内核解码/更新/编码，不是 DSL round 路线）**�
 会掩盖的三类（轴向对拍 / 尾块 / 单列 N=1），GPU 追加 2B4T 量级（2048×2560×64）。
 **教训**：注册表只保证结构命中，不保证分块/网格/形状一致 —— 分块原语必须有跨形状对拍。
 
-**② 窄 N 打包 GEMV（`shaders/matmul_q_gemv.comp`，新原语）**：分块内核按 64×64 输出块
+**② 窄 N 打包 GEMV（`engine/engine/shaders/matmul_q_gemv.comp`，新原语）**：分块内核按 64×64 输出块
 算，n=1 时 63/64 列空转。实测（102/40HX，m=2560 k=6912 n=1）：分块打包 1.53 ms、
 打包侧权重带宽只有 **2.9 GB/s**（稠密 GEMV 97 GB/s）——打包"权重读 0.25 B/元素"的
 优势完全兑不出来。新内核结构：
@@ -969,7 +969,7 @@ f32 latent**（`build_*_from_spec` → `BitLinear::init` 立即分配，4 B/权�
 （默认关 ⇒ 既有路径逐位不变）：
 
 - **引擎原语**（抽象层 NVI + `*_impl`，CPU / GPU + shader，
-  `engine/shaders/{quantize_i8,unpack_i8,matmul_q_i8}.comp`）：
+  `engine/engine/shaders/{quantize_i8,unpack_i8,matmul_q_i8}.comp`）：
   - `quantize_i8(x (M,N), scale, col_scale)` → 容器 (M, ceil(N/4)) f32（**1 B/元素**）：
     `q = round(clamp(x/s, -127, 127))`（round-half-away；NaN → 0；s==0 → 0）；
     col_scale=true 时 scale 是 (1,N)（per-token 激活），false 时 (M,1)（优化器状态/权重侧预留）。
@@ -1015,7 +1015,7 @@ f32 latent**（`build_*_from_spec` → `BitLinear::init` 立即分配，4 B/权�
   容器（`int8_pack.hpp` 布局，1 B/元素）。**为什么必须融合引擎原语**：打包状态 DSL 读
   不了（位打包），若先 `unpack_i8` 再走 DSL 更新再 `quantize_i8`，会物化 f32 全尺寸
   临时量（4 B/状态 × 2 —— 比省掉的还多）。故新增领域原语 `quantized_adamw_step`
-  （抽象层 NVI + CPU/GPU 实现 + `engine/shaders/quantized_adamw_step.comp`）：单内核内
+  （抽象层 NVI + CPU/GPU 实现 + `engine/engine/shaders/quantized_adamw_step.comp`）：单内核内
   **解码 → 更新 → 编码 → 参数更新**（每线程一个打包字，字内 4 元素串行写回，无字节级
   竞态）。数学口径与 AdamWQuant 的 DSL 表达式同构（尺度前进仍在优化器层用 DSL 完成，
   与 AdamWQuant 逐位一致）。

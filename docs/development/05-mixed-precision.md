@@ -876,7 +876,7 @@ f16；数据集 token/id 是整数；只有日志/调试打印这类宿主展示
 | `compute_tensor.hpp` | `Tensor` 精度属性 + variant 存储 + 显式创建/读取 API |
 | `backend/compute_vk_backend.hpp` | `GpuTensor<P>`、`GpuBuffer` 字节数参数化、`shaderFloat16` 查询、f16 GEMM pipeline |
 | `compute_engine.hpp` + `compute_cpu_engine.hpp` + `compute_gpu_engine.hpp` | 原语 `P` 参数、`cast`、`from/to_matrix` 重载、f16 实现、能力分派表 |
-| `shaders/` | op 级 shader 的 `-DNN_SHADER_F16` f16 变体（`matmul_tiled` / `batched_matmul` / `matmul_gemv` / `reduce` / `transpose` …，双份 SPIR-V，见 §7.4 / §12.11） |
+| `engine/engine/shaders/` | op 级 shader 的 `-DNN_SHADER_F16` f16 变体（`matmul_tiled` / `batched_matmul` / `matmul_gemv` / `reduce` / `transpose` …，双份 SPIR-V，见 §7.4 / §12.11） |
 | `expr_dsl.hpp` / `expr_*` | 按 P 实例化（F32 不变 + F16）；结构 key 不含精度，变体按 `(key, sig)` 注册（§11.1） |
 | `compute_layer_*.hpp` | `p_` 成员 + 全部原语调用显式 P |
 | `compute_loss.hpp` / `compute_optimizer.hpp` | 显式 P（loss = stable；状态 = optimizer；参数 = param） |

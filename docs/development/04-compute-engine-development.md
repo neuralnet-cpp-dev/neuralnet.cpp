@@ -633,7 +633,7 @@ public:
 
 ### 步骤 4：创建 GPU Shader（可选）
 
-在 `shaders/` 目录创建 `.comp` 文件：
+在 `engine/engine/shaders/` 目录创建 `.comp` 文件：
 
 ```glsl
 #version 450

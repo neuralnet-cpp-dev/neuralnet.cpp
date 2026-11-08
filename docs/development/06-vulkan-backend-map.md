@@ -135,14 +135,14 @@ L3+ model / domain / cli / app
 
 ## 6. 怎么加一个原语算子
 
-1. `shaders/<name>.comp` 写 kernel；在 `compute_vk_backend.hpp` 文件头加
+1. `engine/engine/shaders/<name>.comp` 写 kernel；在 `compute_vk_backend.hpp` 文件头加
    `__has_include` 探测块，并把 token 加进 `NN_SPV_GETTER_LIST`（RV-08 单一
    注册表）。
 2. `compute_engine.hpp` 加 op-level 接口（NVI 入口 + 默认 "unsupported"）。
 3. `GpuEngine` 加 `*_impl`：只做形状/精度决策，把"怎么录"交给后端。
 4. 后端加一个 `*_gpu`：`alloc_desc_set_for` → push constants → dispatch →
    barrier（不再手写 `VkWriteDescriptorSet`）。
-5. `shaders/scan_exprs` 不需要登记（op-level 原语不进 AOT 注册表）。
+5. `scan_exprs` 收集链已不存在（P3/D4），op-level 原语无需登记。
 
 ## 7. 怎么加一个 pipeline 变体
 

@@ -94,7 +94,7 @@ f16 原生算术（`shaderFloat16`，40HX 有、850M 无）**另立 S5 正式推
 
 `NN_PREC_TRACE=1`（探针构建）显示热路径命中 `[prec][alu-hit] <key>#x`，无 `miss`。即：本仓 f16 走的是
 **storage-only** 变体 —— shader 用 `GL_EXT_shader_16bit_storage` 声明 `float16_t` 缓冲、**算术仍 f32**
-（`shaders/elementwise_v2.comp` 头部注释即写「缓冲 float16_t、算术 f32」）。
+（`engine/engine/shaders/elementwise_v2.comp` 头部注释即写「缓冲 float16_t、算术 f32」）。
 
 **这是好消息**：本仓已有「不依赖 `shaderFloat16` 的 f16 存储变体」这一正确底座（和 ggml 同思路），
 所以 §4 的方案不需要等新硬件支持。
@@ -398,7 +398,7 @@ f32 2037 ms（+0.9%，特化前 +10.6%）**、设备 kernel 1962 vs 1949 ms、**
 | [`24-f16-training-defects.md`](24-f16-training-defects.md) §4.6 / `compute_optimizer.hpp` | F5：四字段全 f16 可训练性（Adam 状态缩放 `S=4096`）与残留边界 |
 | `backend/compute_vk_backend_frame.inc` | `begin_batch`/`flush_batch`/`start_frame`（帧槽阻塞等待） |
 | `backend/compute_vk_backend.hpp` | `PIPELINE_FRAMES = 6`（环深度） |
-| `shaders/elementwise_v2.comp` 等 | f16 变体 = storage-only（`GL_EXT_shader_16bit_storage` + f32 算术） |
+| `engine/engine/shaders/elementwise_v2.comp` 等 | f16 变体 = storage-only（`GL_EXT_shader_16bit_storage` + f32 算术） |
 | `include/neuralnet.cpp/compute_layer_gpt.hpp` | LM head 计算精度强制 = `stable`（⇒ `--f16` 下 logits 为 f32） |
 | `include/neuralnet.cpp/compute_engine.hpp`（`upload_span`） / `compute_gpu_engine.hpp`（`copy_from_impl`） | `fresh_dst` 与 drain 语义（每步上传是否排空） |
 | `docs/development/05-mixed-precision.md` §12.5/§12.11 | 边界 cast 代价、op-level f16 GEMM 现状 |
