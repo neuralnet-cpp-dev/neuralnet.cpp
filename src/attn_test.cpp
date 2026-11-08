@@ -5,6 +5,7 @@
 //       MHA 双向语义探针（fold 掩码回归钉子）+ CPU/GPU 一致性
 // ───────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cstdio>
 #include <iostream>
 
@@ -18,6 +19,19 @@
 
 #define main test_attn_w_batch
 #include "attn_w_batch_test.cpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 #undef main
 
 // ── MHA 双向语义探针（回归钉子）──────────────────────────────────

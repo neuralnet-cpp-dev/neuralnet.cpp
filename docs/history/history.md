@@ -5541,6 +5541,106 @@ ccache 命中已把 include 重编压到 ~0.1s/目标，模块能消除的"改�
 若出现无 ccache / 多 TU 频繁改公共头的场景，隔离收益才会显性化。**不改主线默认加载路径**
 （`#include <nn.hpp>` + PCH + ccache 仍是默认），模块是增量接入的平行路径，双轨共存。
 
+## 模块化 P5：src/ 全量 import 化 + ccache×模块根因修复 + clang 24 bug 规避 + PCH 删除（2026-11-06，docs/internal/35）
+
+**承接**：上一条「粒度导入落地（4 模块）」→ 本条目按 35 号文档 P1–P6 推进到 P5（P6 见下一条）。
+
+**P1（开关删除）**：`NN_ENABLE_MODULES` / `NN_MODULES_ENABLED` 编译器门与 `NN_USE_MODULES`
+宏传播删除，src/ 8 处双轨改无条件 import。tokenizer_consistency 经 tokenizer_test 文本
+include 覆盖，无需单独接线。
+
+**P2（宏岛头）**：宏段拆到**不带 `neuralnet.cpp/` 前缀**的 `engine/abstraction/include/
+nn_error_macros.hpp`（宏唯一真源），`core_errors.hpp` / `core_assert.hpp` include 它；
+src/ 68 个宏使用文件显式 include 岛头。**次序不变量**：core_errors 必须先于 core_assert
+包含（后者 include 前者时宏已齐；次序反了会缺 `NN_FAIL` 等）——此修复落在子模块提交
+`19bc1e0`（主仓指针随 P5 锁定）。
+
+**P3（AOT→JIT 预热）**：`scan_exprs` 收集链主仓侧清理（AOT 闭合世界 → 预热加速 + JIT 兜底，
+`NN_STRICT_CLOSED_WORLD=1` 保留看门狗）；回归锁与妥协台账建立（36 号）。
+
+**P4（13 域铺满）**：expr/engine/layer/loss/opt/model/train/domain/cli 九个新域模块
+（全部 DEPS core，薄模块 + 命名空间逐符号导出；嵌套名镜像原命名空间——`using nn::cli::X`
+写在 nn 块里会被 clang 扁平引入为 `nn::X`，实测）。
+
+**P5 核心（D8/D9 + 两个根因修复）**：
+- **D8 单点接线**：`nn_add_executable` 自动 `nn_use_modules(${name} ${NN_ALL_MODULES})`；
+  src/ 79 个 TU 全量 import 化（门 F 归零），残留 `#include <neuralnet.cpp/…>` 为 0。
+- **链接修复**：`cli/text_train_config.hpp` 的 `parse_text_train_args` /
+  `print_text_train_usage` / `parse_precision_arg` 补 `inline`（头里定义、多 TU 引用 →
+  缺 inline 链出 undefined symbol；曾被 ccache 旧 .o 掩盖）。
+- **ccache × 模块根因修复**：ccache 4.13 手册明言不支持标准 C++ modules——key 不含
+  `-fmodule-file` 的 BMI 内容，direct 模式 depfile 只记文本头 → "BMI 重编 + 消费方源码没动"
+  时 ccache 吐**旧 .o**（实测 text_train.cpp 加 inline 后 dev 目录链出 undefined symbol、
+  绕过 ccache 手工编译即正常）。修复 = `nn_use_modules` 内 per-target 禁
+  `RULE_LAUNCH_COMPILE`（跨 sccache 通用、机制确定；`CCACHE_EXTRAFILES` 方案实测可用但未采用）。
+- **clang 24 上游 bug 规避（C6）**：`tokenizer_consistency_test.cpp` 的 `old_pre_tokenize`
+  markers 特意用 `std::vector<std::string_view>`（库侧 `std::string`）打破与库
+  `pre_tokenize` 构造的同形。详见下一条「clang 24 错值 bug」完整画像。
+- **D9（PCH 删除）**：`nn_pch` 机制、`cmake/nn_pch_stub.cpp`、`NN_ENABLE_PCH` option、
+  候选登记/剔除逻辑、`NN_PCH_COMPAT_OPTIONS`、CMakePresets 的 `NN_ENABLE_PCH` 全部删除；
+  ccache sloppiness 注释改写（pch_defines 转无害冗余）。PCH 的"共享 parse"职责由模块 BMI 承接。
+
+**验收（P5）**：全量构建 0 错 + ctest 81/81 + doc_audit 全绿。
+
+## clang 24 错值 bug 完整画像（2026-11-06，C6）与 LLVM issue #239625
+
+**症状**：同一 TU 存在两个 **identical 构造**的 `static` local（测试参考实现与库
+`pre_tokenize` 的 markers：相同 14 个 string 字面量 + 相同 sort lambda），且 TU import 的
+模块面含 `nn.cli` 时，clang 对**模块导出的 inline 函数**（`BPETokenizer::pre_tokenize`，
+实例化进消费方 TU）的 static local 生成错误代码——range-for 遍历该容器**0 次迭代**，
+静默错值（`[x<|end_of_assistant|>y]` 拆成 `[x][<|][end][of][assistant][|>][y]`）；同 TU
+的本地 identical 构造**正常**。-O0/-O3 均复现；行为随代码布局漂移（探针时好时坏）。
+
+**排除**：写法 UB（cppreference：range-for 具名对象绑定无临时问题；`compare(pos,count,str)`
+的 `pos≤size` 由 `inb` 短路保证）、gcc 15.3 全过、clang 纯代码全过、LTO、双实体（nm 单份
+符号）、guard 布局重合（地址独立）、`-fmodule-file` 数量。
+
+**消融（2026-11-06 复测 + 收窄）**：新 clang 快照（++20261105085444）**仍复现**。触发 =
+「import 面含 `nn.cli`（裁剪到 `text_train_config.hpp` + `text_train_loop.hpp` 两头发仍
+复现；单头 `text_train_config.hpp` 不复现）× 模块导出 inline 函数实例化 × 消费方本地
+identical 构造」**缺一不可**；消费方去掉 regex 部分仍复现；自包含最小化（模拟
+text_train_loop 的 inline+static 形态、50–500 个导出 inline 函数的大导出面、简化版
+pre_tokenize）**均不复现**——只有真实项目模块组合触发，无法进一步自包含化。
+
+**上报**：LLVM issues **#239625**（2026-11-06，label `clang:modules` + `clang:codegen`），
+附最小消费方 + 复现命令（克隆 https://github.com/neuralnet-cpp-dev/neuralnet.cpp @ dev，
+构建 5 个 BMI + 编译消费方）。**消灭条件** = 上游修复后撤掉 string_view 特意差异（36 号 C6）。
+
+## 模块化 P6：性能对照 + OBJECT_DEPENDS 正确性修复 + 门禁固化 + 文档同步（2026-11-06）
+
+**P6-1 性能对照**（P5 后口径，无 PCH 无缓存，dev preset / clang 24 / 8 核）：
+
+| 场景 | 实测 | 基线（4 模块 + PCH，ccache 命中） |
+|------|------|------|
+| 改 consumer 源（mnist_train 单 TU + LTO 链接） | **≈79 s** | 0.48–0.50 s |
+| 改公共头（`core_config.hpp`）→ 全量增量 | **≈35 min**（82 消费方 TU + 13 BMI + 全链接） | 12.7–18.0 s |
+| 冷构建 | 见 research §6.3 更新表 | 87.2–106.7 s |
+
+结论：模块路径增量劣化到分钟级，属**取舍结果**（ccache 不支持 modules + PCH 删除 +
+LTO 放大单 TU 后端成本），不是实现缺陷；风险表中"import TU 失去 ccache 命中"按预期发生，
+接受现状（35 号风险行）。
+
+**P6 正确性修复（OBJECT_DEPENDS，新发现）**：排查「改公共头」场景时发现——`nn_use_modules`
+的 `add_dependencies` 在 ninja 里是 **order-only**（pcm mtime 变不触发 TU 重编），且 clang
+的 `-MD` depfile **不记录** `-fmodule-file` 的 pcm（实测 `.ninja_deps` 无 pcm 条目）→
+改域头只重编 BMI，import 它的消费方 .o 保留**旧实例化**（陈旧代码，静默错值/链接错）。
+修复 = `nn_use_modules` 内对每个源文件 `set_property(SOURCE … OBJECT_DEPENDS "<pcm>")`
+（真实编译依赖；源路径转绝对，BASE_DIR 用调用方源目录）。验证：touch `core_config.hpp` →
+ninja 计划从「0 消费方 TU」变为「82 个消费方 TU + 13 BMI + 全链接」；全量重建 + ctest 81/81 绿。
+代价 = 改公共头时消费方全量真实重编（正确行为，35 §2.4 口径预期）。
+
+**P6-2 门禁固化**：configure 期 `nn-gate` 检查（`file(GLOB src/*.cpp)` + 正则
+`#include <neuralnet\.cpp/` 命中即 `FATAL_ERROR`），合法例外仅 `nn_error_macros.hpp`（宏岛头）
+与 STL。正反验证：注入违规文件 → 报错；删除 → 恢复。
+
+**P6-3 文档同步**：AGENTS.md（§2 选项/编译提速、§3 模块表行、文档索引）、
+`research/modules-import-nn/README.md` §6（13 域、无条件、OBJECT_DEPENDS、更新实测）、
+`docs/development/01` §8/§8.1（PCH 段重写）、`docs/usage/05`（删 PCH 选项行）、
+`docs/development/02` §1.3/§17（宏岛头路径）、`docs/development/04` FAQ（strict 语义核对
+——与 D6 一致无需改）、`docs/internal/36` C6 行更新（复测 + issue #239625）、35 号只读不动。
+
+**验收（P6）**：全量构建 0 错 + ctest 81/81 + doc_audit 全绿（本轮改动后复跑）。
+
 ## 引擎 .so 化（T9，2026-11-01）：双引擎 .so + 抽象层转发 → C++ 直出
 
 **承接**：34 号文档 §10 立项（用户裁定）。**目标**：header-only 引擎翻成 link 阶段——引擎实现编
@@ -5736,6 +5836,41 @@ DSL 完成（与 AdamWQuant 逐位一致）；参数更新用重建值 m̂ = sm�
 （57 virtual、L2 违规 0）、gui_cli_audit（优化器名单）、doc_audit 全绿。GPU 数值对拍
 待权威设备（shader 已编译验证）。
 
-**已知取舍（如实记录）**：v̂ 下限是"保守过估"（qv=0 元素按分辨率下限更新）；块量化
-（每 64 元素尺度，bitsandbytes 风格）是后续精化方向；原语 = 逐元素参考内核，宽 batch
-性能另行 A/B；GPU 数值未实测。
+
+---
+
+## v1.17.0 发布前收尾：CI 子模块拉取 / MSVC Debug job 下线 / 构建提速文档改口径（2026-11-08）
+
+**背景**：v1.16.0（2026-11-02）起 main 的 CI 一直红。发布 v1.17.0 前的文档 + 代码审查定位到两处结构性原因：
+
+1. **build / msvc-debug job 没有拉取 engine 子模块**：`actions/checkout@v4` 未带
+   `submodules: recursive`，而主仓 CMakeLists 的 `add_subdirectory(engine)` 是其硬依赖
+   ⇒ configure 直接报 `does not contain a CMakeLists.txt`（Linux/Windows 同因）。
+   修法：两处补 `git config --global url."https://github.com/".insteadOf "git@github.com:"`
+   + `submodules: recursive`（与 `consistency` / `engine-tests` job 同款）。
+2. **`msvc-debug` job 与模块无条件化冲突**：`nn_add_module` 用
+   `${CMAKE_CXX_COMPILER} --precompile` + `-fmodule-file`，cl.exe / clang-cl 无这两个
+   能力（GCC 亦无 `--precompile`）⇒ 该 job 必然红。与 35 号 P1/P5 定下的「仅 GNU 驱动
+   Clang 可构建本仓 src/」口径一致，**下线该 job**（`release.needs` 同步改为
+   `[build, engine-tests]`），原注释位置改记下线原因。历史四组「编译器 × 标准库」
+   验证记录与 MSVC Debug 的三条必需开关（`/Zc:preprocessor` / `/bigobj` /
+   `/STACK:8388608`）的来由归档在本文件。
+
+**同步的文档**（原写「PCH 默认开」「GCC/MSVC 均可」「msvc-debug job 存在」均已过时）：
+
+- `CONTRIBUTING.md` §5：构建提速段落改为模块/BMI 口径（PCH 机制整体删除、
+  `NN_ENABLE_PCH` / `NN_ENABLE_MODULES` 开关下线、ccache 对模块消费方 TU 绕开的实测口径）。
+- `docs/development/01-cmake-integration.md` §9 与 `docs/introduction/01-architecture.md`
+  环境要求：本仓 src/ 构建只支持 GNU 驱动 Clang；头文件消费路径（`#include <nn.hpp>`）
+  不依赖模块，嵌入消费方用自己的编译器仍可（MSVC 需 `/Zc:preprocessor`）。
+- `docs/internal/18-roadmap.md` CI 行：删 `msvc-debug`，补 `engine-tests` / `consistency`
+  与子模块拉取口径。
+- `docs/usage/05-consume-as-library.md`：「17.5s 无 PCH」改为当前口径。
+
+**审查附带结论（未改代码）**：`compute_cpu_engine.hpp` 的 `m_per` 兜底
+（`rows % batch != 0` 时取 `m_per = rows`）与 `for b < mm_batch` 的写偏移组合在
+「rows 不可被 batch 整除」时会越界——该模式在 v1.16.0 既有代码里就存在（`eval_expr_impl`），
+本轮 P2 预计算只是照抄同一形态；内部调用方恒有 `rows = batch × 每块行数`，故不改，
+记为边界观察项。`src/chat_prompt_test.cpp` 的 Windows 引号助手只兜尾部反斜杠、
+不再转义内嵌 `"`（调用点已把回复里的 `"` 清洗成空格，测试专用，无实际风险）。
+

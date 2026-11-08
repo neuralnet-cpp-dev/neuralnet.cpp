@@ -228,7 +228,7 @@ nn::ComputeEngine& engine() const;          // 取绑定引擎；未绑定 → N
 
 所以：
 - 造张量 → `engine.create_tensor` / `engine.from_matrix` / `dsl::compute` / `engine.clone` …
-- 读张量 → `engine.to_matrix` / `engine.read` / `engine.get_index` / `detail::download_span`
+- 读张量 → `engine.to_matrix` / `engine.read` / `engine.get_index` / `nn::download_span`
 - 写张量 → `engine.write` / `engine.copy_from` / `engine.set_index` / `engine.cast_into` / 引擎原语
 - 改形状 → `engine.reshape`（**不是** `t.reshape()`，那个也已私有）
 
@@ -671,7 +671,7 @@ template <typename E>
 |---|---|
 | CPU 且表达式**不含**归约/matmul/索引叶子 | 编译期模板内联求值（SIMD 融合）。**无任何形状校验**（见 §8.7 陷阱 ①） |
 | CPU 且含归约/matmul/索引 | 先试"预绑定 + 模板内联"快路径；不行则折叠 `ExprSpec` 走 CPU 解释器（此时**有**形状校验） |
-| GPU | 折叠 `ExprSpec` → `validate_expr_spec` → `eval_expr` 匹配**构建期预生成** shader；**未命中主路径 = JIT 现编**（`NN_STRICT_CLOSED_WORLD=1` 恢复硬报错） |
+| GPU | 折叠 `ExprSpec` → `validate_expr_spec` → `eval_expr` 匹配**构建期预生成** shader；**未命中主路径 = JIT 现编** |
 
 **`compute_into` 的等价改写**（把"原地更新"纳入 DSL，无需逐操作调用引擎原地原语）：
 
@@ -1273,7 +1273,7 @@ auto back = engine.rearrange_3d(*ctx, heads * d_k, batch, seq, true);   // inver
 
 - 所有输入张量必须**绑定到同一引擎**（`bind_check_`）。
 - `inputs.size()` 必须与 spec 记录的输入数一致。
-- **注册表**：GPU 上该 `(结构 key, 精度签名)` 没有预生成 shader → 主路径 JIT 现编（`NN_STRICT_CLOSED_WORLD=1` 恢复硬报错）。
+- **注册表**：GPU 上该 `(结构 key, 精度签名)` 没有预生成 shader → 主路径 JIT 现编。
 
 **辅助工具**：
 
@@ -1411,11 +1411,11 @@ namespace nn::detail {
 // Layer 内构造正弦位置编码
 std::vector<float> enc(seq * d_model);
 // ... 填充 enc ...
-auto pos = nn::detail::upload_span(engine, seq, d_model, p_.param, std::span(enc));
+auto pos = nn::upload_span(engine, seq, d_model, p_.param, std::span(enc));
 if (!pos) return std::unexpected(pos.error());
 
 // 读取一个统计量做诊断
-auto v = nn::detail::download_vector(engine, *t);
+auto v = nn::download_vector(engine, *t);
 if (!v) return std::unexpected(v.error());
 ```
 
@@ -1523,7 +1523,7 @@ public:
 | 状态扫描 | `scan_prefix_outer` / `scan_suffix_outer` / `outer_col` | RAPT 前向/反向 |
 | fold 登记 | `eval_expr`（配合 `make_fold_*`） | 注意力 forward 单 fold kernel |
 
-> **`from_matrix` / `to_matrix` / `copy_from` 不在上表**（铁律 #12 禁用）。层内辅助数据用 `detail::upload_span` / `download_span`（§16）。
+> **`from_matrix` / `to_matrix` / `copy_from` 不在上表**（铁律 #12 禁用）。层内辅助数据用 `nn::upload_span` / `download_span`（§16）。
 >
 > 当前实测分布：Layer 共 211 次引擎直调、21 个 distinct 动词。`rearrange_3d`(50) + `transpose`(33) + `slice_rows`(22) + `create_tensor`(41) 占了其中大部分。
 
@@ -1544,7 +1544,7 @@ public:
 |---|---|---|
 | 逐元素拆成多次 `dsl::compute` | N 个 kernel、N-1 个全尺寸中间量 | 写成一条表达式 |
 | 手工 `clone` 造临时张量再 `add_inplace` | 多余分配 + 多余 dispatch | `compute_into` 原地 |
-| 在 Layer 里出现 `Matrix` / `to_matrix` | 违反铁律 #12；GPU 上引入 PCIe 往返 | `detail::upload_span` / `download_span` |
+| 在 Layer 里出现 `Matrix` / `to_matrix` | 违反铁律 #12；GPU 上引入 PCIe 往返 | `nn::upload_span` / `download_span` |
 | 手写 `cast` 适配 f16 | 全尺寸临时量，且与边界 cast 层重复 | 传对 `P` |
 | 循环 per-head / per-channel 调 dispatch | dispatch 次数随通道数线性增长 | `batched_matmul` / `grouped_reduce_*` |
 | 运行时标量写成 `ConstLeaf` | 值进 key → GPU 注册表查不到 shader | `dsl::rparam` |
@@ -1618,7 +1618,7 @@ public:
 | `submit_scalar_readback` / `poll_scalar_readback` / `scalar_readback_slots` | 异步标量回读 |
 | `supports_native_data_move` / `supports_native_f16_reduce` / `supports_expr_precision_variant` | 精度原生路径能力查询 |
 | `temp_stats()` / `dump_temp_stats()` / `reset_temp_stats()` | 边界 cast 临时量归因（需**探针构建** + `NN_PREC_TRACE=1`） |
-| `nn::detail::upload_span` / `download_span` / `download_vector` | L2 宿主桥 |
+| `nn::upload_span` / `download_span` / `download_vector` | L2 宿主桥 |
 
 ---
 
@@ -1628,8 +1628,9 @@ public:
 > `NN_MEM_STATS`（以及训练入口的 `NN_NAN_TRACE`）都是**探针**，只在
 > `-DNN_ENABLE_PROBES=ON` 配置的构建里存在——默认构建（不传该选项）连这些代码
 > 都不参与编译，环境变量设了也一律无效（避免"设了环境变量就悄悄拖慢正常
-> 训练/推理"）。探针可执行目标 `mem_probe` / `f16_cpu_probe` /
-> `gpu_stability_probe` 同样只在 `NN_ENABLE_PROBES=ON` 时创建。
+> 训练/推理"）。本仓探针可执行目标为 `f16_cpu_probe` / `gpu_stability_probe`
+> （`mem_probe` 已随引擎 .so 化迁往新仓库 `compute.neuralnet.cpp`），同样只在
+> `NN_ENABLE_PROBES=ON` 时创建。
 > 例外：`NN_VULKAN_*`、`NN_POOL_*` 是**初始化期读一次**的行为开关，任何构建都有效
 > （零热路径开销）。设备域检查是默认行为，没有调试开关。
 
@@ -1637,8 +1638,9 @@ public:
 |---|---|
 | `NN_PREC_TRACE=1`（**需探针构建**） | 打印每个 `(结构 key, 精度签名)`；`[prec][alu-hit]` = 命中**变体**（`key#x` 运行期精度分派 **或** `key#a` native16，key 本身即区分）；`[prec][fallback]` = 该结构没有可用的 `#x`（回退基类边界 cast）；`[into] branch=…` 打印 `eval_expr_into` 的分支。**`[prec][miss]` 保留为通用诊断**（V1 覆盖后 f16 融合路径实测 `miss=0`）；"回填清单"工作流（`tools/prec_backfill.txt`）已随"运行期精度分派"删除。日志只由真正 dispatch 的入口、且在确认命中后打——`supports_expr_precision_variant` 是查询，不产生命中日志 |
 | `NN_F16_DEBUG=1`（**需探针构建**） | f16 中间量数值扫描（`nn_dbg_scan`）、`accumulate` 巨值打印、`compute_into` 预绑定失败原因 |
-| `NN_MEM_STATS=1`（**需探针构建**） | 训练中内存采样（配合 `pool_stats()`） |
+| `NN_MEM_STATS=1`（**需探针构建**） | 训练中按阶段打印 `pool_stats()`（`text_train` 的 `[mem] <tag>` 行） |
 | `NN_VULKAN_DEVICE` | 强制指定 Vulkan 计算设备（索引 `"2"` 或名称子串 `"NVIDIA"`）。优先级：显式 API > 本变量 > 自动打分 |
+| `NN_NO_EARLY_REAP=1` | 析构/帧末**不**提前把张量内存还池（内存 A/B 对照用；脚本 `bench/run_mem_ab.ps1`）。初始化期读一次，任何构建都有效 |
 
 **临时量归因**：
 
@@ -1694,7 +1696,7 @@ if (nn::dsl::env_flag("NN_PREC_TRACE"))
 | `dsl::row_reduce_min` / `col_reduce_min` | 不存在 |
 | `nn::Tensor` 的 `cpu_matrix()` / `from_matrix()` / `cpu()` / `reshape()` | **已私有**（铁律 #11）；经引擎访问 |
 | `Tensor::reshape` | 已私有；公共入口是 `engine.reshape(t, rows, cols)` |
-| `from_matrix` / `to_matrix` / `copy_from` 在 Layer / Loss / Optimizer / Model 中 | **铁律 #12 禁用**；用 `detail::upload_span` / `download_span` / `engine.read` / `engine.write` |
+| `from_matrix` / `to_matrix` / `copy_from` 在 Layer / Loss / Optimizer / Model 中 | **铁律 #12 禁用**；用 `nn::upload_span` / `download_span` / `engine.read` / `engine.write` |
 | 用 `char*`/裸指针接管张量存储 | 铁律 #2：禁止 new/delete/裸指针所有权 |
 | 在 `//` 注释里写反斜杠 | **铁律 #10**：GCC 行拼接会吞掉下一行 |
 

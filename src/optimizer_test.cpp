@@ -3,7 +3,7 @@
 // 两件事都属于"新增/改动优化器时最容易静默错"的那一类：
 //
 //  [1] RV-04 元数据表 ↔ 工厂一致：nn::optimizer_table() 是名单的**唯一真源**
-//      （CLI 校验/帮助、scan_exprs dry-run、mem_probe 状态账、GUI 选项全部查表）。
+//      （CLI 校验/帮助、mem_probe 状态账、GUI 选项全部查表）。
 //      断言：表内每个 name 都能被 create_optimizer 构造；未知 name → nullptr；
 //      名单文本与表一致（帮助文本正是由它拼出来的）。
 //
@@ -23,15 +23,31 @@
 //            ctest --test-dir build -R optimizer_test
 // ───────────────────────────────────────────────────────────────────────────
 
+#include <memory>
 #include <cmath>
 #include <cstdio>
 #include <span>
 #include <string>
 #include <vector>
 
-#include <neuralnet.cpp/nn.hpp>
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::expr::cst;
+using nn::expr::input;
+using nn::Linear;
 using nn::Scalar;
+
 
 namespace
 {

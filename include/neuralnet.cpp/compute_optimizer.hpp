@@ -386,7 +386,6 @@ protected:
         const Scalar one_minus_beta1 = Scalar{1} - beta1_;
         const Scalar one_minus_beta2 = Scalar{1} - beta2_;
         const Tensor& g = grads_[i];
-        const std::size_t rows = g.rows(), cols = g.cols();
 
         // ── 状态缩放 S（F5，2026-10-14）───────────────────────────────────
         // 动机：Adam 的二阶矩 v ≈ (1-β2)·g²。f16 存储时 g ~ 1e-5 ⇒ v ~ 1e-10
@@ -404,42 +403,34 @@ protected:
         const Scalar s2 = s_scale * s_scale;
         const Scalar eps_scaled = eps_ * s_scale;
 
-        // K1: m = β1*m + (1-β1)*g（单 kernel 融合；状态精度 = p_.optimizer）
-        auto m_new = dsl::compute(engine_,
-                                  dsl::leaf(m_[i]) * dsl::rparam(beta1_) +
-                                      dsl::leaf(g) * dsl::rparam(one_minus_beta1 * s_scale),
-                                  rows, cols, p_.optimizer);
-        NN_TRY_CHECK(m_new);
-        m_[i] = std::move(*m_new);
+        // K1: m = β1*m + (1-β1)*g（目标传递：m_[i] 是跨步持久句柄，录制段内
+        //   必须 compute_into——compute+move 的输出会在单输出融合中被内联吞掉，
+        //   占位永不写入 → 下一步读未初始化内存（pitfalls §2.6/模式 I））
+        NN_TRY(mr, dsl::compute_into(
+                       engine_,
+                       dsl::leaf(m_[i]) * dsl::rparam(beta1_) +
+                           dsl::leaf(g) * dsl::rparam(one_minus_beta1 * s_scale),
+                       m_[i]));
 
-        // K2: v = β2*v + (1-β2)*g²（单 kernel 融合；状态精度 = p_.optimizer）
-        auto v_new =
-            dsl::compute(engine_,
-                         dsl::leaf(v_[i]) * dsl::rparam(beta2_) +
-                             dsl::leaf(g) * dsl::leaf(g) * dsl::rparam(one_minus_beta2 * s2),
-                         rows, cols, p_.optimizer);
-        NN_TRY_CHECK(v_new);
-        v_[i] = std::move(*v_new);
+        // K2: v = β2*v + (1-β2)*g²（同 K1：into 写回持久状态 v_[i]）
+        NN_TRY(vr, dsl::compute_into(
+                       engine_,
+                       dsl::leaf(v_[i]) * dsl::rparam(beta2_) +
+                           dsl::leaf(g) * dsl::leaf(g) * dsl::rparam(one_minus_beta2 * s2),
+                       v_[i]));
 
-        // K3: p -= lr * (inv_bc1*m) / (sqrt(inv_bc2*v)+eps)（全链单 kernel 融合；
+        // K3: p ← p - lr * (inv_bc1*m) / (sqrt(inv_bc2*v)+eps)（全链单 kernel 融合；
         //     依赖刚更新的 m_[i]/v_[i]，偏置修正系数 inv_bc1/inv_bc2 逐步变化
         //     由 RParam 承载，不进 key → 共享 shader）
-        //     更新量精度 = **目标参数的存储精度**：通常就是 p_.param（省一次 cast），
-        //     但当 param 槽不是"存储精度"时必须以张量自身为准 —— 例如 BitLinear 的
-        //     T1_58（latent 恒 f32）：照搬 p_.param 会拿非存储精度去建张量
-        //     （CPU 走 f32 兜底、GPU 在 check_precision_supported 处硬报错 =
-        //      两端行为不一致）。见 docs/internal/21-quantized-weights.md §4.3.2。
-        const Precision upd_prec =
-            (precision_bytes(p_.param) != 0) ? p_.param : params_[i].get().precision();
-        auto delta = dsl::compute(
-            engine_,
-            -dsl::rparam(lr_) *
-                ((dsl::leaf(m_[i]) * dsl::rparam(inv_bc1)) /
-                 (dsl::sqrt(dsl::leaf(v_[i]) * dsl::rparam(inv_bc2)) + dsl::rparam(eps_scaled))),
-            rows, cols, upd_prec);
-        NN_TRY_CHECK(delta);
-        // p += delta（目标传递：原地、单 dispatch，不额外分配）
-        auto r = dsl::compute_into(engine_, dsl::leaf(params_[i]) + dsl::leaf(*delta), params_[i]);
+        //     更新量**直接写回 p 的既有存储**（目标传递）：不再先物化等尺寸
+        //     delta。旧写法在录制段内每参数各建一张全尺寸占位张量（5× 状态量
+        //     峰值的主因，审查 §1 #L1）；融合在 f32 空间算、末次按 p 的存储精度
+        //     落回——f32 参数与"先算 delta 再加"逐位一致，f16 参数少一次中间舍入。
+        auto up = dsl::leaf(m_[i]) * dsl::rparam(inv_bc1);
+        auto den = dsl::sqrt(dsl::leaf(v_[i]) * dsl::rparam(inv_bc2)) + dsl::rparam(eps_scaled);
+        auto r = dsl::compute_into(engine_,
+                                   dsl::leaf(params_[i]) - dsl::rparam(lr_) * (up / den),
+                                   params_[i]);
         NN_TRY_CHECK(r);
         return {};
     }
@@ -493,15 +484,19 @@ public:
         // 写穿 + K3 中间量 + K4 目标传递融合为**每张量一个多输出 kernel**（f32
         // 下 4 节点金刚石单 kernel 3 extras；混精度按门禁自动分裂），替代逐表达式
         // 数百个小 dispatch（P2 前实测 266 设备 kernel/步、host 提交 4.5ms/步）。
-        // CPU begin/end 为 no-op（行为不变）；NN_EXPR_SCAN 下本段把复合 spec
-        // 登记进注册表（scan_exprs 的优化器 dry-run 正是经此登记）。
+        // CPU begin/end 为 no-op（行为不变）。
+        // （C1 已消灭 2026-11-07：原 optimizer=f16 跳录制门控已删，全精度常态
+        //   走图。历史 NaN 根因 = 融合内联图外持有的持久输出 → 读未初始化内存；
+        //   修法 = K1/K2 目标传递 + 融合器拒绝拼接 into 节点为非尾。见
+        //   docs/contributors/pitfalls.md §2.6/模式 I。）
         NN_TRY(b, engine_.begin_expr());
-        ExprSegment seg(engine_owner_);
+        std::optional<ExprSegment> seg;
+        seg.emplace(engine_owner_);
         for (std::size_t i = 0; i < params_.size(); ++i)
         {
             NN_TRY(ur, adam_update_(i, inv_bc1, inv_bc2));
         }
-        NN_TRY_CHECK(seg.end());
+        NN_TRY_CHECK(seg->end());
         t_ = t_next;  // 全部参数成功才推进步数（失败时不推进）
         return {};
     }
@@ -579,8 +574,10 @@ public:
         // （稳定拓扑序保持列表序），故 decay 必须写在 adam_update_ 之前
         // （先衰减后更新 = AdamW 语义）；两者不连通 → 各自独立 kernel，天然
         // 顺序执行，不会同 kernel 双写 p。
+        // （C1 已消灭 2026-11-07：optimizer=f16 跳录制门控已删，见 Adam::step。）
         NN_TRY(b, engine_.begin_expr());
-        ExprSegment seg(engine_owner_);
+        std::optional<ExprSegment> seg;
+        seg.emplace(engine_owner_);
         for (std::size_t i = 0; i < params_.size(); ++i)
         {
             // 权重衰减解耦：p = (1 - lr*wd) * p（目标传递：原地、单 dispatch）
@@ -594,7 +591,7 @@ public:
             // Adam 更新
             NN_TRY(ur, adam_update_(i, inv_bc1, inv_bc2));
         }
-        NN_TRY_CHECK(seg.end());
+        NN_TRY_CHECK(seg->end());
         t_ = t_next;  // 全部参数成功才推进步数（失败时不推进）
         return {};
     }
@@ -1223,13 +1220,12 @@ public:
 };
 
 // ── 优化器元数据表（RV-04：新增一个优化器不再要改 5~6 处）─────────────────
-// **名单的唯一真源**。此前同一份名单散落六处：本文件工厂、text_train 的硬编码
-// 白名单、mnist_train 帮助文本、gui.py 的 OPTIMIZER_OPTIONS、scan_exprs 的
-// dry-run 列表、mem_probe 的状态缓冲分支（AGENTS §3 把"别忘了改这几处"写成提醒
+// **名单的唯一真源**。此前同一份名单散落多处：本文件工厂、text_train 的硬编码
+// 白名单、mnist_train 帮助文本、gui.py 的 OPTIMIZER_OPTIONS、
+// mem_probe 的状态缓冲分支（该探针已迁新仓库）等（AGENTS §3 把"别忘了改这几处"写成提醒
 // ——提醒本身就说明设计有问题）。现在全部查表：
 //   · CLI 校验 / 帮助文本  → find_optimizer / optimizer_names
-//   · scan_exprs dry-run   → optimizer_table() 逐项建优化器
-//   · mem_probe 状态预算   → state_bufs / half_state
+//   · 显存状态预算（新仓库 mem_probe）→ state_bufs / half_state
 //   · GUI 选项             → CLI --help（由本表生成）+ bench/gui_cli_audit.py 断言
 // 新增优化器只需：① 在本表加一行；② 在下方 create_optimizer 加一个分支
 //（构造器必须手写，无法表驱动）。

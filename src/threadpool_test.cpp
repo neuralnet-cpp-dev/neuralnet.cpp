@@ -15,11 +15,11 @@
 #include <numeric>
 #include <vector>
 
-#include <neuralnet.cpp/core_threadpool.hpp>
 
 int g_fail = 0;
 
 #include "test_common.hpp"
+import nn.core;
 
 namespace
 {

@@ -13,6 +13,7 @@
 //   [7] Layer init 失败回滚与 profile 注入
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -20,8 +21,20 @@
 #include <type_traits>
 #include <vector>
 
-#include "neuralnet.cpp/nn.hpp"
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 
 int g_fail = 0;
 

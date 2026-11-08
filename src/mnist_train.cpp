@@ -14,16 +14,7 @@
 // 架构选择：--arch mlp|transformer（默认 mlp，从已保存模型 resume 时自动识别）
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/model_serialization.hpp>
-#include <neuralnet.cpp/domain_mnist.hpp>
-#include <neuralnet.cpp/precision.hpp>
-#include <neuralnet.cpp/cli/cli_engine_factory.hpp>
-#include <neuralnet.cpp/cli/cli_help.hpp>
-#include <neuralnet.cpp/cli/cli_lr_scheduler.hpp>
-#include <neuralnet.cpp/cli/cli_mnist_io.hpp>
-#include <neuralnet.cpp/cli/cli_train_common.hpp>
-#include <neuralnet.cpp/cli/cli_precision_warning.hpp>
+#include <nn_error_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -38,8 +29,22 @@
 #include <string>
 #include <utility>
 #include <vector>
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::Help;
 using nn::Scalar;
+
 
 // ── 精度解析辅助 ─────────────────────────────────────────────────────────
 // allow_t1_58：三值（T1_58）**只适用于 param 槽**（"该层权重是三值"），
@@ -93,6 +98,9 @@ void print_usage(const char* prog)
     help.opt("--weight-decay <w>", "AdamW 权重衰减系数 (默认: 0.01)");
     help.opt("--max-samples <n>", "限制训练样本数 (默认: 全部，用于快速测试)");
     help.opt("--shuffle-steps <true|false>", "每 epoch 打乱 batch 顺序 (默认: true)");
+    help.opt("--no-warmup",
+             "跳过 JIT 预热（GPU 默认开训前跑一遍代表性 forward，\n"
+             "表达式预编进 kernels.nnk，消除首步 JIT 冷启动）");
     help.opt("--gpu [索引|名称]",
              "启用 GPU 加速 (需要 Vulkan SDK)\n空格形式只收枚举索引；名称子串用 --gpu=<名称>，如 "
              "--gpu=NVIDIA / --gpu=40HX");
@@ -164,6 +172,7 @@ struct TrainConfig
     std::string gpu_device;      // --gpu 的可选设备选择子（空 = 自动选卡）
     int max_train_samples = -1;  // -1 表示使用全部
     bool shuffle_steps = true;   // 每 epoch 打乱 batch 顺序
+    bool jit_warmup = true;      // --no-warmup：跳过 JIT 预热（P3/D5）
 
     // MLP 参数
     std::vector<std::size_t> layer_dims;
@@ -477,6 +486,10 @@ TrainConfig parse_args(int argc, char* argv[])
         else if (arg == "--f16")
         {
             cfg.precision = nn::profile_f16();   // param+compute f16（stable/optimizer f32）
+        }
+        else if (arg == "--no-warmup")
+        {
+            cfg.jit_warmup = false;
         }
         else if (arg == "--t1_58")
         {
@@ -902,6 +915,14 @@ int main(int argc, char* argv[])
     std::mt19937_64 shuffle_rng{std::random_device{}()};
 
     auto t_start = std::chrono::steady_clock::now();
+
+    // ── JIT 预热（P3/D5）：GPU 上跑一遍代表性 forward（(784, batch) 全零）──
+    {
+        nn::Tensor warm_x = engine->create_tensor(train_x.rows(), cfg.batch_size,
+                                                  nn::Precision::F32, nn::InitSpec::zero());
+        NN_EXIT(nn::cli::jit_warmup(session.model(), *engine, warm_x, cfg.jit_warmup), 1,
+                "预热失败: ");
+    }
 
     for (int epoch = 0; epoch < cfg.epochs; ++epoch)
     {

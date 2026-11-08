@@ -141,7 +141,7 @@ y_t = W_o concat(o_t^{(1)}, ..., o_t^{(H)})
 
 需要注意“无 A 状态”的精确范围：**RLA-2 的输出和反向公式不消费 A 状态**，但当前通用
 `scan_prefix_outer` 仍会内部累计 `A=Σk'k'ᵀ` 并写入 `A·P` 行块，只是 Layer 忽略该输出。
-这是当前扫描原语（[`scan_prefix_outer.comp`](../../shaders/scan_prefix_outer.comp)）的实现成本，
+这是当前扫描原语（[`scan_prefix_outer.comp`](../../engine/engine/shaders/scan_prefix_outer.comp)）的实现成本，
 不改变 RLA-2 的算法定义。
 
 ## 4. 为什么它是线性注意力

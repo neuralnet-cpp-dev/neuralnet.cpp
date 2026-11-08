@@ -11,6 +11,7 @@
 //   4. 无 spec 模型（build_gpt_model 直接构建）：跳过校验，向后兼容。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <memory>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -18,9 +19,22 @@
 #include <iostream>
 #include <string>
 #include <vector>
-
-#include "neuralnet.cpp/nn.hpp"
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::detail::read_matrix_v5;
+using nn::detail::spec_from_kv;
+using nn::detail::spec_to_kv;
 using nn::ActivationType;
 using nn::CnnSpec;
 using nn::GptSpec;
@@ -31,6 +45,8 @@ using nn::NormPlace;
 using nn::NormType;
 using nn::PosEncodingType;
 using nn::TransformerSpec;
+
+
 
 namespace
 {

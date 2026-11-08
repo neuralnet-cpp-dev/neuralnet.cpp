@@ -7,11 +7,23 @@
 //   [3] 叶子层（无子层）默认实现不崩、无副作用
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <neuralnet.cpp/nn.hpp>
 
 #include <iostream>
 #include <memory>
 #include <vector>
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 
 int g_fail = 0;
 #define CHECK(cond, msg)                                                                  \

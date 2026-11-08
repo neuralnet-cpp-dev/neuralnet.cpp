@@ -83,8 +83,19 @@ inline constexpr std::size_t MNIST_TF_NUM_LAYERS = 2;
 }
 
 // 默认 MLP 网络架构：输入层 → 隐藏层1 → 隐藏层2 → 隐藏层3 → 输出层
-inline const std::vector<std::size_t> MNIST_LAYER_DIMS = {MNIST_INPUT_DIM,  512, 256, 128, 64,
-                                                          MNIST_NUM_CLASSES};
+// ⚠ 不要退回成 `inline const std::vector<...>` 全局：clang 模块 + 直接包含头
+// 两条定义路径会让同一 inline 容器的析构被登记两次，进程退出时 double-free
+// （Windows 表现为 0xC0000374 / STATUS_HEAP_CORRUPTION，ASan 报
+// "attempting double-free on ... dynamic initializer for nn::MNIST_LAYER_DIMS"）。
+// 这里用「函数内静态容器 + 引用常量」：引用可平凡析构，不产生退出期析构登记。
+[[nodiscard]] inline const std::vector<std::size_t>& mnist_layer_dims()
+{
+    static const std::vector<std::size_t> dims = {MNIST_INPUT_DIM,   512, 256, 128, 64,
+                                                  MNIST_NUM_CLASSES};
+    return dims;
+}
+
+inline const std::vector<std::size_t>& MNIST_LAYER_DIMS = mnist_layer_dims();
 
 // ── 构建 MLP 模型 ──────────────────────────────────────────────────────────
 // 通过指定 ComputeEngine 创建同设备的权重张量；可指定自定义层维度。

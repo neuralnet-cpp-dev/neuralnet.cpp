@@ -4,6 +4,7 @@
 //       （Conv2D 的单层参考比对仍在 layer_gradcheck_test 的 conv2d 段）
 // ───────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -18,6 +19,21 @@
 // ── cnn_smoke_test（规格往返 + 层组成 + 端到端训练）───────────────────────
 #define main test_cnn_smoke
 #include "cnn_smoke_test.cpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::EngineConfig;
+using nn::cli::create_engine;
 #undef main
 
 int main(int argc, char* argv[])

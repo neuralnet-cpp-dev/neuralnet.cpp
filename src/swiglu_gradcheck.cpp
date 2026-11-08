@@ -12,8 +12,7 @@
 // 用法：swiglu_gradcheck [--tol <f>]
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/cli/cli_engine_factory.hpp>
+#include <nn_error_macros.hpp>
 
 #include <array>
 #include <cmath>
@@ -23,15 +22,29 @@
 #include <string>
 #include <vector>
 #include "test_common.hpp"
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::EngineConfig;
+using nn::cli::create_engine;
 using nn::ActivationType;
-using nn::ComputeEngine;
 using nn::ComputeEngine;
 using nn::FeedForward;
 using nn::Matrix;
 using nn::Scalar;
 using nn::Tensor;
 using nn::TensorRef;
+
 
 namespace
 {

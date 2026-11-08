@@ -12,11 +12,15 @@
 #include <cstdio>
 #include <string>
 
-#include <neuralnet.cpp/core_sha256.hpp>
 
 int g_fail = 0;
 
 #include "test_common.hpp"
+import nn.core;
+using nn::detail::Sha256State;
+using nn::detail::sha256_digest;
+using nn::detail::sha256_finalize;
+using nn::detail::sha256_update;
 
 namespace
 {

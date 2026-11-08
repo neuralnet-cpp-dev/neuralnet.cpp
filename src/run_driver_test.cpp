@@ -12,6 +12,7 @@
 //   [9] 断点续训起点：start_epoch/start_step 传入 do_update，rewind 被调用
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <any>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -21,10 +22,13 @@
 #include <utility>
 #include <vector>
 
-#include <neuralnet.cpp/batch_source.hpp>
-#include <neuralnet.cpp/core_errors.hpp>
-#include <neuralnet.cpp/run_driver.hpp>
-#include <neuralnet.cpp/training_session.hpp>
+#include <nn_error_macros.hpp>
+import nn.model;
+import nn.train;
+import nn.engine;
+import nn.expr;
+import nn.layer;
+using nn::create_cpu_engine;
 
 static int g_fail = 0;
 #define CHECK(cond, msg)                                                    \

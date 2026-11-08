@@ -70,7 +70,7 @@
 
 | 文档 | 何时读 |
 |------|--------|
-| [`01-cmake-integration.md`](development/01-cmake-integration.md) | 接入与构建：`add_subdirectory`/`FetchContent`、全部构建开关、GPU 语义、`nn_enable_gpu_fusion`、跨平台、故障排查 |
+| [`01-cmake-integration.md`](development/01-cmake-integration.md) | 接入与构建：`add_subdirectory`/`FetchContent`、全部构建开关、GPU 语义、运行期 JIT/`model_warmup` 预热、跨平台、故障排查 |
 | [`02-cpp-api-manual.md`](development/02-cpp-api-manual.md) | **全功能 C++ API 手册**：错误宏 / 引擎 / 张量 / 精度 / DSL / 层与 Model / 工厂 / 损失 / 优化器 / 训练循环 / 模型文件 / 数据集 / 分词器 / 生成 / 剖析（每节带代码片段） |
 | [`03-write-a-custom-layer.md`](development/03-write-a-custom-layer.md) | 写自己的层：完整示例（实测过梯度检查）+ 接入契约 + 精度槽声明 + 梯度自检 + GPU 清单 |
 | [`04-compute-engine-development.md`](development/04-compute-engine-development.md) | 扩展引擎原语：接口全解 + CPU/GPU 实现模式 + 加新原语的完整步骤 |

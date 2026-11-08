@@ -426,7 +426,7 @@ tokcache + `mark_assistant_spans` 输出**逐位一致** ⇒ `text_train` 训练
   `read_file_lines:65`、`tokcache:203-267`、`mark_assistant_spans:179`、帮助行 `293-311`）
 - 现行 Dataset / 样本层 / 训练工厂：`include/neuralnet.cpp/dataset.hpp`、
   `include/neuralnet.cpp/dataset_samples.hpp`、`include/neuralnet.cpp/text_trainer.hpp`
-- KVRecord v1：`include/neuralnet.cpp/model_keyvalue_record.hpp`
+- KVRecord v1：`engine/abstraction/include/neuralnet.cpp/model_keyvalue_record.hpp`（MIT 抽象层单一真源）
 - 模型格式与内嵌词表：`include/neuralnet.cpp/model_serialization.hpp`（`read_tokenizer:478`）
 - 词表工厂与 JSON 解析：`domain_tokenizer{,_base,_bpe,_charbpe}.hpp`
 - roadmap 对应条目：`docs/internal/18-roadmap.md` X2 / P2-4

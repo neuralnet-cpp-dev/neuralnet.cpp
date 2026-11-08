@@ -11,16 +11,27 @@
 //   6. engine.reshape 保持精度与数据（D10：reshape 移入引擎；元素数不匹配报错）
 //   7. shape_str 包含精度信息
 //   8. f16 存储数据经下载升位后与宿主参考逐元素一致（f16→f32 精确无损）
+#include <nn_error_macros.hpp>
 #include <cstdio>
 #include <cstring>
 #include <limits>   // RV-02：形状溢出负例（size_t 上限）
 #include <memory>
 
-#include "neuralnet.cpp/precision.hpp"
-#include "neuralnet.cpp/compute_tensor.hpp"
-#include "neuralnet.cpp/engine.hpp"
 #define NN_TEST_COUNTER g_failures
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 
 namespace
 {

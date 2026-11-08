@@ -21,20 +21,44 @@
 // 退出码：0 = 通过，1 = 失败，77 = 跳过（--gpu 且无设备，或引擎无打包能力）
 // ───────────────────────────────────────────────────────────────────────────
 
+#include <memory>
+#include <nn_error_macros.hpp>
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "neuralnet.cpp/cli/cli_engine_factory.hpp"
-#include "neuralnet.cpp/compute_layer_bitlinear.hpp"
-#include "neuralnet.cpp/ternary_pack.hpp"
 
 #define NN_TEST_COUNTER g_failures
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::trit_pack::value_of;
+using nn::trit_pack::code_of;
+using nn::trit_pack::dequant_row;
+using nn::trit_pack::kBase3PerByte;
+using nn::trit_pack::words_per_row;
+using nn::trit_pack::at_base3;
+using nn::trit_pack::pack_row_base3;
+using nn::trit_pack::unpack_row_base3;
+using nn::trit_pack::base3_bytes_per_row;
+using nn::trit_pack::bytes_per_row;
+using nn::i8_pack::pack_row;
 
 namespace
 {
@@ -619,7 +643,7 @@ void test_bitlinear_shapes(nn::ComputeEngine& eng, const char* tag)
         {70, 150, 100},   // 两向都多块 + 尾块
         {256, 64, 9},     // 窄 N 刚过分派门（9 > 8 → 分块内核）+ K 整块
         {256, 64, 4},     // 窄 N 落在 GEMV 门内（4 ≤ 8 → 打包 GEMV 内核）
-        {17, 65, 520},    // 宽 N + 行尾块
+        {17, 65, 520},    // 宽 N + 行尾块（f16 缓冲 4B 对齐回归锁，P3 门 D）
     };
     for (int p = 0; p < 2; ++p)
     {

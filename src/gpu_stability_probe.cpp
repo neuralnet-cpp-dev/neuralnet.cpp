@@ -26,6 +26,7 @@
 //   设备选择在首个 GpuBackend::shared() 之前注入 NN_VULKAN_DEVICE。
 // ────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
@@ -37,10 +38,20 @@
 #include <string>
 #include <utility>
 #include <vector>
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 
-#include "neuralnet.cpp/cli/cli_gpu_option.hpp"
-#include "neuralnet.cpp/cli/cli_help.hpp"
-#include "neuralnet.cpp/nn.hpp"
 
 namespace
 {
@@ -456,21 +467,10 @@ int main(int argc, char** argv)
     }
     if (gpu)
     {
-        // MSVC CRT 弃用 getenv（-Werror）：按平台用 _dupenv_s / getenv。
-        const char* env = nullptr;
-#if defined(_MSC_VER)
-        char* buf = nullptr;
-        std::size_t len = 0;
-        _dupenv_s(&buf, &len, "NN_VULKAN_DEVICE");
-        env = buf;
-#else
-        env = std::getenv("NN_VULKAN_DEVICE");
-#endif
+        // 行为开关（RV-09：读取收敛到 core_env.hpp）。
+        const std::string env = ::nn::detail::env_string_raw("NN_VULKAN_DEVICE");
         std::printf("CONFIG device=%s (NN_VULKAN_DEVICE=%s) steps=%zu\n", device_desc.c_str(),
-                    env ? env : "<unset>", steps);
-#if defined(_MSC_VER)
-        std::free(buf);
-#endif
+                    env.empty() ? "<unset>" : env.c_str(), steps);
     }
     else
     {

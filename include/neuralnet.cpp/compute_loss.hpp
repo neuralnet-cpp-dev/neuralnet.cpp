@@ -33,16 +33,6 @@
 namespace nn
 {
 
-#if defined(NN_EXPR_SCAN)
-// ── AOT 自登记锚点（表达式自登记约定：新增表达式不改 scan_exprs）────────
-// CE sparse 的 online-softmax fold 是**值构造**（make_fold_logsumexp，类型
-// 不编码结构，FusedAnchor 按类型登记覆盖不到）→ 由消费方经 FoldAnchor 在
-// 静态初始化期登记本调用点实际构造的结构变体。k/stride 是形状参数（不进
-// key）→ 代表值一份覆盖所有形状；视图 kind 进 key → trans（转置直读）即
-// CE 的构造形态。
-inline const nn::dsl::FoldAnchor g_anchor_ce_lse_fold{
-    nn::expr::make_fold_logsumexp(64, nn::expr::trans(64))};
-#endif
 
 // ══════════════════════════════════════════════════════════════════════════
 // Loss — 引擎化损失函数基类

@@ -138,13 +138,14 @@ backward: grad_K (n_head*d_k, N) → scatter_add_rows(expand_idx) → grad_K_kv 
 ```
 
 `expand_idx` 是长度为 `n_head*d_k` 的宿主常量向量（`src_row = (h / n_rep) * d_k + r`），
-经 `detail::upload_span` 上桥（铁律 #12 允许的"层自算辅助数据"：索引表），在 `init_impl`
+经 `nn::upload_span` 上桥（铁律 #12 允许的"层自算辅助数据"：索引表），在 `init_impl`
 构建一次、常驻。**反向复用同一张表**——重复的两行在 `scatter_add_rows` 里自然累加，正好是
 "多个 query 头共享一个 KV 头"的梯度语义。
 
-**为什么选展开而不是改 fold**：`dsl::make_fold_attn_o` 与它的 AOT 注册表是**注册表契约**
-（`AGENTS.md` §7）——让 fold body 感知 `n_kv` 等于新增结构 + 新增注册，且 CPU/GPU 两侧同步。
-展开方案让 fold 与注册表**零改动**，代价是 `n_rep` 倍的 K/V 物化（本项目规模可忽略；
+**为什么选展开而不是改 fold**：`dsl::make_fold_attn_o` 的 body 形状是**表达式契约**
+（`AGENTS.md` §7）——让 fold body 感知 `n_kv` 等于新增结构（新结构首次在 GPU 上要现编一次
+JIT，且 CPU/GPU 两侧语义要同步）。
+展开方案让 fold body **零改动**，代价是 `n_rep` 倍的 K/V 物化（本项目规模可忽略；
 in-kernel 版作为 P2 优化项记录）。
 
 **KV-cache 路径**：`forward_step` 里同样展开（`k_new`/`v_new` 投影后 `gather_rows`），

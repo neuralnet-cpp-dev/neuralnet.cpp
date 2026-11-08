@@ -12,6 +12,14 @@ cmake_minimum_required(VERSION 3.30)
 # 它只是元数据——发版时同步到最新 tag，实际版本以 git tag / gh release 为准）
 project(neuralnet.cpp VERSION 1.16.0 LANGUAGES CXX)
 
+# ── Windows：MSVC CRT 的 insecure 弃用（getenv 等）在 clang -Werror 下报错 ──
+# _CRT_SECURE_NO_WARNINGS 是 MSVC CRT 官方逃生阀（cl / clang-cl / clang++ 通用）。
+# 40HX（Windows + clang 23 + MSVC STL + GPU）实测必需：nn_warmup / GPU 引擎头
+# 的 std::getenv 在 -Wdeprecated-declarations -Werror 下直接编译失败。
+if(WIN32)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif()
+
 # GNUInstallDirs：定义 CMAKE_INSTALL_LIBDIR/BINDIR/INCLUDEDIR（install 布局用，
 # docs/internal/34 §5 与 33 §4.3 的 bin/ + lib/ + include/ 干净产物）。
 include(GNUInstallDirs)
@@ -37,7 +45,7 @@ option(NN_BUILD_APPS "Build neuralnet.cpp application/bench executables"
 # ── GPU（Vulkan）开关：消费方在自己工程里一行控制 NN_HAS_VULKAN ───────────
 #   AUTO（默认）= 探测到 Vulkan+glslc 就启用，否则纯 CPU（本仓历史行为）
 #   ON          = 强制要求，缺 Vulkan 或 glslc 直接配置失败（fail-fast）
-#   OFF         = 完全跳过：不探测 Vulkan、不生成 shader、不编 scan_exprs
+#   OFF         = 完全跳过：不探测 Vulkan（AOT 收集链已随 P3 删除，35 号）
 # 嵌入方写法：在 add_subdirectory **之前** set(NN_ENABLE_GPU OFF)（或 -D）。
 set(NN_ENABLE_GPU "AUTO" CACHE STRING "GPU support: AUTO (detect) / ON (require) / OFF (disable)")
 set_property(CACHE NN_ENABLE_GPU PROPERTY STRINGS AUTO ON OFF)
@@ -46,10 +54,10 @@ if(NOT NN_ENABLE_GPU MATCHES "^(AUTO|ON|OFF)$")
 endif()
 
 # ── 本仓源/构建根（CACHE，全局可见）─────────────────────────────────────
-# CMake 函数体在**调用方作用域**求值：消费方调用 nn_enable_gpu_fusion 时，
-# CMAKE_SOURCE_DIR/CMAKE_BINARY_DIR 会解析到消费方的目录（实测报错/路径错）。
-# 因此把本仓的根路径烘焙进 CACHE（INTERNAL 隐含 FORCE，每次配置刷新），
-# 函数体内一律引用这两个变量，与调用方是谁无关。
+# CMake 函数体在**调用方作用域**求值：历史上的 nn_enable_gpu_fusion（已随
+# P3 删除，35 号 D4）在消费方作用域展开时 CMAKE_SOURCE_DIR 会解析错目录。
+# 根路径仍烘焙进 CACHE（INTERNAL 隐含 FORCE），nn_add_module 等一律引用
+# 这两个变量，与调用方是谁无关。
 set(NN_LIB_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE INTERNAL
     "neuralnet.cpp source root (stable under add_subdirectory)")
 set(NN_LIB_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}" CACHE INTERNAL
@@ -125,15 +133,21 @@ if(MSVC)
     # train_state）；Linux 默认 8 MB。统一抬到 8 MB，与 Linux 口径对齐。
     add_link_options(/STACK:8388608)
 else()
-    add_compile_options(-fno-exceptions -Wall -Wextra -Wpedantic -Werror)
+    # ── NN_COMMON_COMPILE_OPTIONS：公共编译选项**单一真源**（P0/D1）────────
+    # 目录级 add_compile_options 与 nn_add_module 的 BMI 自定义命令共用本
+    # 变量——两处曾各写一份，任何一侧漂移都会让 PCM 加载报
+    # "configuration mismatch"（-pthread / 工具链 flags / -D 缺失均属此类）。
+    set(NN_COMMON_COMPILE_OPTIONS
+        -fno-exceptions -Wall -Wextra -Wpedantic -Werror)
     # GCC 15.2 在 -O3 + PCH 下对 std::optional / std::unique_ptr 的**内联析构**
     # 报 -Wmaybe-uninitialized 假阳性（诊断里的内存位置全是 <unknown>；实测
     # src/layer_lifetime_test.cpp 的 `unique_ptr<nn::Model>` 析构路径，成员已由
     # make_unique/默认初始化，无真实未初始化读取）。Clang 不产生该告警，因此
     # 只对 GNU 关闭此子告警；-Wuninitialized 保持开启。
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        add_compile_options(-Wno-maybe-uninitialized)
+        list(APPEND NN_COMMON_COMPILE_OPTIONS -Wno-maybe-uninitialized)
     endif()
+    add_compile_options(${NN_COMMON_COMPILE_OPTIONS})
 endif()
 
 # ── LTO（链接期优化，2026-11：Clang thin LTO）──────────────────────────
@@ -142,6 +156,9 @@ endif()
 # 的组合噪音）。NN_ENABLE_LTO=OFF 可关闭（A/B 或排障）。需 clang + lld。
 option(NN_ENABLE_LTO "Clang thin LTO（需 LLD）" ON)
 if(NN_ENABLE_LTO AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND NOT MSVC)
+    # -flto=thin 进 NN_COMMON（P0/D1）：消费方目标与 BMI 同源。--precompile
+    # 只做前端、不 codegen，实测该 flag 可接受（拒绝时再排除并注释）。
+    list(APPEND NN_COMMON_COMPILE_OPTIONS -flto=thin)
     add_compile_options(-flto=thin)
     add_link_options(-flto=thin -fuse-ld=lld)
     message(STATUS "LTO: Clang thin LTO + LLD 已启用（NN_ENABLE_LTO=OFF 可关闭）")
@@ -158,9 +175,10 @@ endif()
 # ── 编译器特有选项 ───────────────────────────────────────────────────────
 # -fexperimental-library 仅 Clang 识别；GCC 不识别会产生警告
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
-    add_compile_options(-fexperimental-library)
     # f16 矩阵乘法（MatrixT<F16>）无原生 x86 SIMD → 优化器无法向量化是预期行为
     # （§7.2 兼容路径：f32 参考计算 + f16 舍入），抑制 -Wpass-failed 避免 -Werror 下编译失败
+    list(APPEND NN_COMMON_COMPILE_OPTIONS -fexperimental-library -Wno-pass-failed)
+    add_compile_options(-fexperimental-library)
     add_compile_options(-Wno-pass-failed)
 endif()
 # C++ 标准库由编译器默认决定（见文件开头的说明），此处不再显式指定 -stdlib。
@@ -192,18 +210,13 @@ if(NOT NN_COMPILER_LAUNCHER AND NOT CMAKE_CXX_COMPILER_LAUNCHER AND PROJECT_IS_T
     endif()
 endif()
 if(NN_COMPILER_LAUNCHER AND (NN_COMPILER_LAUNCHER_EXPLICIT OR PROJECT_IS_TOP_LEVEL))
-    # ── ccache × PCH：把 sloppiness 钉进编译命令 ──────────────────────────
-    # ccache 手册《Precompiled headers》要求 Clang 侧**三项同时满足**才能缓存
-    # "用了 PCH 的 TU"：① sloppiness 含 `pch_defines,time_macros`；② 以
-    # `-include-pch` 使用 PCH（CMake 就是这么传的）；③ 编译带
-    # `-fno-pch-timestamp`（见文件末尾 PCH 落地块）。缺 ①/③ 时 ccache 对**每个**
-    # 用 PCH 的 TU 都记 "Could not use precompiled header" → 全部不可缓存，
-    # 而本仓 42+ 个目标的编译**全部**走 PCH，等于缓存形同虚设。
-    # 这里用 `cmake -E env` 把 sloppiness 钉在命令前缀里，**不依赖用户全局
-    # ccache 配置**（避免"换个机器/换个人就悄悄失效，还看不出慢在哪"）。
-    # 两项 sloppiness 对本仓安全：全仓无 `__DATE__` / `__TIME__` / `__TIMESTAMP__`
-    # （`pch_defines` 只在"用 PCH + 源内 #define 影响 PCH 内容"的写法下才有风险，
-    # 而 PCH 是强制前置包含、源内 #define 影响不到它）。
+    # ── ccache：把 sloppiness 钉进编译命令 ────────────────────────────────
+    # `time_macros`：本仓无 `__DATE__`/`__TIME__`/`__TIMESTAMP__`，钉上是防御性
+    # 配置（防未来头引入时间宏后 ccache 静默退化为预处理模式不命中）。
+    # `pch_defines`：本仓共享 PCH 已随 35 号 D9 删除，此项仅作无害冗余保留
+    #（若个别环境的工具链自带前置包含仍用得上）。
+    # 用 `cmake -E env` 钉在命令前缀里，**不依赖用户全局 ccache 配置**
+    #（避免"换个机器/换个人就悄悄失效，还看不出慢在哪"）。
     if(NN_COMPILER_LAUNCHER MATCHES "ccache")
         # ⚠ 必须写成**单个**字符串：写成两个相邻的带引号参数会变成 CMake 列表
         #   （分号连接）→ 命令行里被 `sh` 当成第二个命令，实测报
@@ -259,10 +272,11 @@ find_package(Threads REQUIRED)
 # GCC 14+ 和 Clang (使用 libstdc++) 都需要链接实验性库才能使用 std::stacktrace。
 # GCC 使用 stdc++exp，Clang 可能需要 stdc++exp 或 stdc++_libbacktrace。
 # 探测一次，成功后通过 nn_core INTERFACE 传播给所有目标。
-# ⚠ **只有 `tools/scan_exprs.cpp` 用 std::stacktrace**（库头文件零使用，已 grep
-#   确认）；嵌入（add_subdirectory）消费方编译头文件根本不需要它。因此 GNU 下
-#   探测失败时：顶层工程仍 FATAL_ERROR（保住既有行为），嵌入方降级为警告 +
-#   留空——否则消费方会为了一个用不到的库在配置期被卡死。
+# ⚠ 库头文件零 std::stacktrace 使用（全仓 grep 证实）。历史用户
+#   `tools/scan_exprs.cpp` 已随 AOT 收集链删除（P3/D4，35 号）——**本探测
+#   目前无消费者**，保留仅为不改动既有链接口径（nn_core 仍 LINK stdc++exp）；
+#   后续清理时可整体移除以放宽 GNU 顶层配置的 FATAL 条件。嵌入方失败仍
+#   降级为警告 + 留空。
 
 set(NN_STACKTRACE_FATAL ${PROJECT_IS_TOP_LEVEL})
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -289,7 +303,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         elseif(NN_STACKTRACE_FATAL)
             message(FATAL_ERROR "std::stacktrace 需要 stdc++exp 或 stdc++_libbacktrace")
         else()
-            message(WARNING "std::stacktrace 库未找到（嵌入模式降级：仅 tools/scan_exprs 受影响）")
+            message(WARNING "std::stacktrace 库未找到（嵌入模式降级；当前无消费者，见上方注释）")
             set(NN_STACKTRACE_LIB "")
         endif()
     endif()
@@ -338,10 +352,19 @@ add_library(nn_core INTERFACE)
 # 主仓库已删除与抽象层重复的接口/值类型头（algebra_* / compute_engine /
 # compute_tensor / core_* / expr_spec 等），同名头一律解析到抽象层 —— 与
 # libnn-cpu.so / libnn-gpu.so（LGPL）按同一份头编译，跨界 ABI 一致。
+# engine/engine/include（LGPL 实现目录）放**最后**，只保留引擎实现头
+# （expr_dsl / expr_fold / expr_registry / ternary_pack / int8_pack / kernel_cache /
+# kernelgen_api / nn_api 等），不再保存层/模型/优化器头副本（2026-11 去重，
+# scripts/check_header_sync.py 随之下线）；消费侧头（层/模型/训练/数据集/
+# 分词器/优化器）单一真源在主仓库 include/，引擎测试也已改为引用该目录。
+# model_keyvalue_record 为 engine kernel_cache 与主仓共用的 MIT 值类型，
+# 单一真源在抽象层（engine/abstraction/include/neuralnet.cpp/）。
 target_include_directories(nn_core INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/engine/include/neuralnet.cpp>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/engine/include>)
 target_link_libraries(nn_core INTERFACE Threads::Threads)
 if(NN_STACKTRACE_LIB)
     target_link_libraries(nn_core INTERFACE ${NN_STACKTRACE_LIB})
@@ -378,11 +401,10 @@ endif()
 #      + **GPU 开启时**的四项附加（在下方 `if(Vulkan_FOUND)` 块内补：
 #      NN_HAS_VULKAN 宏 + generated/ 嵌入头目录 + Vulkan::Vulkan + shader
 #      生成依赖）。
-# ⚠ 刻意与 nn_core 分离的原因：
-#   ① `scan_exprs` / 收集器必须保持**无 NN_HAS_VULKAN**（AOT 闭合世界，
-#      AGENTS §7 铁律），它们只链 nn_core；
-#   ② 下方这些「编译选项」只该给**真正的库使用者**（库内目标已从本文件的
-#      目录级 add_compile_options 拿到，重复传递会让命令行出现两份相同 flag）。
+# ⚠ 刻意与 nn_core 分离的原因（AOT 收集器已随 P3 删除，35 号 D4——原 ① 的
+#   "收集器无 NN_HAS_VULKAN" 约束随之消失，本分离保留）：
+#   下方这些「编译选项」只该给**真正的库使用者**（库内目标已从本文件的
+#   目录级 add_compile_options 拿到，重复传递会让命令行出现两份相同 flag）。
 add_library(neuralnet_cpp INTERFACE)
 target_link_libraries(neuralnet_cpp INTERFACE nn_core)
 
@@ -413,38 +435,31 @@ add_library(neuralnet::nn ALIAS neuralnet_cpp)
 # ── 预编译头（PCH）：本项目编译时间的最大头 ──────────────────────────────
 # 库是 header-only，每个 TU 都要把 `nn.hpp`（→ 全部 Layer/Loss/Optimizer/
 # Engine + 构建期嵌入的 36 份原语 SPIR-V + AOT 融合注册表，合计 ~7MB 头文本）
-# 从头 parse 一遍。实测（Debug / clang / 本机）单 TU：
-#   无 PCH 17.5s → 有 PCH 9.8s（-44%）。
-# 所有候选目标的编译条件完全相同 → 只编**一份** PCH 供它们复用（REUSE_FROM）：
-# 31 份逐目标 PCH 合计约 780s CPU，共享后只剩 1 份。见文件末尾的落地块。
-# 关掉：-DNN_ENABLE_PCH=OFF。
-# ⚠ **收集器目标不套 PCH**：`scan_exprs.cpp` 是在**源文件内**（include 之前）
-#   自行 `#define NN_EXPR_SCAN` 的——PCH 会在该宏生效前把 nn.hpp 预编译进 AST，
-#   导致 DSL 收集钩子整体失效（注册表空 → 构建硬失败）。故只有经
-#   `nn_add_executable` 建的应用/测试目标进入候选。
-option(NN_ENABLE_PCH "Precompile nn.hpp once and reuse it across targets" ON)
+# 从头 parse 一遍。历史上用共享 PCH（`nn.hpp` 预编译一次 + `REUSE_FROM`）提速；
+# src/ 全量模块化（35 号 D8）后消费方改经 `-fmodule-file` 取声明、候选清零，
+# PCH 机制整体删除（35 号 D9）。
 
 # ── 便捷函数：统一添加可执行目标 ────────────────────────────────────────
-# PCH **不在这里挂**：目标编译条件（NN_HAS_VULKAN / include 目录）要到文件
-# 末尾的 GPU 循环才定型，提前挂会与共享 PCH 目标的属性对不上（REUSE_FROM
-# 要求两边完全一致）。这里只登记候选，末尾统一落地。
 function(nn_add_executable name)
     add_executable(${name} ${ARGN})
     target_link_libraries(${name} PRIVATE nn_core)
     # GPU 块按这份名单统一挂 NN_HAS_VULKAN / Vulkan::Vulkan。名单与创建点
     # 同源，避免"测试目标只在 NN_ENABLE_TESTS=ON 时才进 GPU 名单"这类漏配：
     # 编译门是 NN_BUILD_APPS OR NN_ENABLE_TESTS（默认 Release 也会编出全部
-    # 测试程序），漏挂时共享 PCH 里的 NN_HAS_VULKAN 会泄漏进 TU，表现为
-    # 链接期整屏 `undefined reference to vk*`。
+    # 测试程序）。
     list(APPEND NN_EXECUTABLE_TARGETS ${name})
     set(NN_EXECUTABLE_TARGETS ${NN_EXECUTABLE_TARGETS} PARENT_SCOPE)
-    if(NN_ENABLE_PCH)
-        set(NN_PCH_CANDIDATES ${NN_PCH_CANDIDATES} ${name} PARENT_SCOPE)
+    # P5/D8（35 号）：单点接线——全部可执行目标自动挂全部域模块
+    #（-fmodule-file 链）。同 TU 混用（import + 文本 include 同头）已实测
+    # 合法（thin 模块全局实体）。
+    if(DEFINED NN_ALL_MODULES)
+        nn_use_modules(${name} ${NN_ALL_MODULES})
     endif()
 endfunction()
 
 # ══════════════════════════════════════════════════════════════════════════
-#  C++ 模块：粒度导入路径（nn.core / nn.kvrecord / nn.dataset / nn.tokenizer）
+#  C++ 模块：粒度导入路径（P4 后 13 域：core/kvrecord/dataset/tokenizer +
+#  expr/engine/layer/loss/opt/model/train/domain/cli）
 # ══════════════════════════════════════════════════════════════════════════
 # 形态 = 「薄接口」模块（research/modules-import-nn 实证，2026-11-01）：
 #   全局模块片段文本包含域头文件（STL 与库声明留在全局模块，实体仍挂全局
@@ -454,26 +469,14 @@ endfunction()
 #   `export import nn.<依赖域>` 让消费方只 import 最顶域即可连带拿到依赖域
 #   名字（C++ 模块的 import **不可传递**，必须显式 re-export）。
 # 约束（实证，README §4）：
-#   · 宏（NN_TRY / NN_UNWRAP / NN_ASSERT_* 等）**不可导出** → 消费者双轨：
-#     `import nn.<域>` + 按需 `#include <neuralnet.cpp/core_errors.hpp>` 宏头；
-#   · STL 留在全局片段 → 消费者自带用到的 STL 头；
-#   · 仅 GNU 驱动 Clang（GCC / cl.exe / clang-cl 无等效显式 -fmodule-file
-#     姿势，NN_MODULES_ENABLED 自动为 OFF，消费方回落 include 分支）。
+#   · 宏（NN_TRY / NN_UNWRAP / NN_ASSERT_* 等）**不可导出** → 消费者
+#     `import nn.<域>` + 按需 `#include <nn_error_macros.hpp>` 宏岛头；
+#   · STL 留在全局片段 → 消费者自带用到的 STL 头。
 # 构建 = 显式 BMI 自定义命令（clang --precompile）+ -fmodule-file 经
 #   INTERFACE 目标传播，不开 CMake 模块扫描（见文件头注释的成本说明）。
-# 嵌入消费方默认 OFF（PROJECT_IS_TOP_LEVEL = ON 才默认开）。
-option(NN_ENABLE_MODULES
-    "Build granular C++20 modules (nn.core/nn.kvrecord/nn.dataset/nn.tokenizer) \
-     and switch leaf consumers to import (clang only; embedders default OFF)"
-    ${PROJECT_IS_TOP_LEVEL})
-if(NN_ENABLE_MODULES AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND NOT MSVC)
-    set(NN_MODULES_ENABLED ON)
-else()
-    set(NN_MODULES_ENABLED OFF)
-endif()
-message(STATUS "C++ modules (import nn.<domain>): "
-               "${NN_MODULES_ENABLED} (NN_ENABLE_MODULES=${NN_ENABLE_MODULES}, "
-               "compiler=${CMAKE_CXX_COMPILER_ID})")
+# **无条件构建（P1/D2）**：不设开关、不做编译器识别——BMI 姿势固定为
+#   GNU 驱动 Clang（--precompile / -fmodule-file=），不支持的编译器直接
+#   构建报错（用户定调，见 docs/internal/35 D2）。
 
 # ── 各域头文件闭包（nn_add_module 的 DEPENDS；跨域头改动触发对应 BMI 重编）──
 # 闭包 = 模块单元文本包含的全部 nn 头（含传递）。宁多勿少：多列只会偶发
@@ -484,7 +487,9 @@ message(STATUS "C++ modules (import nn.<domain>): "
 set(NN_ABST_INC engine/abstraction/include/neuralnet.cpp)
 set(NN_MOD_CORE_HEADERS
     ${NN_ABST_INC}/core_assert.hpp
+    ${NN_ABST_INC}/core_observer_ptr.hpp
     ${NN_ABST_INC}/core_config.hpp
+    ${NN_ABST_INC}/core_env.hpp
     ${NN_ABST_INC}/core_errors.hpp
     include/neuralnet.cpp/core_file.hpp
     ${NN_ABST_INC}/core_parallel.hpp
@@ -493,14 +498,14 @@ set(NN_MOD_CORE_HEADERS
     ${NN_ABST_INC}/precision.hpp)
 # kvrecord 闭包 = 自身 + core（model_keyvalue_record → core_errors）
 set(NN_MOD_KVRECORD_HEADERS
-    include/neuralnet.cpp/model_keyvalue_record.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
     ${NN_MOD_CORE_HEADERS})
 # dataset 闭包 = dataset/dataset_format + kvrecord + core_file/core_sha256/core_errors
 #   （dataset 不依赖 threadpool/parallel/config/precision/assert，无需全 core）
 set(NN_MOD_DATASET_HEADERS
     include/neuralnet.cpp/dataset.hpp
     include/neuralnet.cpp/dataset_format.hpp
-    include/neuralnet.cpp/model_keyvalue_record.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
     ${NN_ABST_INC}/core_errors.hpp
     include/neuralnet.cpp/core_file.hpp
     include/neuralnet.cpp/core_sha256.hpp)
@@ -519,41 +524,378 @@ set(NN_MOD_TOKENIZER_HEADERS
     ${NN_ABST_INC}/core_assert.hpp
     ${NN_ABST_INC}/precision.hpp
     include/neuralnet.cpp/dataset_format.hpp
-    include/neuralnet.cpp/model_keyvalue_record.hpp)
+    ${NN_ABST_INC}/model_keyvalue_record.hpp)
+
+# ── P4 新域闭包（35 号）：跨域头改动触发对应 BMI 重编；宁多勿少 ──────────
+# 由头包含图解析生成（expr 22 / engine 37 / layer 22 / loss 10 / opt 12 /
+# model 31 / train 48 / domain 27 / cli 74）。
+set(NN_MOD_EXPR_HEADERS
+    engine/abstraction/include/neuralnet.cpp/algebra_matrix.hpp
+    engine/abstraction/include/neuralnet.cpp/algebra_ops.hpp
+    engine/abstraction/include/neuralnet.cpp/algebra_span.hpp
+    engine/abstraction/include/neuralnet.cpp/backend/compute_gpu_storage.hpp
+    engine/abstraction/include/neuralnet.cpp/compute_tensor.hpp
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_config.hpp
+    engine/abstraction/include/neuralnet.cpp/core_domain.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/core_parallel.hpp
+    engine/abstraction/include/neuralnet.cpp/core_threadpool.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_graph.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_op_table.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_opt.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_spec.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    engine/engine/include/neuralnet.cpp/expr_dsl.hpp
+    engine/engine/include/neuralnet.cpp/expr_fold.hpp
+    engine/engine/include/neuralnet.cpp/expr_registry.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+)
+set(NN_MOD_ENGINE_HEADERS
+    engine/abstraction/include/neuralnet.cpp/algebra_matrix.hpp
+    engine/abstraction/include/neuralnet.cpp/algebra_ops.hpp
+    engine/abstraction/include/neuralnet.cpp/algebra_span.hpp
+    engine/abstraction/include/neuralnet.cpp/backend/compute_gpu_storage.hpp
+    engine/abstraction/include/neuralnet.cpp/compute_engine.hpp
+    engine/abstraction/include/neuralnet.cpp/compute_tensor.hpp
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_config.hpp
+    engine/abstraction/include/neuralnet.cpp/core_domain.hpp
+    engine/abstraction/include/neuralnet.cpp/core_env.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/core_observer_ptr.hpp
+    engine/abstraction/include/neuralnet.cpp/core_parallel.hpp
+    engine/abstraction/include/neuralnet.cpp/core_profile.hpp
+    engine/abstraction/include/neuralnet.cpp/core_threadpool.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_graph.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_op_table.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_opt.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_spec.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_gpu_tensor_impl.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_memory_pool.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_staging_ring.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend_destroy.inc
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend_frame.inc
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend_ops.inc
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend_pipelines.inc
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_device.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_pipeline_catalog.hpp
+    engine/engine/include/neuralnet.cpp/backend/compute_vk_pipeline_specs.hpp
+    engine/engine/include/neuralnet.cpp/int8_pack.hpp
+    engine/engine/include/neuralnet.cpp/kernel_cache.hpp
+    engine/engine/include/neuralnet.cpp/kernelgen_api.h
+    engine/engine/include/neuralnet.cpp/ternary_pack.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
+)
+set(NN_MOD_LAYER_HEADERS
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/compute_layer.hpp
+    include/neuralnet.cpp/compute_layer_attention.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_layer_bitlinear.hpp
+    include/neuralnet.cpp/compute_layer_bundle.hpp
+    include/neuralnet.cpp/compute_layer_conv.hpp
+    include/neuralnet.cpp/compute_layer_embedding.hpp
+    include/neuralnet.cpp/compute_layer_feedforward.hpp
+    include/neuralnet.cpp/compute_layer_gpt.hpp
+    include/neuralnet.cpp/compute_layer_mlp.hpp
+    include/neuralnet.cpp/compute_layer_rapt.hpp
+    include/neuralnet.cpp/compute_layer_softmax.hpp
+    include/neuralnet.cpp/compute_layer_transformer.hpp
+    include/neuralnet.cpp/compute_position_encoding.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+)
+set(NN_MOD_LOSS_HEADERS
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_loss.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+)
+set(NN_MOD_OPT_HEADERS
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_config.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_optimizer.hpp
+    include/neuralnet.cpp/lr_scheduler.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+)
+set(NN_MOD_MODEL_HEADERS
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_config.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/compute_layer.hpp
+    include/neuralnet.cpp/compute_layer_attention.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_layer_bitlinear.hpp
+    include/neuralnet.cpp/compute_layer_bundle.hpp
+    include/neuralnet.cpp/compute_layer_conv.hpp
+    include/neuralnet.cpp/compute_layer_embedding.hpp
+    include/neuralnet.cpp/compute_layer_feedforward.hpp
+    include/neuralnet.cpp/compute_layer_gpt.hpp
+    include/neuralnet.cpp/compute_layer_mlp.hpp
+    include/neuralnet.cpp/compute_layer_rapt.hpp
+    include/neuralnet.cpp/compute_layer_softmax.hpp
+    include/neuralnet.cpp/compute_layer_transformer.hpp
+    include/neuralnet.cpp/compute_optimizer.hpp
+    include/neuralnet.cpp/compute_position_encoding.hpp
+    include/neuralnet.cpp/core_file.hpp
+    include/neuralnet.cpp/core_sha256.hpp
+    include/neuralnet.cpp/model_container.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_serialization.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+    include/neuralnet.cpp/train_state.hpp
+    include/neuralnet.cpp/training_group_session.hpp
+    include/neuralnet.cpp/training_session.hpp
+)
+set(NN_MOD_TRAIN_HEADERS
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_config.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/core_parallel.hpp
+    engine/abstraction/include/neuralnet.cpp/core_threadpool.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/batch_source.hpp
+    include/neuralnet.cpp/compute_layer.hpp
+    include/neuralnet.cpp/compute_layer_attention.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_layer_bitlinear.hpp
+    include/neuralnet.cpp/compute_layer_bundle.hpp
+    include/neuralnet.cpp/compute_layer_conv.hpp
+    include/neuralnet.cpp/compute_layer_embedding.hpp
+    include/neuralnet.cpp/compute_layer_feedforward.hpp
+    include/neuralnet.cpp/compute_layer_gpt.hpp
+    include/neuralnet.cpp/compute_layer_mlp.hpp
+    include/neuralnet.cpp/compute_layer_rapt.hpp
+    include/neuralnet.cpp/compute_layer_softmax.hpp
+    include/neuralnet.cpp/compute_layer_transformer.hpp
+    include/neuralnet.cpp/compute_loss.hpp
+    include/neuralnet.cpp/compute_optimizer.hpp
+    include/neuralnet.cpp/compute_position_encoding.hpp
+    include/neuralnet.cpp/core_file.hpp
+    include/neuralnet.cpp/core_sha256.hpp
+    include/neuralnet.cpp/dataset.hpp
+    include/neuralnet.cpp/dataset_format.hpp
+    include/neuralnet.cpp/dataset_samples.hpp
+    include/neuralnet.cpp/domain_tokenizer.hpp
+    include/neuralnet.cpp/domain_tokenizer_base.hpp
+    include/neuralnet.cpp/domain_tokenizer_bpe.hpp
+    include/neuralnet.cpp/domain_tokenizer_charbpe.hpp
+    include/neuralnet.cpp/lr_scheduler.hpp
+    include/neuralnet.cpp/model_container.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_serialization.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/rl_experience.hpp
+    include/neuralnet.cpp/rl_pipeline.hpp
+    include/neuralnet.cpp/rl_policy.hpp
+    include/neuralnet.cpp/run_driver.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+    include/neuralnet.cpp/text_train_config.hpp
+    include/neuralnet.cpp/text_trainer.hpp
+    include/neuralnet.cpp/train_state.hpp
+    include/neuralnet.cpp/training_session.hpp
+)
+set(NN_MOD_DOMAIN_HEADERS
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/compute_layer.hpp
+    include/neuralnet.cpp/compute_layer_attention.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_layer_bitlinear.hpp
+    include/neuralnet.cpp/compute_layer_bundle.hpp
+    include/neuralnet.cpp/compute_layer_conv.hpp
+    include/neuralnet.cpp/compute_layer_embedding.hpp
+    include/neuralnet.cpp/compute_layer_feedforward.hpp
+    include/neuralnet.cpp/compute_layer_gpt.hpp
+    include/neuralnet.cpp/compute_layer_mlp.hpp
+    include/neuralnet.cpp/compute_layer_rapt.hpp
+    include/neuralnet.cpp/compute_layer_softmax.hpp
+    include/neuralnet.cpp/compute_layer_transformer.hpp
+    include/neuralnet.cpp/compute_position_encoding.hpp
+    include/neuralnet.cpp/domain_cnn.hpp
+    include/neuralnet.cpp/domain_gpt.hpp
+    include/neuralnet.cpp/domain_mnist.hpp
+    include/neuralnet.cpp/domain_rla.hpp
+    include/neuralnet.cpp/model_container.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+)
+set(NN_MOD_CLI_HEADERS
+    engine/abstraction/include/neuralnet.cpp/algebra_matrix.hpp
+    engine/abstraction/include/neuralnet.cpp/algebra_ops.hpp
+    engine/abstraction/include/neuralnet.cpp/algebra_span.hpp
+    engine/abstraction/include/neuralnet.cpp/backend/compute_gpu_storage.hpp
+    engine/abstraction/include/neuralnet.cpp/compute_engine.hpp
+    engine/abstraction/include/neuralnet.cpp/compute_tensor.hpp
+    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    engine/abstraction/include/neuralnet.cpp/core_config.hpp
+    engine/abstraction/include/neuralnet.cpp/core_domain.hpp
+    engine/abstraction/include/neuralnet.cpp/core_env.hpp
+    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    engine/abstraction/include/neuralnet.cpp/core_parallel.hpp
+    engine/abstraction/include/neuralnet.cpp/core_profile.hpp
+    engine/abstraction/include/neuralnet.cpp/core_threadpool.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_graph.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_op_table.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_opt.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_spec.hpp
+    engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/nn_error_macros.hpp
+    include/neuralnet.cpp/batch_source.hpp
+    include/neuralnet.cpp/cli/cli_engine_factory.hpp
+    include/neuralnet.cpp/cli/cli_gpu_option.hpp
+    include/neuralnet.cpp/cli/cli_help.hpp
+    include/neuralnet.cpp/cli/cli_jit_warmup.hpp
+    include/neuralnet.cpp/cli/cli_lr_scheduler.hpp
+    include/neuralnet.cpp/cli/cli_mnist_io.hpp
+    include/neuralnet.cpp/cli/cli_precision_warning.hpp
+    include/neuralnet.cpp/cli/cli_train_common.hpp
+    include/neuralnet.cpp/cli/text_train_checkpoint.hpp
+    include/neuralnet.cpp/cli/text_train_config.hpp
+    include/neuralnet.cpp/cli/text_train_loop.hpp
+    include/neuralnet.cpp/cli/text_train_recovery.hpp
+    include/neuralnet.cpp/compute_layer.hpp
+    include/neuralnet.cpp/compute_layer_attention.hpp
+    include/neuralnet.cpp/compute_layer_base.hpp
+    include/neuralnet.cpp/compute_layer_bitlinear.hpp
+    include/neuralnet.cpp/compute_layer_bundle.hpp
+    include/neuralnet.cpp/compute_layer_conv.hpp
+    include/neuralnet.cpp/compute_layer_embedding.hpp
+    include/neuralnet.cpp/compute_layer_feedforward.hpp
+    include/neuralnet.cpp/compute_layer_gpt.hpp
+    include/neuralnet.cpp/compute_layer_mlp.hpp
+    include/neuralnet.cpp/compute_layer_rapt.hpp
+    include/neuralnet.cpp/compute_layer_softmax.hpp
+    include/neuralnet.cpp/compute_layer_transformer.hpp
+    include/neuralnet.cpp/compute_loss.hpp
+    include/neuralnet.cpp/compute_optimizer.hpp
+    include/neuralnet.cpp/compute_position_encoding.hpp
+    include/neuralnet.cpp/core_file.hpp
+    include/neuralnet.cpp/core_sha256.hpp
+    include/neuralnet.cpp/dataset.hpp
+    include/neuralnet.cpp/dataset_format.hpp
+    include/neuralnet.cpp/dataset_samples.hpp
+    include/neuralnet.cpp/domain_cnn.hpp
+    include/neuralnet.cpp/domain_gpt.hpp
+    include/neuralnet.cpp/domain_mnist.hpp
+    include/neuralnet.cpp/domain_rla.hpp
+    include/neuralnet.cpp/domain_tokenizer.hpp
+    include/neuralnet.cpp/domain_tokenizer_base.hpp
+    include/neuralnet.cpp/domain_tokenizer_bpe.hpp
+    include/neuralnet.cpp/domain_tokenizer_charbpe.hpp
+    include/neuralnet.cpp/lr_scheduler.hpp
+    include/neuralnet.cpp/model_container.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    include/neuralnet.cpp/model_serialization.hpp
+    include/neuralnet.cpp/model_spec.hpp
+    include/neuralnet.cpp/named_tensor_set.hpp
+    include/neuralnet.cpp/run_driver.hpp
+    include/neuralnet.cpp/tensor_schema.hpp
+    include/neuralnet.cpp/text_train_config.hpp
+    include/neuralnet.cpp/text_trainer.hpp
+    include/neuralnet.cpp/train_state.hpp
+    include/neuralnet.cpp/training_session.hpp
+)
 
 # ── 模块注册：nn_add_module(<短名> <模块源> DEPS <依赖短名...> HEADERS <闭包头...>) ──
 # 短名 = "core" / "kvrecord" / "dataset" / "tokenizer"；C++ 模块全名 = nn.<短名>。
 # 产出：
 #   · <build>/modules/nn.<短名>.pcm —— BMI（自定义命令，DEPENDS 头闭包 + 依赖 BMI）
 #   · nn_mod_<短名>（INTERFACE）—— 消费方 target_link_libraries 即得
-#     -fmodule-file=nn.<短名>=<bmi>（依赖域的标志经 INTERFACE 传递）+ NN_USE_MODULES
+#     -fmodule-file=nn.<短名>=<bmi>（依赖域的标志经 INTERFACE 传递）
 #   · nn_<短名>_bmi（custom target）—— BMI 产物聚合，nn_use_modules 挂到消费方
 function(nn_add_module modname source)
     cmake_parse_arguments(NNM "" "" "DEPS;HEADERS" ${ARGN})
-    if(NOT NN_MODULES_ENABLED)
-        return()
-    endif()
     set(_cpp "nn.${modname}")
     set(_bmi "${NN_LIB_BINARY_DIR}/modules/${_cpp}.pcm")
-    # 编译标志 = 库内目标同款（目录级 add_compile_options 不作用于自定义命令，
-    # 必须在此显式列出；优化标志与消费方同档，避免"同实体两种 -O"的度量失真；
-    # 探针门保持与 nn_core INTERFACE 同值，见该变量注释）。
+    # ── BMI 编译标志 = 目标编译命令**镜像**（P0/D1，docs/internal/35 §0.2）──
+    # 目录级 add_compile_options 不作用于自定义命令，须在此显式重放消费方
+    # 命令行的每一段；任何缺项都会让 PCM 加载报 configuration mismatch：
+    #   ① 调用方/工具链全局 flags（NDK --target=、-stdlib= 等）
+    #   ② 构建类型 flags（CMAKE_CXX_FLAGS_<CONFIG>：Release -O3 -DNDEBUG / Debug -g）
+    #   ③ 公共选项单一真源（-fno-exceptions/-W*/-flto=thin/-fexperimental-library…）
+    #   ④ 优化档（DEBUG/RELEASE_FLAGS，与消费方目录级 genex 同值）+ 方言标准
+    #   ⑤ Threads::Threads 的 INTERFACE_COMPILE_OPTIONS 原样镜像（消费方经
+    #      nn_core 拿到的就是这份；NDK 等环境为 -pthread，glibc≥2.34 为空——
+    #      判据直接取目标属性，与消费方严格同源）
+    #   ⑥ 探针门 + GPU 引擎宏（nn_gpu 在 add_subdirectory(engine) 才创建，
+    #      晚于模块注册 → 用生成期求值的 TARGET_EXISTS 规避顺序问题）
+    #   ⑦ include 路径 = nn_core 的 5 条，顺序亦一致
+    # 刻意不加任何模块消费宏（宏开关已随 P1 删除；任何头都不读它，见 D2 注）。
+    set(_flags "")
+    separate_arguments(_user_flags UNIX_COMMAND "${CMAKE_CXX_FLAGS}")
+    list(APPEND _flags ${_user_flags})
+    if(CMAKE_BUILD_TYPE)
+        # cache 变量名是大写（CMAKE_CXX_FLAGS_RELEASE），直接嵌套
+        # ${CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE}} 会拼出 CMAKE_CXX_FLAGS_Release → 空。
+        string(TOUPPER "${CMAKE_BUILD_TYPE}" _cfg_type)
+        separate_arguments(_cfg_flags UNIX_COMMAND
+            "${CMAKE_CXX_FLAGS_${_cfg_type}}")
+        list(APPEND _flags ${_cfg_flags})
+        unset(_cfg_type)
+    endif()
+    list(APPEND _flags ${NN_COMMON_COMPILE_OPTIONS})
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         set(_opt ${DEBUG_FLAGS})
     else()
         set(_opt ${RELEASE_FLAGS})
     endif()
-    set(_flags
-        "-std=c++${CMAKE_CXX_STANDARD}"
-        -fno-exceptions -Wall -Wextra -Wpedantic -Werror
-        -fexperimental-library -Wno-pass-failed
-        ${_opt}
-        -I "${NN_LIB_SOURCE_DIR}/include"
-        -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include"
-        -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp")
+    list(APPEND _flags ${_opt} "-std=c++${CMAKE_CXX_STANDARD}")
+    if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        # Windows + clang（GNU 驱动）：CMake 给消费方编译加 -D_DLL -D_MT
+        # -Xclang --dependent-lib=msvcrt（/MD 动态 CRT），BMI 自定义命令必须
+        # 同值——否则 pcm 记录 MT_StaticRelease linker options，import 传播
+        # 与消费方本地 MD 冲突（lld-link RuntimeLibrary mismatch，40HX 实测）。
+        list(APPEND _flags -D_DLL -D_MT -Xclang --dependent-lib=msvcrt)
+    endif()
+    get_target_property(_thread_opts Threads::Threads INTERFACE_COMPILE_OPTIONS)
+    if(_thread_opts)
+        list(APPEND _flags ${_thread_opts})
+    endif()
     if(NN_ENABLE_PROBES)
         list(APPEND _flags -DNN_ENABLE_PROBES=1)
     endif()
+    list(APPEND _flags "$<$<TARGET_EXISTS:nn_gpu>:-DNN_GPU_ENGINE=1>")
+    list(APPEND _flags
+        -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp"
+        -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include"
+        -I "${NN_LIB_SOURCE_DIR}/include"
+        -I "${NN_LIB_SOURCE_DIR}/engine/engine/include/neuralnet.cpp"
+        -I "${NN_LIB_SOURCE_DIR}/engine/engine/include")
     set(_file_deps "")
     foreach(d IN LISTS NNM_DEPS)
         list(APPEND _flags "-fmodule-file=nn.${d}=${NN_LIB_BINARY_DIR}/modules/nn.${d}.pcm")
@@ -572,7 +914,6 @@ function(nn_add_module modname source)
     )
     add_library(nn_mod_${modname} INTERFACE)
     target_compile_options(nn_mod_${modname} INTERFACE "-fmodule-file=${_cpp}=${_bmi}")
-    target_compile_definitions(nn_mod_${modname} INTERFACE NN_USE_MODULES)
     foreach(d IN LISTS NNM_DEPS)
         target_link_libraries(nn_mod_${modname} INTERFACE nn_mod_${d})
     endforeach()
@@ -585,27 +926,69 @@ function(nn_add_module modname source)
 endfunction()
 
 # ── 消费方接入：nn_use_modules(<目标> <模块...>) ──────────────────────────
-# 链接模块 INTERFACE（-fmodule-file 链 + NN_USE_MODULES 宏）并把目标从共享
-# PCH 候选剔除——模块消费方的 TU 同时带 nn.hpp 的 PCH 与模块 BMI 时，同一
-# 实体两处声明（PCH 按 NN_HAS_VULKAN 编、BMI 不带）存在分歧风险，叶子目标
-# 编译量小，直接各自解析更稳。
+# 链接模块 INTERFACE（-fmodule-file 链）并把目标从共享 PCH 候选剔除——
+# 模块消费方的 TU 同时带 nn.hpp 的 PCH 与模块 BMI 时，同一实体两处声明
+# （PCH 按 NN_HAS_VULKAN 编、BMI 不带）存在分歧风险，叶子目标编译量小，
+# 直接各自解析更稳。
 function(nn_use_modules target)
-    if(NOT NN_MODULES_ENABLED)
-        return()
-    endif()
     foreach(m IN LISTS ARGN)
         if(TARGET nn_mod_${m})
             target_link_libraries(${target} PRIVATE nn_mod_${m})
             add_dependencies(${target} nn_${m}_bmi)
+            # ── BMI 必须是消费方 TU 的**真实编译依赖**（P6 修复，2026-11-06）─
+            # add_dependencies 在 ninja 里是 order-only（| 前缀）：BMI mtime 变
+            # 不触发 TU 重编，且 clang 的 -MD depfile **不记录** -fmodule-file
+            # 的 pcm（实测 .ninja_deps 无 pcm 条目）→ 改域头（inline 实现）
+            # 只重编 BMI，import 它的消费方 .o 保留旧实例化 = 陈旧代码。
+            # OBJECT_DEPENDS 是 build 边的真实依赖（P5 前 PCH 时代由 PCH 重编
+            # 承担同一职责，P5 删 PCH 后必须显式补上）。代价 = 改公共头时
+            # 消费方全量真实重编（正确行为，35 §2.4 口径预期）。
+            get_target_property(_mod_srcs ${target} SOURCES)
+            if(_mod_srcs)
+                foreach(s IN LISTS _mod_srcs)
+                    # OBJECT_DEPENDS 路径按绝对路径解析（相对路径以构建目录为基）
+                    get_filename_component(_s_abs "${s}" ABSOLUTE
+                        BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+                    set_property(SOURCE ${_s_abs} APPEND PROPERTY
+                        OBJECT_DEPENDS "${NN_LIB_BINARY_DIR}/modules/nn.${m}.pcm")
+                endforeach()
+            endif()
         endif()
     endforeach()
-    list(REMOVE_ITEM NN_PCH_CANDIDATES ${target})
-    set(NN_PCH_CANDIDATES ${NN_PCH_CANDIDATES} PARENT_SCOPE)
+    # ── 模块消费方必须绕开编译 launcher（ccache/sccache）────────────────
+    # 根因（ccache 4.13 手册明言 "does currently not support standard C++
+    # modules"）：ccache 的 key 不含 -fmodule-file 的 BMI 内容——direct 模式
+    # 的 depfile 只记录**文本包含**的头，import 进来的头（公共头改 inline、
+    # 改实现）完全不可见。于是"BMI 重编 + 消费方源码没动"时 ccache 会吐出
+    # **inline 语义改动前的旧 .o**（实测：text_train.cpp 的
+    # parse_text_train_args 加 inline 后，dev 目录链出 undefined symbol、
+    # 绕过 ccache 手工编译即正常）。禁用后正确性由 ninja 依赖（源 + BMI
+    # mtime + depfile）保证；命中率损失可忽略——BMI 变化与文本头变化强相关，
+    # 两种口径下消费方本来都会真实重编。
+    set_property(TARGET ${target} PROPERTY RULE_LAUNCH_COMPILE "")
 endfunction()
 
+# ── 门禁：src/ 全量 import 化后不得残留文本 include 库头（P6-2，35 号）────
+# src/*.cpp（含测试聚合体）一律经 `import nn.*` 取声明（P5/D8）；残留
+# `#include <neuralnet.cpp/…>` 会绕过模块边界（GMF 文本包含 + import 同实体
+# 的 ODR 隐患），且自 D8 起已无任何必要。合法例外：`<nn_error_macros.hpp>`
+#（宏岛头，不带 neuralnet.cpp/ 前缀，宏不可导出——P2/D3）。
+if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
+    file(GLOB _nn_src_files CONFIGURE_DEPENDS src/*.cpp)
+    foreach(_f IN LISTS _nn_src_files)
+        file(READ "${_f}" _nn_src_content)
+        if(_nn_src_content MATCHES "#include <neuralnet\\.cpp/")
+            message(FATAL_ERROR
+                "[nn-gate] ${_f} 残留文本 include 库头：src/ 已全量 import 化"
+                "（35 号 D8，P5），请改用 `import nn.*`（合法 include 仅"
+                " `<nn_error_macros.hpp>` 宏岛头与 STL）")
+        endif()
+    endforeach()
+endif()
+
 # ── 四个叶子域模块（DAG：core → kvrecord → dataset → tokenizer）──────────
-# 域边界 = 合并回主仓的四个子仓域；全部不依赖 GPU/AOT 扫描（NN_EXPR_SCAN 的
-# 宏收集无法进模块，engine/layers/model/train 域本轮不模块化，见研究 README）。
+# 域边界 = 合并回主仓的四个子仓域；AOT 宏收集链已随 P3 删除（35 号 D4），
+# 其余域的模块化按 35 号 P4 铺开。
 nn_add_module(core        modules/nn.core.cpp
     HEADERS ${NN_MOD_CORE_HEADERS})
 nn_add_module(kvrecord    modules/nn.kvrecord.cpp
@@ -618,6 +1001,22 @@ nn_add_module(tokenizer   modules/nn.tokenizer.cpp
     DEPS core kvrecord dataset
     HEADERS ${NN_MOD_TOKENIZER_HEADERS})
 
+# ── P4 新域（35 号）：全部 DEPS core（薄模块 + 命名空间导出，DAG 无域间环）──
+nn_add_module(expr     modules/nn.expr.cpp     DEPS core HEADERS ${NN_MOD_EXPR_HEADERS})
+nn_add_module(engine   modules/nn.engine.cpp   DEPS core HEADERS ${NN_MOD_ENGINE_HEADERS})
+nn_add_module(layer    modules/nn.layer.cpp    DEPS core HEADERS ${NN_MOD_LAYER_HEADERS})
+nn_add_module(loss     modules/nn.loss.cpp     DEPS core HEADERS ${NN_MOD_LOSS_HEADERS})
+nn_add_module(opt      modules/nn.opt.cpp      DEPS core HEADERS ${NN_MOD_OPT_HEADERS})
+nn_add_module(model    modules/nn.model.cpp    DEPS core HEADERS ${NN_MOD_MODEL_HEADERS})
+nn_add_module(train    modules/nn.train.cpp    DEPS core HEADERS ${NN_MOD_TRAIN_HEADERS})
+nn_add_module(domain   modules/nn.domain.cpp   DEPS core HEADERS ${NN_MOD_DOMAIN_HEADERS})
+nn_add_module(cli      modules/nn.cli.cpp      DEPS core HEADERS ${NN_MOD_CLI_HEADERS})
+
+# 全域清单（D8 单点接线用；保持与上方注册一致——新增域必须同步追加）
+set(NN_ALL_MODULES
+    core kvrecord dataset tokenizer
+    expr engine layer loss opt model train domain cli)
+
 # ── 测试/验证目标开关（默认关闭） ──────────────────────────────────────
 # 默认只构建应用与基准工具目标，避免生成大量验证程序；
 # 需要时用 -DNN_ENABLE_TESTS=ON 开启全部 gradcheck / *_test / *_probe / *_debug。
@@ -627,8 +1026,8 @@ option(NN_ENABLE_TESTS "Build test/verification executables" OFF)
 # "探针" = 会在**热路径**采样/打印/下载/扫描的诊断代码 + 只服务于排障的可执行
 # 目标。打开后：① 库头里的探针门打开（`nn_dbg_scan`/`NN_F16_DEBUG` 中间量扫描、
 # `NN_PREC_TRACE` 变体与边界 cast 归因、`text_train` 的 `NN_NAN_TRACE` /
-# `NN_MEM_STATS`）；② 创建探针可执行目标（mem_probe / f16_cpu_probe /
-# gpu_stability_probe）。
+# `NN_MEM_STATS`）；② 创建探针可执行目标（f16_cpu_probe / gpu_stability_probe；
+# 显存分项探针 mem_probe 已随引擎 .so 化迁往新仓库 compute.neuralnet.cpp）。
 # 关闭（默认）时这些代码**不参与编译**：没有额外分支、没有字符串、没有 host
 # 下载路径，相关环境变量一律无效——探针只在排障时按需打开，不允许"设了环境
 # 变量就悄悄拖慢正常训练/推理"。运行时**行为开关**（NN_VULKAN_DEVICE 设备选择、
@@ -666,27 +1065,29 @@ if(NN_BUILD_APPS)
     nn_add_executable(tokenizer_train src/tokenizer_train.cpp)
     nn_add_executable(tokenizer_infer src/tokenizer_infer.cpp)
     list(APPEND NN_APP_TARGETS text_train text_infer tokenizer_train tokenizer_infer)
-    nn_use_modules(tokenizer_train tokenizer)
-    nn_use_modules(tokenizer_infer tokenizer)
-
+        
     # ── 数据集工具（生成器 + 旧格式转换器）────────────────────────────────
     nn_add_executable(dataset_gen src/dataset_gen.cpp)
     nn_add_executable(dataset_convert src/dataset_convert.cpp)
     list(APPEND NN_APP_TARGETS dataset_gen dataset_convert)
-    nn_use_modules(dataset_gen tokenizer)
-
+    
     # ── 运行期 JIT 演示（Phase 2；docs/internal/33）───────────────
     # 展示"不在内嵌注册表的表达式 → JIT 现编 + .nnk 缓存命中 + CPU 对拍"。
     # 仅演示用，不注册 ctest、不 install。
     nn_add_executable(jit_demo src/jit_demo.cpp)
-    nn_use_modules(dataset_convert tokenizer)
+    
+    # ── 构建期/发布期 JIT 预热目标（P3/D5，docs/internal/35）─────────────────
+    # 常用架构 × 代表性 shape 过 GPU forward → kernels.nnk（随发布物分发，
+    # 部署首跑免 kernelgen 现编；与各 app 的 model_warmup/--no-warmup 配套）。
+    nn_add_executable(nn_warmup src/nn_warmup.cpp)
+    list(APPEND NN_APP_TARGETS nn_warmup)
 
     # ── 层吞吐量基准（CPU/Vulkan GPU；--all 或 --layer <name> 指定） ────────
     nn_add_executable(layer_bench src/layer_bench.cpp)
     list(APPEND NN_APP_TARGETS layer_bench)
 
     # ── 探针目标（诊断专用；需 -DNN_ENABLE_PROBES=ON，默认不构建）───────────
-    # 这三个只服务排障，不进任何正常流程：正常构建里连可执行文件都不存在，
+    # 这两个只服务排障，不进任何正常流程：正常构建里连可执行文件都不存在，
     # 文档里引用它们的复现步骤须先配置 NN_ENABLE_PROBES=ON。
     if(NN_ENABLE_PROBES)
         # 运行时显存分项探针（双池采样 + nvidia-smi + 逻辑分项归因）
@@ -1045,11 +1446,7 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     list(APPEND NN_TEST_TARGETS nnvocab_test)
     nn_add_executable(dataset_integration_test src/dataset_integration_test.cpp)
     list(APPEND NN_TEST_TARGETS dataset_integration_test)
-    nn_use_modules(dataset_test dataset)
-    nn_use_modules(tokenizer_test tokenizer)
-    nn_use_modules(nnvocab_test tokenizer)
-    nn_use_modules(dataset_integration_test tokenizer)
-
+                
 endif()
 
 # ── 测试目标统一处理：输出到 <构建根>/test ──────────────────────────────
@@ -1186,45 +1583,3 @@ if(TARGET nn_gpu)
     target_compile_definitions(nn_core INTERFACE NN_GPU_ENGINE=1)
 endif()
 
-# ══════════════════════════════════════════════════════════════════════════
-#  PCH 落地（所有目标创建完、编译条件定型之后再挂）
-# ══════════════════════════════════════════════════════════════════════════
-# 候选目标的编译条件逐项相同（nn_core 的 include：主仓库 include/ +
-# submodule abstraction/），因此**一份 PCH 全目标共享**（REUSE_FROM）。
-# 引擎 .so 化后 nn.hpp 不再含引擎实现/shader 嵌入头 → PCH 体积大幅缩小。
-# 代价对比（本机 Debug 全量构建，旧版）：31 份逐目标 PCH ≈ 780s CPU → 1 份。
-if(NN_ENABLE_PCH AND NN_PCH_CANDIDATES)
-    add_library(nn_pch OBJECT ${CMAKE_CURRENT_SOURCE_DIR}/cmake/nn_pch_stub.cpp)
-    target_link_libraries(nn_pch PRIVATE nn_core)
-    target_precompile_headers(nn_pch PRIVATE [["neuralnet.cpp/nn.hpp"]])
-
-    # ── ccache × PCH 的第三项要求：`-fno-pch-timestamp` ────────────────────
-    # ccache 手册（Precompiled headers）明确：Clang 侧必须用该选项编 PCH，否则
-    # ccache 拒绝把"用了 PCH 的编译"入缓存（统计计数 Could not use precompiled
-    # header）。它会让 PCH 不嵌写入时间戳 —— 顺带让 PCH 内容可复现。
-    # ⚠ 这是 cc1 开关：驱动不认 `-fno-pch-timestamp`，必须 `-Xclang` 形式；ccache
-    #   是逐 token 匹配该字面量，`-Xclang -fno-pch-timestamp` 满足它的检查
-    #   （实测：开了之后同一 TU 从 30.2s 掉到 0.11s，见 docs/history/history.md）。
-    # ⚠ PCH 生成方（nn_pch）与所有使用方必须带同一份选项：CMake 的 REUSE_FROM
-    #   要求双方编译选项一致，故下面两处都加（对非同族的 sccache 也无害）。
-    # ⚠ 已知未覆盖：GCC 侧要缓存"用了 PCH 的 TU"须另加 `-fpch-preprocess`（手册），
-    #   它改变预处理输出、影响 depfile 口径，故本轮不擅自打开——GCC + PCH 的编译
-    #   仍不可缓存（CI 用 Clang，不受影响）。要用就显式 -DNN_COMPILER_LAUNCHER 自己加。
-    set(NN_PCH_COMPAT_OPTIONS "")
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
-        set(NN_PCH_COMPAT_OPTIONS "-Xclang" "-fno-pch-timestamp")
-    endif()
-    target_compile_options(nn_pch PRIVATE ${NN_PCH_COMPAT_OPTIONS})
-
-    set(NN_PCH_OWN_TARGETS "")
-    foreach(_pch_tgt IN LISTS NN_PCH_CANDIDATES)
-        target_compile_options(${_pch_tgt} PRIVATE ${NN_PCH_COMPAT_OPTIONS})
-        target_precompile_headers(${_pch_tgt} REUSE_FROM nn_pch)
-    endforeach()
-    list(LENGTH NN_PCH_CANDIDATES _nn_pch_n)
-    list(LENGTH NN_PCH_OWN_TARGETS _nn_pch_own)
-    message(STATUS "PCH: nn.hpp precompiled once, shared by "
-                   "${_nn_pch_n} targets (${_nn_pch_own} own PCH)")
-elseif(NN_ENABLE_PCH)
-    message(STATUS "PCH: no candidate targets")
-endif()

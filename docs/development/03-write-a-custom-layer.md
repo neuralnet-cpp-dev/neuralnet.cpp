@@ -186,6 +186,12 @@ auto opt = nn::create_optimizer("adam", engine, model.parameters(),
 | 5 | 参数精度用 `p_.param`、算子输出精度用 `p_.compute`、数值敏感链用 `p_.stable` | 硬编码 F32 = 编译过、测试过、**静默失去 f16 收益** |
 | 6 | `parameters()` 与 `param_gradients()` **同序同数量** | 优化器把梯度写到错的参数上 |
 | 7 | `p_` 在 `init` 之后不可变（`set_precision_profile` 已 init 时 fail-fast） | 触发 fail-fast；只要保证 profile 在 add 之前设好即可 |
+| 8 | 层内若有训练/推理**双态行为**（Dropout、BatchNorm 等），覆写 `set_training(bool)`：先调基类（基类按 `param_children()` 广播），再记本地标志 | 编译过、训练过；只在 `model.set_training(false)` 推理时行为错（Dropout 仍生效 / BN 仍用批统计） |
+| 9 | 非可学习但需随模型落盘的状态（BN 的 running mean/var 等）覆写 `extra_state()`，与 `parameters()` 分开 | 权重能存、这类状态**静默丢失**（推理精度错且无报错） |
+
+> 第 8/9 条只有持"非参数状态"的层才需要：`Model::set_training` 逐层转发、序列化按
+> `parameters()` + `extra_state()` 两批落盘（见 `model_container.hpp` / `model_serialization.hpp`）。
+> 普通层用基类默认（`set_training` 空广播、`extra_state` 返回空）即可。
 
 ### 2.1 复合层（持子层）额外两条
 
@@ -194,7 +200,10 @@ auto opt = nn::create_optimizer("adam", engine, model.parameters(),
 - 覆写**受保护的** `param_children()` 按顺序返回子层指针——参数的**下标转发**（`export_param` /
   `import_param`）靠它，序列化才认得你的子层参数；
 - 覆写 `set_precision_profile`：先调基类（先校验），再逐个把 profile 下传给子层与辅助对象
-  （RoPE / 位置编码器），否则子层内的 DSL 求值退回 F32。
+  （RoPE / 位置编码器），否则子层内的 DSL 求值退回 F32；
+- 覆写 `set_training` 时同样先调基类（基类只广播 `param_children()`），再把开关下传给**非参数子层**
+  （无参数的 Dropout 之类不会被基类广播到）；子层若有 `extra_state()`，父层的 `extra_state()`
+  要按需汇总（序列化只认父层返回的那一批）。
 
 ### 2.2 精度能力声明（可选）
 
@@ -213,6 +222,22 @@ auto opt = nn::create_optimizer("adam", engine, model.parameters(),
 `nn::Layer::init` 会在初始化期把不兼容组合拦下，报错含层名 + 槽位 + 取值 + 允许集合。
 若层同时持线性子层又想支持三值权重，用 `nn::split_ternary_profile(layer_name, profile, ternary)`
 分流（自身拿 `param` 归一化为 f32 的那份，线性子层拿 `param=T1_58` 的那份）。
+
+### 2.3 层内辅助数据（索引/位置/掩码/斜率等）
+
+层自算的小规模辅助数据经**正式宿主桥** `nn::upload_span` / `nn::download_span` /
+`nn::download_vector` 进出（定义在 `compute_engine.hpp`，`nn::detail::` 下同名符号只是库内
+过渡别名，新代码一律写 `nn::`）：
+
+```cpp
+// 上传：(rows, cols, P) 新建张量；f16 目标按 RNE 舍入，与 from_matrix 同口径
+nn::Tensor pos = NN_UNWRAP(nn::upload_span(engine, seq, d_model, p_.param, std::span(enc)));
+// 下载：张量 → 既有标量缓冲；f16 先升 f32（无损）
+NN_UNWRAP(nn::download_span(engine, *t, std::span(out)));
+```
+
+适用范围只限**层自算的小规模辅助数据**；数据集、预训练权重、落盘等大批量 I/O 走 I/O 层的
+`from_matrix` / `to_matrix`（铁律 #12 禁止层内出现 `Matrix`，这两者是留给 I/O 载体的）。
 
 ---
 
@@ -285,20 +310,12 @@ std::printf("gradcheck: max|num-an| = %.3e\n", max_err);   // 应 << 1e-3
 
 ## 4. GPU 检查清单（CPU 通过 ≠ GPU 通过）
 
-自定义层的新结构不在库内嵌注册表里。两条路把它跑到 GPU 上（见 docs/internal/33 Phase 2）：
+自定义层的新结构**不需要任何构建期登记**：表达式执行全程运行期 JIT（构建期收集链已删除）。把它跑到 GPU 上：
 
 1. **先保证 CPU 上通过**（含上面的数值梯度检查）；
-2. **两条 GPU 路径**（任选）：
-   - **AOT 注册表**（构建期枚举）：CMake 加一行，把你的表达式结构编进目标专属注册表：
-     ```cmake
-     nn_enable_gpu_fusion(my_app MAIN ${CMAKE_CURRENT_SOURCE_DIR}/my_app_main.cpp)
-     ```
-     `MAIN` 必须指向含 `main` 的源文件（收集器自带 main，需从目标源列表剔除）。
-     该函数只在 GPU 启用时可用；未启用时调用会给出指向根因的报错。
-   - **运行期 JIT**（默认兜底，无需 CMake）：不枚举也能跑——GPU `eval_expr` miss 时
-     引擎懒加载 `libnn-kernelgen.so` 现编并持久化进 `.nnk` 缓存。首次有一次性编译延迟
-     （可用 `nn::model_warmup()` 提前预热）；`NN_STRICT_CLOSED_WORLD=1` 可关闭 JIT、
-     恢复构建期闭合世界硬报错（把漏枚举变成显式失败，适合当 CI 看门狗）。
+2. **GPU 执行（运行期 JIT，无需 CMake）**：结构在 GPU `eval_expr` miss 时按
+   `expr_spec_key` 懒加载 `libnn-kernelgen` 现编 SPIR-V 并持久化进 `.nnk` 缓存；
+   首次有一次性编译延迟（可用 `nn::model_warmup()` 提前预热）。
 3. 训练/推理时用 `engine.begin_batch()` / `engine.end_batch()` 包住 forward（可选，消提交开销）——
    注意**录制期引用的张量必须活到 `end_batch()` 之后**（铁律 #6）。
 
@@ -316,8 +333,8 @@ std::printf("gradcheck: max|num-an| = %.3e\n", max_err);   // 应 << 1e-3
 4. **表达式直接内联传给 `dsl::compute`**，输出形状 `rows/cols` 显式给出（无形状重载依赖
    表达式能推导网格，验证 demo 显式给最稳）。表达式不要包进 lambda 再返回——`compute` 的
    模板推导对直接内联的表达式最可靠；从函数返回的表达式类型可能不满足 `DslExpr` 约束。
-5. **要验证 JIT 路径时**：用一个**确定不在内嵌注册表**的结构（如 `leaf(x)*leaf(y)+3`），
-   并设 `NN_KERNELGEN_PATH` 指向 `libnn_kernelgen.so`、`NN_KERNEL_CACHE_PATH` 指向
+5. **要验证 JIT 路径时**：用一个还不在 `.nnk` 缓存里的新结构（如 `leaf(x)*leaf(y)+3`），
+   并设 `NN_KERNELGEN_PATH` 指向 `libnn-kernelgen`、`NN_KERNEL_CACHE_PATH` 指向
    **独立的临时缓存文件**做干净起点（运行前删除该文件）——这样"首次现编 → 落盘 → 命中"
    全过程可复现；跑完读缓存文件里的 `kernel.*` 字段确认落盘。
 6. **计时口径**：首次 GPU 执行耗时**包含引擎初始化 + 一次性 JIT 编译 + 首次提交**，
@@ -354,4 +371,4 @@ std::printf("gradcheck: max|num-an| = %.3e\n", max_err);   // 应 << 1e-3
    复合层只要正确实现 `param_children()` 就能整树落盘。
 4. **剖析**：`NN_PROFILE=1` 时，`Model` 的逐层 scope 已包含你的层（无需额外插桩）。
 
-> 相关样例：`examples/fusion_custom_layer.hpp`（带自研融合表达式的层 + GPU 注册形态）。
+> 相关样例：`src/jit_demo.cpp`（自定义表达式在 GPU 上对拍 CPU + JIT 缓存可见性）。

@@ -22,6 +22,7 @@
 // 退出码：0 = 通过，1 = 失败
 // ───────────────────────────────────────────────────────────────────────────
 
+#include <memory>
 #include <bit>
 #include <cstdint>
 #include <cstdio>
@@ -31,10 +32,25 @@
 #include <string>
 #include <vector>
 
-#include "neuralnet.cpp/compute_layer_bitlinear.hpp"
 
 #define NN_TEST_COUNTER g_failures
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::trit_pack::words_per_row;
+using nn::i8_pack::at;
+using nn::trit_pack::latent_row_scale;
 
 namespace
 {

@@ -9,16 +9,18 @@
 //   [6] 无固定 epoch 的 Pull 源（steps_per_epoch = nullopt）骨架退化语义
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <any>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <span>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <neuralnet.cpp/batch_source.hpp>
-#include <neuralnet.cpp/core_errors.hpp>
+#include <nn_error_macros.hpp>
+import nn.train;
 
 static int g_fail = 0;
 #define CHECK(cond, msg)                                                    \
@@ -52,7 +54,7 @@ void test_step_grid()
     if (!src_r) return;
     nn::IndexedBatchSource& src = *src_r;
 
-    CHECK(src.steps_per_epoch() == 3, "10/4 → 3 步");
+    CHECK(src.steps_per_epoch() == std::optional<std::size_t>{3}, "10/4 → 3 步");
 
     auto b0 = src.next(0);
     CHECK(b0 && b0->samples == 4 && b0->epoch_done == false, "步 0：4 样本，epoch 未完");
@@ -134,7 +136,7 @@ void test_ctor_validation()
     CHECK(!nn::IndexedBatchSource::create(10, 4, 1, nullptr).has_value(), "空装配回调 → 报错");
 
     auto ok = nn::IndexedBatchSource::create(5, 2, 0, assemble);
-    CHECK(ok && ok->steps_per_epoch() == 3, "5/2 → 3 步");
+    CHECK(ok && ok->steps_per_epoch() == std::optional<std::size_t>{3}, "5/2 → 3 步");
 }
 
 // ── [5] 载荷 std::any 指针形式读取 ─────────────────────────────────────

@@ -81,7 +81,7 @@ M2 落地后 init RNG 已收编，下表保留为动机证据，复现命令仍�
 | D8 | 节奏：**分期推进**，沿用分层验收基线（§6），每期独立可回滚 | 维护者选定 |
 | D9 | 宿主动词：**保留 `from_matrix/to_matrix` 名称**（Matrix 留用，名字诚实），新增 `read/write` 分组；15 P2 的"改名 to_host/from_host"**取消**，防线从"命名即防线"改为"分组 + grep 审计即防线" | 本轮裁定 |
 | D10 | 修改类操作（含 `reshape`）一律引擎方法（由 D2 推导：修改 = 访问存储） | 本轮裁定 |
-| D11 | **L2+ 宿主桥口径（M4 实施裁定）**：禁令本体 = **`Matrix` 类型**（铁律 #12，编译期可审计的分层线）；`from_matrix/to_matrix/copy_from` 因签名即含 `Matrix`，随之一并在 L2 禁用。层自算的辅助数据（索引/位置/掩码/斜率/编码表——**没有引擎侧生成原语**的那一类）经 span 宿主桥 `detail::upload_span/download_span/download_vector`（`compute_engine.hpp` 尾部，内部走 M3 `write/read`，f16 转换按 RHE 与 `from_matrix` 同口径）或 `create_tensor`+`InitSpec`/`zero`；**数据集/预训练权重/对拍/落盘仍走 I/O 层的 `from_matrix/to_matrix`**。由此 §4.3 末条"I/O 分组动词只准出现在 I/O/测试代码"收窄为"**Matrix 型三动词**只准出现在 I/O 层"，span 级桥是 L2 的受控例外（判据：不引入 Matrix 即不破坏数据格式统一）；新增引擎虚表项 0 | M4 实施时裁定（原 D3"库外豁免"与 §4.3 字面在 L2 上不可兼得：层无 arange/RoPE 表生成原语，严格执行需先加原语，超 M4 范围） |
+| D11 | **L2+ 宿主桥口径（M4 实施裁定）**：禁令本体 = **`Matrix` 类型**（铁律 #12，编译期可审计的分层线）；`from_matrix/to_matrix/copy_from` 因签名即含 `Matrix`，随之一并在 L2 禁用。层自算的辅助数据（索引/位置/掩码/斜率/编码表——**没有引擎侧生成原语**的那一类）经 span 宿主桥 `nn::upload_span/download_span/download_vector`（`compute_engine.hpp` 尾部，内部走 M3 `write/read`，f16 转换按 RHE 与 `from_matrix` 同口径）或 `create_tensor`+`InitSpec`/`zero`；**数据集/预训练权重/对拍/落盘仍走 I/O 层的 `from_matrix/to_matrix`**。由此 §4.3 末条"I/O 分组动词只准出现在 I/O/测试代码"收窄为"**Matrix 型三动词**只准出现在 I/O 层"，span 级桥是 L2 的受控例外（判据：不引入 Matrix 即不破坏数据格式统一）；新增引擎虚表项 0 | M4 实施时裁定（原 D3"库外豁免"与 §4.3 字面在 L2 上不可兼得：层无 arange/RoPE 表生成原语，严格执行需先加原语，超 M4 范围） |
 
 ## 4. 目标架构
 
@@ -129,7 +129,7 @@ M2 落地后 init RNG 已收编，下表保留为动机证据，复现命令仍�
 - I/O 分组动词分两档（**D11 收窄，M4 实施**）：**Matrix 型三动词**
   （`from_matrix/to_matrix/copy_from`）只准出现在 I/O/测试/序列化代码，L2+ 出现即
   审计违规（§4.6、铁律 #12）；**span/标量级**（`read/write/get_index/set_index` 与
-  `detail::upload_span/download_span/download_vector`）是 L2 的受控宿主桥，仅限
+  `nn::upload_span/download_span/download_vector`）是 L2 的受控宿主桥，仅限
   层自算的小规模辅助数据，大批量数据仍属 I/O 层。
   `import` 是**引擎内/跨设备**拉取入口（M6）：库内只在引擎实现里出现（如 `GpuEngine`
   的宿主直传），L2 计算路径不调用它——跨引擎互操作在 P1 起就是硬错误。

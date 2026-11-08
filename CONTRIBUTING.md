@@ -24,7 +24,9 @@
 
 ## 1. 环境与首次构建
 
-需要 **CMake ≥ 3.30**、**Ninja**、一个支持 C++26 的编译器（CI 用 Clang；GCC 15 / MSVC 19.51 也验证过）。
+需要 **CMake ≥ 3.30**、**Ninja**、**GNU 驱动 Clang**（支持 C++26）：`src/` 构建无条件走
+C++ 模块（`--precompile` + `-fmodule-file`），GCC / cl.exe / clang-cl 无法构建本仓
+（口径见 `docs/development/01-cmake-integration.md` §8.2）。
 Vulkan SDK（含 `glslc`）可选：找到就自动启用 GPU 后端，找不到就是纯 CPU 构建。
 装了 [ccache](https://ccache.dev/) 会自动启用（详见 §5）。
 
@@ -55,7 +57,7 @@ cmake -B build -G Ninja -DNN_ENABLE_TESTS=ON && cmake --build build && ctest --t
 |------|------|------|
 | `NN_ENABLE_NATIVE` | `ON` | `-march=native`。**分发/换机请设 `OFF`**（否则可能 SIGILL） |
 | `NN_ENABLE_TESTS` | `OFF` | 编测试与 gradcheck（在 `build/test/` 下，注册 ctest） |
-| `NN_ENABLE_PROBES` | `OFF` | 诊断探针（热路径扫描/归因 + `mem_probe` 等）。⚠ 会改变库头语义，**不可与正常构建混用缓存/二进制** |
+| `NN_ENABLE_PROBES` | `OFF` | 诊断探针（热路径扫描/归因 + `f16_cpu_probe`/`gpu_stability_probe`；`mem_probe` 已迁新仓库）。⚠ 会改变库头语义，**不可与正常构建混用缓存/二进制** |
 | `NN_ENABLE_GPU` | `AUTO` | `AUTO`/`ON`（缺 Vulkan 直接配置失败）/`OFF`（纯 CPU 最短路径） |
 | `NN_BUILD_APPS` | 顶层=ON | 嵌入本库当你自己工程的一部分时自动为 `OFF` |
 
@@ -172,8 +174,8 @@ clang-format -i path/to/new_file.hpp
    git clang-format --diff               # 风格：只格式化**你改动的行**
    ./build/layer_bench --op scan_prefix --gpu --batch 8 --heads 4 --dk 32 --seq 128 --hash
                                          # 改了状态扫描原语（或任何 GPU kernel）后必跑：配对 A/B 的 ms +
-                                         # 位级哈希（逐位不变的改写必须哈希相同）。改完只需 `ninja layer_bench`
-                                         # （PCH + 1 个 TU ≈2 min），全量重建留到最后一次
+                                         # 位级哈希（逐位不变的改写必须哈希相同）。改完只需 `ninja layer_bench`，
+                                         # 全量重建留到最后一次
    ```
    ⚠ `audit_modern_style.py` 对本仓当前是 **FAIL（59 E / 147 W）**——E 几乎全部落在 Vulkan C API
    边界（`reinterpret_cast<VkBaseInStructure*>` 的 pNext 串链、`void* mapped`、`std::free`）与一处
@@ -189,17 +191,20 @@ clang-format -i path/to/new_file.hpp
 
 ---
 
-## 5. 关于构建速度（ccache 是本仓的默认路径）
+## 5. 关于构建速度
 
-本仓是 header-only，一次全量 Release + 测试构建在本机 8 核上约 **13 分钟**（大头是 LLVM 后端优化，
-单个 TU 约 30s）。仓库已经做了这些事，你不需要额外配置：
+本仓是 header-only。`src/` 已全量模块化（13 个域模块）：消费方 TU 一律 `import nn.<域>`，
+声明从 BMI 取（`-fmodule-file`）。**共享 PCH 机制已整体删除**——PCH 的"共享 parse"职责
+由模块 BMI 承接，`NN_ENABLE_PCH` / `NN_ENABLE_MODULES` 两个开关随之下线（构建无条件）。
 
-* **PCH**：`nn.hpp` 只预编译一次，被 40+ 个目标共享（`NN_ENABLE_PCH`，默认开）。
-* **ccache 自动启用**：顶层构建会自己探测 `ccache`/`sccache`；装了就用。
-  仓库会把 ccache 需要的 PCH 兼容设置（`sloppiness=pch_defines,time_macros` +
-  `-fno-pch-timestamp`）**钉进编译命令**，因此"用了 PCH 的 TU"也能命中缓存——
-  二次构建（含 `ninja -t clean` 之后）本机实测 **58.8s**（全量 13m26s → 58.8s），剩余时间是 shader 生成与链接、不是编译。
-* 想指定/禁用它：`-DNN_COMPILER_LAUNCHER=<path>`（空串 = 禁用）。
+* **ccache 自动启用**：顶层构建会自己探测 `ccache`/`sccache`；装了就用，
+  `-DNN_COMPILER_LAUNCHER=<path>` 可指定（空串 = 禁用）。
+  ⚠ **模块消费方 TU 一律绕开 launcher**：ccache 的 key 不含 `-fmodule-file` 的 BMI 内容，
+  命中时会吐出旧 `.o`（ccache 4.13 手册明言不支持标准 C++ modules）。
+* 实测（8 核、无 ccache 命中）：**改单个消费方源**（单 TU 全量解析 + LTO 链接）≈ **79 s**；
+  **改公共头**（BMI 全量重编 + 消费方全量重编 + 全链接）≈ **35 min**——日常改动尽量避开公共头。
+* BMI 是消费方 TU 的**真实编译依赖**（`OBJECT_DEPENDS` 挂在每个源文件的编译边）：只改 BMI
+  时消费方 `.o` 会陈旧，故改公共头必须让消费方一起重编。
 
 日常改一个文件的循环：`cmake --build --preset dev` 会自动只重编受影响的目标；
 只是想验证某个改动不影响别处时，优先跑对应测试而不是整仓重建。
@@ -214,7 +219,10 @@ clang-format -i path/to/new_file.hpp
 * `-DNN_ENABLE_TESTS=ON` 构建并**真跑 `ctest`**（需 Vulkan 的用例在无 GPU 的 runner 上按退出码 77 记 skip，非失败）；
 * 设备域检查是**默认入口检查**（v3 起每个操作数必须属于本引擎域），不再需要绑定调试开关的第二轮 ctest；
 * 构建 **8** 个应用入口（`mnist_train/infer`、`text_train/infer`、`tokenizer_train/infer`、`dataset_gen`、`dataset_convert`）并打包成 `.7z` 产物；
-* push 到 `main` 时创建/更新 `nightly` 预发布。
+* push 到 `main` 时创建/更新 `nightly` 预发布；
+* **engine 子模块独立验证**：`engine-tests` job（ubuntu + clang + Ninja，CPU-only
+  `NN_ENABLE_GPU=OFF`、`NN_BUILD_TESTS=ON`）对 `engine/` 独立 configure/build/ctest，
+  `release` 依赖它——engine 仓自身无 workflow，由主仓兜住。
 
 > 本地复现 CI 门禁：`ctest --preset dev`（应全绿；需 Vulkan 的用例无设备时按 77 记 skip）。
 

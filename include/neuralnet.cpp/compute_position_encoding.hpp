@@ -25,8 +25,8 @@
 //  于是 PosEncodingType 的分发只剩这两个工厂，forward/backward 热路径内
 //  **不存在任何按编码类型的分支**。
 //
-//  AOT 注册表：本文件内的内联表达式（RoPE 旋转、加性融合、ALiBi 偏置）
-//  由 `tools/scan_exprs.cpp` 的 dry-run 登记（文本只写在这里，不在 Engine）。
+//  表达式文本只写在本类（RoPE 旋转、加性融合、ALiBi 偏置），不在 Engine；
+//  AOT dry-run 登记已随 P3 删除（35 号 D4），GPU 由 JIT 按结构 key 现编。
 // ───────────────────────────────────────────────────────────────────────────
 
 #include "compute_layer_base.hpp"
@@ -95,8 +95,8 @@ private:
     }
 
     // 构造 RoPE 内联表达式（forward 用 Add 结尾，backward 用 Sub 结尾）
-    // 表达式文本只写在本类（apply/apply_step），AOT 收集（scan_exprs）
-    // 用同一段代码 dry-run 折叠出结构并合成融合 shader——绝不漂移。
+    // 表达式文本只写在本类（apply/apply_step）；AOT dry-run 已删（P3），
+    // GPU JIT 对同一段代码折叠出的结构现编——结构同源、绝不漂移。
 
 public:
     RotaryEmbedding() = default;

@@ -24,7 +24,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -37,6 +36,7 @@
 #include "neuralnet.cpp/compute_engine.hpp"        // nn::ComputeEngine
 #include "neuralnet.cpp/compute_optimizer.hpp"     // nn::Optimizer
 #include "neuralnet.cpp/core_config.hpp"           // nn::Scalar / NN_PROBES_ENABLED
+#include "neuralnet.cpp/core_env.hpp"              // RV-09：环境变量读取唯一入口
 #include "neuralnet.cpp/core_errors.hpp"           // nn::Result / NN_TRY
 #include "neuralnet.cpp/model_container.hpp"       // nn::Model
 #include "neuralnet.cpp/model_spec.hpp"            // nn::ModelSpec
@@ -75,21 +75,9 @@ inline void save_ckpt_with_state(const std::string& path, nn::Model& model,
 // 打印的序号即该步参数/梯度数组的下标，可与参数张量顺序对照定位到层。
 inline bool nn_nan_trace_on()
 {
-    // MSVC CRT 弃用 getenv（-Werror 下必须走 _dupenv_s），与 NN_MEM_STATS 同款。
-    static const bool on = []
-    {
-#if defined(_MSC_VER)
-        char* buf = nullptr;
-        std::size_t len = 0;
-        _dupenv_s(&buf, &len, "NN_NAN_TRACE");
-        const bool v = (buf != nullptr && buf[0] != '\0');
-        std::free(buf);
-        return v;
-#else
-        const char* v = std::getenv("NN_NAN_TRACE");
-        return v != nullptr && v[0] != '\0';
-#endif
-    }();
+    // 探针门内（整块 #if NN_PROBES_ENABLED）：读取收敛到 core_env.hpp
+    // （"0" = 关，全仓统一口径）。
+    static const bool on = ::nn::detail::probe_flag_raw("NN_NAN_TRACE");
     return on;
 }
 
@@ -283,7 +271,7 @@ inline void log_text_train_gradient_stats(nn::ComputeEngine& engine,
 }
 
 // ── 显存阶段采样（NN_MEM_STATS=1；探针门关时恒 false 且不读环境变量）─────────
-// 与 src/mem_probe.cpp 同口径：把峰值归因到具体生命周期阶段。默认构建里
+// 与新仓库 mem_probe（已随引擎 .so 化迁出本仓）同口径：把峰值归因到具体生命周期阶段。默认构建里
 // `on == false` ⇒ 训练热路径与探针无关（判定是常量）。
 struct TextTrainMemProbe
 {
@@ -302,18 +290,8 @@ struct TextTrainMemProbe
 #if !NN_PROBES_ENABLED
     return {};
 #else
-    // MSVC CRT 弃用 getenv（-Werror）：按平台用 _dupenv_s / getenv。
-#if defined(_MSC_VER)
-    char* buf = nullptr;
-    std::size_t len = 0;
-    _dupenv_s(&buf, &len, "NN_MEM_STATS");
-    const bool on = (buf != nullptr && buf[0] != '\0' && buf[0] != '0');
-    std::free(buf);
-    return TextTrainMemProbe{on};
-#else
-    const char* v = std::getenv("NN_MEM_STATS");
-    return TextTrainMemProbe{v != nullptr && v[0] != '\0' && v[0] != '0'};
-#endif
+    // 探针门内：读取收敛到 core_env.hpp（"0" = 关）。
+    return TextTrainMemProbe{::nn::detail::probe_flag_raw("NN_MEM_STATS")};
 #endif
 }
 

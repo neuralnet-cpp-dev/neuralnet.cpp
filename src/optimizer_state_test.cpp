@@ -14,18 +14,32 @@
 // 退出码：0 = 通过，1 = 失败。
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
-#include "neuralnet.cpp/nn.hpp"
 
 #define NN_TEST_COUNTER g_fail
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 
 namespace
 {

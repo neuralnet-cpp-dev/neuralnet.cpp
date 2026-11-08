@@ -18,15 +18,28 @@
 // 用法：doc_attn_test [--gpu]
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/cli/cli_engine_factory.hpp>
+#include <nn_error_macros.hpp>
 
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
 #include <vector>
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::EngineConfig;
+using nn::cli::create_engine;
 using nn::ActivationType;
 using nn::ComputeEngine;
 using nn::GPTModel;
@@ -35,6 +48,7 @@ using nn::NormType;
 using nn::PosEncodingType;
 using nn::Scalar;
 using nn::Tensor;
+
 
 namespace
 {

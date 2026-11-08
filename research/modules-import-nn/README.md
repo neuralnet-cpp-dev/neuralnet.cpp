@@ -85,10 +85,19 @@
 
 ## 6. 粒度导入落地（2026-11-01，clang 24 / Linux / -O3 / 纯 CPU）
 
+> **P5/P6 更新（2026-11-06，docs/internal/35）**：本节原始数据为「4 模块 + 共享
+> PCH」时代（2026-11-01）。此后粒度模块**铺满 13 域**（P4）且 src/ **全量 import 化**
+> （P5/D8），共享 PCH 机制**整体删除**（P5/D9），模块构建**无条件**（`NN_ENABLE_MODULES`
+> /`NN_USE_MODULES` 双轨开关已删，P1/P5），消费方经 `OBJECT_DEPENDS` 真实依赖 BMI
+> （P6 修复：order-only + depfile 不记 pcm 会让改公共头只重编 BMI、消费方 .o 陈旧），
+> ccache 对模块消费方禁用（key 不含 BMI 内容）。"非提速路径"的结论**保持**：模块路径
+> 的价值仍是标准符合性 + 精确依赖 + PCH 独立性；PCH 删除后增量口径见 6.3 更新表。
+
 ### 6.1 形态与边界
 
-四个叶子域模块，DAG 依赖链 `nn.core → nn.kvrecord → nn.dataset → nn.tokenizer`，
-每个都是「薄接口」模块（`modules/nn.{core,kvrecord,dataset,tokenizer}.cpp`）：
+13 个域模块，DAG 依赖链 `nn.core → nn.kvrecord → nn.dataset → nn.tokenizer`
+（叶子链）+ P4 新域（expr/engine/layer/loss/opt/model/train/domain/cli）全部
+DEPS core，每个都是「薄接口」模块（`modules/nn.<域>.cpp`）：
 
 ```cpp
 module;                              // 全局模块片段：文本包含域头文件
@@ -100,50 +109,49 @@ export import nn.dataset;
 export namespace nn { using nn::Tokenizer; using nn::make_tokenizer; /* … */ }
 ```
 
-- 域边界 = 合并回主仓的四个子仓域；全部不依赖 GPU/AOT 扫描。engine/layers/model/train
-  域依赖 `NN_EXPR_SCAN` 宏收集（闭合世界铁律），宏不可导出 → 本轮不模块化。
+- 域边界 = 合并回主仓的四个子仓域 + P4 新域；**不再有"本轮不模块化"的域**——
+  engine/layers/model/train 依赖的 `NN_EXPR_SCAN` 宏收集已随 P3 拆除（AOT 收集链
+  由运行期 JIT 预热替代，35 号 D4），13 域全部薄模块化。
 - 构建 = 显式 BMI 自定义命令（`clang++ --precompile`，`-fmodule-file` 逐依赖传入）+
-  INTERFACE 目标传播（`nn_mod_<域>` 带自身与传递依赖的标志 + `NN_USE_MODULES` 宏）。
-  **不开 CMake 模块扫描**（`CMAKE_CXX_SCAN_FOR_MODULES OFF` 保持），~270 个非模块 TU
-  零扫描成本。
-- 消费方接入 = `nn_use_modules(<目标> <域...>)`：链接模块 INTERFACE + 从共享 PCH 候选
-  剔除（模块消费方 TU 若同时带 nn.hpp 的 PCH 与模块 BMI，同一实体两处声明存在
-  分歧风险；叶子目标编译量小，各自解析更稳）。
-- 开关 = `NN_ENABLE_MODULES`（顶层默认 ON；嵌入默认 OFF；仅 GNU 驱动 Clang 生效，
-  GCC/cl.exe/clang-cl 自动 OFF，消费方回落 include 分支——源码用 `#ifdef NN_USE_MODULES`
-  双轨）。
+  INTERFACE 目标传播（`nn_mod_<域>` 带自身与传递依赖的标志）。**不开 CMake 模块扫描**
+  （`CMAKE_CXX_SCAN_FOR_MODULES OFF` 保持），~270 个非模块 TU 零扫描成本。
+- 消费方接入 = `nn_use_modules(<目标> <域...>)`：链接模块 INTERFACE + `OBJECT_DEPENDS`
+  把每个 BMI 挂进源文件编译边（真实依赖；见 6.3 更新表与 AGENTS §2）+ 绕开 ccache
+  launcher（`RULE_LAUNCH_COMPILE ""`）。
+- 开关 = **无**：模块构建无条件（P1 删 `NN_ENABLE_MODULES`/`NN_USE_MODULES` 宏传播，
+  P5/D9 删 PCH 与 `NN_ENABLE_PCH`）；非 GNU 驱动 Clang 的编译器直接构建失败（35 号 D2）。
 
 ### 6.2 硬约束复现（薄模块的真实代价）
 
 | 约束 | 落地形态 |
 |------|---------|
-| 宏不可导出 | `NN_TRY`/`NN_UNWRAP`/`NN_ASSERT_*` 等仍文本 include（app 显式补 `core_errors.hpp`） |
+| 宏不可导出 | `NN_TRY`/`NN_UNWRAP`/`NN_ASSERT_*` 等经**宏岛头** `engine/abstraction/include/nn_error_macros.hpp`（P2/D3 拆出，`core_errors`/`core_assert` include 它）；消费方显式 include 该头（无 `neuralnet.cpp/` 前缀） |
 | STL 可见性缺口 | 消费方自带用到的 STL 头——实测 `tokenizer_infer` 此前靠 nn.hpp 传递拿到 `<memory>`，切换后需显式补 |
 | 头自包含缺口 | 模块单元按任意顺序包含域头，暴露了 `core_file.hpp` 缺 `<vector>` 的潜在 bug（正常构建靠 include 顺序侥幸通过），已修 |
 
-### 6.3 实测（n=1，本机 / -O3 / ccache 启用 / 纯 CPU）
+### 6.3 实测（P5/P6 后口径，2026-11-06，clang 24 / Linux / -O3 / 8 核 / dev preset）
 
-| 场景 | 模块 ON（import） | 模块 OFF（include+ccache+PCH） |
+| 场景 | P5/P6 后（13 模块，无 PCH，ccache 对消费方禁用） | 基线（4 模块 + PCH，ccache 命中） |
 |------|-------------------|-------------------------------|
-| BMI 体积 | core 25 MB / kvrecord 10 MB / dataset 22 MB / tokenizer 44 MB（各域独立，全量对照 86 MB） | — |
-| BMI 建造（tokenizer，单线程） | 10.61 s | — |
-| 改 consumer 源 → 重编该目标 | **0.50 s** | **0.48 s**（持平） |
-| 改 `domain_tokenizer_base.hpp` → 全量增量 | **18.0 s / 75 个 CXX 步**（含 BMI 重建 10.6 s + 7 个无 PCH 消费方） | **12.7 s / 83 步**（全部 ccache 命中） |
+| BMI 体积 | 叶子域 core 25 / kvrecord 10 / dataset 22 / tokenizer 44 MB（2026-11-01 实测）；P4 新域未逐一记录（build/dev/modules 可查） | — |
+| BMI 建造（tokenizer，单线程） | 10.61 s（不变） | — |
+| 改 consumer 源 → 重编该目标 | **≈79 s**（mnist_train：单 TU 全量解析 + LTO 链接） | 0.48-0.50 s（ccache 命中） |
+| 改公共头 → 全量增量 | **≈35 min / 82 个消费方 TU + 13 BMI + 全链接**（`OBJECT_DEPENDS` 传导，正确性必需） | 12.7-18.0 s |
+| 冷构建 | **≈15 min**（2026-11-06 p6cold 全新目录实测，wall 按 configure→完成时间戳差；275 构建边） | 87.2-106.7 s |
 
-**结论（如实）**：粒度模块在本仓基线下**不是提速路径**，与全量 import 的结论同源——
-ccache 命中已把 include 重编压到 ~0.1s/目标，模块能消除的"改公共头 → 重 parse 全库"
-在本仓不存在；反而 BMI 重建（10.6s/tokenizer）成为新的单点热点。隔离收益真实存在
-（非模块域零重编、消费方摆脱 PCH 依赖、改 tokenizer 不重编 engine 消费方），但
-绝对值被基线追平。落地价值 = **标准符合性**（库提供 C++20 模块消费形态）+
-**精确依赖**（`import nn.<域>` 语义化声明依赖）+ **PCH 独立性**；提速不在其中。
+**结论（如实）**：P5/P6 后模块路径**显著劣于** ccache+PCH 基线——增量从秒级劣化到
+分钟级。这不是实现缺陷而是取舍的结果：① ccache 4.13 不支持标准 C++ modules（key 不含
+BMI 内容 → 禁 launcher 保正确性）；② 共享 PCH 已删（D9，PCH 的共享 parse 职责本应由
+BMI 承接，但 BMI 只省「模块声明解析」，每个消费方 TU 仍要全量 parse 自身 + 实例化
+inline 实体）；③ LTO（thin）+ `-march=native` 放大单 TU 后端成本。隔离收益真实存在
+（改 tokenizer 不重编 engine 消费方、非模块域零重编、精确依赖），但绝对值被基线
+大幅拉开。**落地价值不变** = 标准符合性 + 精确依赖 + PCH 独立性；提速不在其中。
 若将来出现无 ccache、或多 TU 频繁改公共头的场景，模块路径的隔离收益才会显性化。
 
 ### 6.4 复现
 
 ```bash
-# 模块 ON（默认）：9 个叶子消费者走 import
-cmake -B build/mod -G Ninja -DNN_ENABLE_GPU=OFF -DNN_ENABLE_TESTS=ON
-cmake --build build/mod --target tokenizer_test nnvocab_test dataset_test dataset_integration_test
-# 模块 OFF（回落 include）
-cmake -B build/mod-off -G Ninja -DNN_ENABLE_GPU=OFF -DNN_ENABLE_TESTS=ON -DNN_ENABLE_MODULES=OFF
+# 模块构建无条件（无开关）：13 域 BMI + 全部消费方 import
+cmake -B build -G Ninja -DNN_ENABLE_GPU=OFF -DNN_ENABLE_TESTS=ON
+cmake --build build --target tokenizer_test nnvocab_test dataset_test dataset_integration_test
 ```

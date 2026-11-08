@@ -10,13 +10,7 @@
 //              [--license <file>] [--source <name>]
 // ─────────────────────────────────────────────────────────────────────────
 
-#ifdef NN_USE_MODULES
-import nn.tokenizer;
-#else
-#include <neuralnet.cpp/nn.hpp>
-#endif
-#include <neuralnet.cpp/core_errors.hpp>   // 宏（NN_TRY/NN_EXIT 等不可随模块导出，双轨）
-#include <neuralnet.cpp/cli/cli_help.hpp>
+#include <nn_error_macros.hpp>
 
 #include <chrono>
 #include <fstream>
@@ -26,6 +20,9 @@ import nn.tokenizer;
 #include <optional>
 #include <string>
 #include <vector>
+import nn.tokenizer;
+import nn.cli;
+using nn::cli::Help;
 
 // ==================== 帮助信息 ====================
 void print_usage(const char* prog)

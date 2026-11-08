@@ -213,8 +213,8 @@ public:
 //
 // 用 dsl::compute 单表达式融合：sigmoid(βx) = 1/(1+exp(-βx)) 全部折叠为单个
 // GPU 融合 kernel（仅 input/output 落显存，无中间 Tensor）。backward 用
-// input_cache_ 重算 sigmoid（不缓存，省显存）。AOT 收集由 scan_exprs dry-run
-// 本层完成（GPU 注册表两端一致）。
+// input_cache_ 重算 sigmoid（不缓存，省显存）。AOT 收集已随 P3 删除
+// （35 号 D4）——GPU 由 JIT 按结构 key 现编同一折叠。
 // ══════════════════════════════════════════════════════════════════════════
 class GeLU final : public Layer
 {
@@ -239,7 +239,7 @@ public:
     // ── forward: out = x * sigmoid(β * x) ────────────────────────────────
     // 单表达式 DSL 融合（M 融合）：sigmoid(βx) = 1/(1+exp(-βx))，全部折叠为
     // 单个 GPU 融合 kernel（仅 input/output 落显存，无中间 Tensor）。表达式
-    // 文本只写在本 Layer；AOT 收集由 scan_exprs dry-run 本方法完成。
+    // 文本只写在本 Layer（AOT 收集已删，P3——GPU 走 JIT 现编）。
     [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
     {
         ComputeEngine& engine = engine_ref();
@@ -944,8 +944,8 @@ public:
     //   7. running 统计 EMA（compute_into 原地；recompute 抑制）
     //   8. out      = normalized*γ + β (row 广播)           → (F,B)
     //（1/B、ε、momentum 都是 RParam：值不进 expr_spec_key）
-    // 推理态：inv_std + 归一化 + 出参三步，无归约链（不同结构，scan 必须
-    // 单独覆盖——见 tools/scan_exprs.cpp 模型 pass 的推理态 run）。
+    // 推理态：inv_std + 归一化 + 出参三步，无归约链（与训练态不同结构；
+    // AOT 时代由模型 pass 单独覆盖——P3 后由首次执行时 JIT 现编）。
     [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
     {
         ComputeEngine& engine = engine_ref();

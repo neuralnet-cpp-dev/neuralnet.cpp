@@ -95,7 +95,7 @@ matmul / matmul_with_bias / add_inplace / accumulate / row_reduce_sum / col_redu
 |---|---|---|
 | L3 依赖具体层 | `ternary_deploy.hpp:195/332` 的 `dynamic_cast<BitLinear*>` | 违规（随文件删除） |
 | L5 依赖具体模型 | `src/text_infer.cpp:123/126` 的 `dynamic_cast<GPTModel*/RAPTModel*>`（生成/打印用） | **登记在案**：CLI 面向具体架构是可接受的，但要统一口径（见 §2.4 的"登记而非删除"） |
-| 探针目标依赖具体模型 | `src/mem_probe.cpp:551` | 合规（探针，`NN_ENABLE_PROBES` 门内） |
+| 探针目标依赖具体模型 | `src/mem_probe.cpp:551`（已随引擎 .so 化迁出本仓 → 新仓库 `compute.neuralnet.cpp`） | 解除（本仓不再有此探针） |
 | 层上的"只被测试用"的 API | `quantize_calls()` / `grad_buffers_allocated()` | 登记为**诊断面**（不进设计面），保留但标注 |
 | 双形态缓冲 | `BitLinear` 的打包容器 / f16 稠密（`use_packed_` + `force_pack_` + `sync_buffer_mode_` + `ensure_quant_buffer_`） | 违规（形态应由引擎内部决定，层只有一种） |
 | 并行读写器 | `ternary_deploy.hpp` 全套 | 违规（随文件删除） |
@@ -142,7 +142,7 @@ matmul / matmul_with_bias / add_inplace / accumulate / row_reduce_sum / col_redu
 4. **双端校验**：目标层声明的"可接受形态集合"与实际 kind 不符 → fail-fast（层名 + 期望 + 实际）；
 5. `--resume` 额外要求 `role == Checkpoint`（角色不符 → 明确错误，而不是等到 backward 才炸）。
 
-**旧文件**：v5/v6 的 `*.bin` 仍可读（零破坏，`role` 缺失按 Model 处理）；**写一律 v7 + 新扩展名**；
+**旧文件**：v5/v6/v7 的 `*.bin` 仍可读（零破坏，`role` 缺失按 Model 处理）；**写一律 v8 + 新扩展名**；
 CLI/GUI 的默认保存名同步改为 `.nnmodel`（`.bin` 不再被写入）。
 
 ### 2.1.1 训练状态段（v8；**P1-2 已实施**，2026-10-16 裁定）
@@ -292,7 +292,7 @@ virtual Result<void>      import_param(std::size_t index, const ParamEntry& entr
 
 **登记（不删，写明边界）**
 
-- `src/text_infer.cpp` 的 `dynamic_cast<GPTModel*/RAPTModel*>`（生成路径）与 `mem_probe` 的用法：
+- `src/text_infer.cpp` 的 `dynamic_cast<GPTModel*/RAPTModel*>`（生成路径）与 `mem_probe`（已迁新仓库）的用法：
   CLI/探针**允许**面向具体架构；库内 L2/L3 **禁止**。写入 AGENTS 的分层说明。
 - `quantize_calls()` / `grad_buffers_allocated()`：标注为**诊断面**（测试可见），不进设计面。
 

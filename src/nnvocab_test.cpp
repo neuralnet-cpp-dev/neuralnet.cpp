@@ -15,12 +15,20 @@
 #include <sstream>
 #include <string>
 #include <vector>
-
-#ifdef NN_USE_MODULES
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
 import nn.tokenizer;
-#else
-#include <neuralnet.cpp/domain_tokenizer.hpp>
-#endif
+import nn.train;
+
 
 namespace
 {

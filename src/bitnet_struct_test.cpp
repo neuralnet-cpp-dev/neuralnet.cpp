@@ -18,20 +18,36 @@
 // 退出码：0 = 通过，1 = 失败，77 = 跳过（--gpu 且无设备）
 // ───────────────────────────────────────────────────────────────────────────
 
+#include <memory>
+#include <nn_error_macros.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <random>
+#include <span>
 #include <string>
 #include <vector>
 
-#include "neuralnet.cpp/nn.hpp"
-#include "neuralnet.cpp/cli/cli_engine_factory.hpp"
 
 #define NN_TEST_COUNTER g_failures
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::EngineConfig;
+using nn::cli::create_engine;
 
 namespace
 {
@@ -357,7 +373,7 @@ void test_gqa_mha_equivalence(nn::ComputeEngine& eng, const char* tag)
 void test_gqa_head_mapping(nn::ComputeEngine& eng, const char* tag)
 {
     std::printf("[8] GQA 头映射 = 块映射（与复制成 MHA 对拍，%s）\n", tag);
-    // 与 scan_exprs 的登记**故意不同配置**（heads=4/n_head_kv=2 → n_rep=2，
+    // 与 AOT 时代登记**故意不同配置**（heads=4/n_head_kv=2 → n_rep=2；收集链已删，P3，
     // 而 scan 登记用 heads=2/n_head_kv=1）：头分组比是运行期的视图参数、
     // **不进 key** → 两侧必须折叠出同一 fold key。这条同时验证"任意 n_rep
     // 共用一份 AOT shader"。

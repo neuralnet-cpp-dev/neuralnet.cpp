@@ -824,9 +824,8 @@ public:
         auto den_t = detail::upload_span(engine, H * dk, 1, Precision::F32, std::span(den_full));
         NN_TRY_CHECK(den_t);
 
-        // out = num / (den + ε)：与 forward 的除法（:491）**逐 token 同构**——
-        // 同一个 AOT 键由 scan_exprs 的 ReLULinearAttention dry-run 覆盖，
-        // GPU 注册表可命中。
+        // out = num / (den + ε)：与 forward 的除法（:491）**逐 token 同构**
+        // （同结构 key；AOT 收集已删，P3——GPU 走 JIT 现编同源 GLSL）。
         auto out_r = dsl::compute(engine, dsl::leaf(*num_r) / (dsl::leaf(*den_t) + Scalar{1e-4}),
                                   (*num_r).rows(), (*num_r).cols(), p_.compute);
         NN_TRY_CHECK(out_r);

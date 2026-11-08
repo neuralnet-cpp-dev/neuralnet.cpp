@@ -57,7 +57,7 @@ public:
         // 单表达式融合：row_max/row_sum 为归约视图/归约指令，中间全尺寸
         // Tensor（shifted/exp_shift/row_max/row_sum 的物化）由融合 kernel 消解，
         // 仅 input 与 output 落显存。
-        // 表达式文本只写在本 Layer；AOT 收集由 scan_exprs dry-run 本方法完成。
+        // 表达式文本只写在本 Layer（AOT 收集已删，P3——GPU 走 JIT 现编）。
         auto out = dsl::compute(
             engine,
             dsl::exp(dsl::leaf(input) - dsl::row_reduce_max(input)) /

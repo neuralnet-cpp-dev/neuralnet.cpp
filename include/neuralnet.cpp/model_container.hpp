@@ -348,8 +348,8 @@ public:
 };
 
 // ── model_warmup：跑一遍代表性 forward，把用到的表达式现编进 .nnk 缓存 ──
-// Phase 2 运行期 JIT（docs/internal/33 §5）：对无内嵌注册表（消费方未跑 scan_exprs）
-// 的构建，每次 GPU dispatch 都是 JIT miss（有编译延迟）；预热一次后，该模型
+// 运行期 JIT（docs/internal/33 §5；AOT 内嵌注册表已随 P3 删除，35 号 D4）：
+// 缓存未预热时首次 dispatch 走 JIT 现编（有编译延迟）；预热一次后，该模型
 // 用到的全部表达式都现编并持久化进缓存，后续真实推理/训练为缓存命中（无延迟）。
 // 输入必须为该架构的代表性形状（MLP: (input_dim, batch)；GPT: (d_model, batch*seq)；
 // CNN: (C, H*W×batch)…——调用方按自己模型构造）。forward 走引擎已有绑定

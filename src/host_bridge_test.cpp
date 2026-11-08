@@ -8,14 +8,27 @@
 //   [4] nn::detail:: 旧名过渡别名仍可用（向后兼容）。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/compute_engine.hpp>
 
 #include <cmath>
 #include <cstdio>
 #include <iostream>
 #include <memory>
 #include <vector>
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::upload_span;
+using nn::download_vector;
 
 int g_fail = 0;
 #define CHECK(cond, msg)                                                  \

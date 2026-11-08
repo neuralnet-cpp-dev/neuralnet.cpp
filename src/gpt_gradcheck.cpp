@@ -13,8 +13,7 @@
 // 用法：gpt_gradcheck [--gpu] [--layers N] [--tol <f>]
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/cli/cli_engine_factory.hpp>
+#include <nn_error_macros.hpp>
 
 #include <array>
 #include <cmath>
@@ -24,7 +23,21 @@
 #include <string>
 #include <string_view>
 #include "test_common.hpp"
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::cli::EngineConfig;
+using nn::cli::create_engine;
 using nn::ActivationType;
 using nn::ComputeEngine;
 using nn::GPTModel;
@@ -35,6 +48,7 @@ using nn::PosEncodingType;
 using nn::Scalar;
 using nn::Tensor;
 using nn::TensorRef;
+
 
 namespace
 {

@@ -13,7 +13,6 @@
 //  用法：ce_fusion_test
 // ───────────────────────────────────────────────────────────────────────────
 
-#include <neuralnet.cpp/nn.hpp>
 
 #include <chrono>
 #include <cmath>
@@ -25,8 +24,29 @@
 #include <vector>
 
 #include "test_common.hpp"
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::dsl::row;
+using nn::dsl::col_broadcast;
+using nn::dsl::col_reduce_sum;
+using nn::dsl::compute_into;
+using nn::dsl::compute_reduce;
+using nn::dsl::leaf;
+using nn::dsl::rparam;
+using nn::dsl::rsqrt;
 using nn::Scalar;
+
 
 int g_fail = 0;
 

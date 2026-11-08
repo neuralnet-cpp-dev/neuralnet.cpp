@@ -14,9 +14,10 @@
 #
 #  可调开关（全部沿用库侧命名）：
 #      -DNN_ENABLE_GPU=OFF|AUTO|ON   GPU 开关（smoke 用 OFF 保快速且无 Vulkan 依赖）
-#      -DNN_DOWNSTREAM_FUSION=ON     额外构建"自研 dsl::compute + nn_enable_gpu_fusion"
-#                                    形态的目标（要跑全量结构收集 + glslc，数分钟，默认 OFF）
 #      -DNEURALNET_CPP_DIR=<path>    库位置（默认 ../..，可指向 3rd_party/neuralnet.cpp）
+#
+#  自研 dsl::compute 结构无需任何 CMake 步骤：GPU 首次执行时走运行期 JIT
+#  （libnn-kernelgen → SPIR-V → .nnk 缓存），可用 model_warmup() 预热。
 # ══════════════════════════════════════════════════════════════════════════
 cmake_minimum_required(VERSION 3.30)
 project(neuralnet_downstream LANGUAGES CXX)
@@ -35,27 +36,3 @@ target_link_libraries(downstream_demo PRIVATE neuralnet::nn)
 enable_testing()
 add_test(NAME downstream_demo COMMAND downstream_demo)
 set_tests_properties(downstream_demo PROPERTIES SKIP_RETURN_CODE 77)
-
-# ③ 可选：自研 dsl::compute + nn_enable_gpu_fusion（"写表达式 + 一行 CMake"）
-#    复用仓库的 fusion 验收源，但从**消费方作用域**调用函数——这正是
-#    树外可用性的关键路径（函数体在调用方作用域求值）。
-option(NN_DOWNSTREAM_FUSION "Build the custom dsl::compute + nn_enable_gpu_fusion demo (slow)" OFF)
-if(NN_DOWNSTREAM_FUSION)
-    if(NOT COMMAND nn_enable_gpu_fusion)
-        message(FATAL_ERROR
-            "NN_DOWNSTREAM_FUSION=ON requires the library's GPU build "
-            "(Vulkan + glslc found and NN_ENABLE_GPU != OFF)")
-    endif()
-    add_executable(downstream_fusion_demo
-        "${NEURALNET_CPP_DIR}/examples/fusion_custom_layer_main.cpp"
-        "${NEURALNET_CPP_DIR}/examples/fusion_custom_layer.cpp")
-    target_link_libraries(downstream_fusion_demo PRIVATE neuralnet::nn)
-    target_include_directories(downstream_fusion_demo PRIVATE
-        "${NEURALNET_CPP_DIR}/examples")
-    # 从消费方作用域调用——验证函数体内 NN_LIB_SOURCE_DIR/NN_LIB_BINARY_DIR
-    # 跨作用域解析正确（旧实现用 CMAKE_SOURCE_DIR，嵌入时指向本工程，会错）。
-    nn_enable_gpu_fusion(downstream_fusion_demo
-        MAIN "${NEURALNET_CPP_DIR}/examples/fusion_custom_layer_main.cpp")
-    add_test(NAME downstream_fusion_demo COMMAND downstream_fusion_demo)
-    set_tests_properties(downstream_fusion_demo PROPERTIES SKIP_RETURN_CODE 77)
-endif()

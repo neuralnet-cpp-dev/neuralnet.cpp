@@ -31,12 +31,22 @@
 #include <string>
 #include <vector>
 
-#include "neuralnet.cpp/nn.hpp"
-#include "neuralnet.cpp/model_serialization.hpp"
-#include "neuralnet.cpp/train_state.hpp"
 
 #define NN_TEST_COUNTER g_fail
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 
 namespace
 {
@@ -181,6 +191,11 @@ void write_file(const std::filesystem::path& p, const std::string& bytes)
 
 [[nodiscard]] std::uint64_t rd_u64(const std::string& b, std::size_t off)
 {
+    if (off > b.size() || b.size() - off < sizeof(std::uint64_t))
+    {
+        CHECK(false, "rd_u64: 越界读（测试输入畸形）");
+        return 0;
+    }
     std::uint64_t v = 0;
     std::memcpy(&v, b.data() + off, sizeof(v));
     return v;

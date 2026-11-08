@@ -18,10 +18,24 @@
 #include <random>
 #include <sstream>
 
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/kernel_cache.hpp>
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
+using nn::dsl::compute;
+using nn::fused::kernel_cache_path;
+using nn::dsl::leaf;
 using nn::Scalar;
+
 
 [[maybe_unused]] static double ms(std::chrono::steady_clock::time_point a,
                                   std::chrono::steady_clock::time_point b)

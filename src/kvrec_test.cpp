@@ -12,7 +12,11 @@
 #include <string>
 #include <vector>
 
-#include <neuralnet.cpp/model_keyvalue_record.hpp>
+import nn.kvrecord;
+import nn.engine;
+using nn::detail::append_u64;
+using nn::detail::append_u32;
+using nn::KeyValueRecord;
 
 namespace
 {
@@ -29,7 +33,6 @@ void expect(bool ok, const char* name)
     else std::printf("  [ ok ] %s\n", name);
 }
 
-using nn::KeyValueRecord;
 
 // ── 用例 1：v1 round-trip（含空记录）────────────────────────────────
 void test_v1_roundtrip()

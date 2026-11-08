@@ -14,15 +14,27 @@
 // 退出码：0 = 全部一致；2 = CPU 引擎创建失败；77 = GPU 不可用（ctest SKIP）；
 //         3 = CPU/GPU 不一致。
 // ────────────────────────────────────────────────────────────────────────────
-#include <neuralnet.cpp/nn.hpp>
-#include <neuralnet.cpp/cli/cli_engine_factory.hpp>
+#include <nn_error_macros.hpp>
 
 #include <cmath>
 #include <iostream>
 #include <random>
-
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 using nn::Matrix;
 using nn::Scalar;
+
 
 int main(int argc, char** argv)
 {

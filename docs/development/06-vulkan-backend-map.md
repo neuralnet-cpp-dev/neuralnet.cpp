@@ -159,7 +159,7 @@ binding 数 / push 字节数 / 能力要求），算子侧用 `PipelineId` 选�
 - 字节锚不变：`gpu_stability_probe --steps 20`、
   `layer_bench --op matmul,matmul_q,matmul_q_bw,scan_prefix,scan_suffix --f16 --hash`、
   `rapt_test --gpu` / `--f16 --gpu`、`scan_bitwise_test`；
-- 融合产物不变：`expr_fuse_test`、`fusion_custom_layer_example`；
+- 表达式执行不变：`expr_gpu_test`（图融合端到端 + 运行期 JIT 求值）、`ce_fusion_test`（CPU+GPU 对拍）；
 - 默认构建**不引入 LTO**；头文件布局不因"想少编译几个 TU"而妥协。
 
 ### 8.1 为什么不用 LTO 换结构

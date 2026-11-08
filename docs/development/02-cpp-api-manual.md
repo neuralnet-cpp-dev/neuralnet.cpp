@@ -77,6 +77,11 @@ f32↔f16 的转换一律 **round-half-to-even**；`static_cast<float>(nn::f16)`
 
 ### 1.3 错误处理宏（唯一一族，无异常）
 
+> **宏来源**（P2/D3 起）：宏段唯一真源 = 宏岛头 **`nn_error_macros.hpp`**（`engine/abstraction/
+> include/` 下、不带 `neuralnet.cpp/` 前缀）；`core_errors.hpp` / `core_assert.hpp` 均 include
+> 它提供宏。宏不可随 C++ 模块导出（预处理器无模块边界）——`import nn.*` 的消费方必须显式
+> `#include <nn_error_macros.hpp>`（`src/` 已全量如此；它是唯一被允许文本 include 的库件）。
+
 ```cpp
 nn::Result<T>  = std::expected<T, nn::Error>;   // Error 含 .message
 ```
@@ -145,10 +150,10 @@ int main()
 
 门面目标 `neuralnet::nn` 传递：C++26、include 目录、线程库、GPU 宏 `NN_HAS_VULKAN`、
 SPIR-V 嵌入头目录、Vulkan 链接与 shader 生成顺序。嵌入时 `NN_BUILD_APPS` 默认 OFF、
-`NN_ENABLE_GPU` 默认 `AUTO`。自研 `nn::dsl::compute` 表达式要一行
-`nn_enable_gpu_fusion(...)` 才进 GPU 注册表（预热加速）。
+`NN_ENABLE_GPU` 默认 `AUTO`。自研 `nn::dsl::compute` 表达式**无需任何构建期注册**：
+GPU 首次执行时走运行期 JIT（`libnn-kernelgen` 现编 + `.nnk` 缓存），可用 `nn::model_warmup()` 预热。
 
-> **完整版（全部构建开关、GPU 语义、融合注册、故障排查）见 [`01-cmake-integration.md`](01-cmake-integration.md)**；
+> **完整版（全部构建开关、GPU 语义、JIT 与预热、故障排查）见 [`01-cmake-integration.md`](01-cmake-integration.md)**；
 > 消费方视角的精简版见 [`../usage/05-consume-as-library.md`](../usage/05-consume-as-library.md)。
 
 ---
@@ -632,7 +637,8 @@ NN_UNWRAP(opt != nullptr, "unknown optimizer");
 ```
 
 可用名字（`nn::optimizer_names(", ")` 可打印）：`sgd` / `sgd_momentum` / `adam` /
-`adamw` / `adamwquant` / `muon`。未知名字返回 `nullptr`（由调用方处理）。
+`adamw` / `adamwquant` / `adamwint8` / `muon`（共 7 个，唯一真源 = `compute_optimizer.hpp` 的
+`kOptimizerTable`）。未知名字返回 `nullptr`（由调用方处理）。
 `beta1` / `beta2` 仅 `adam` / `adamw` 系列使用（LLM 预训练常取 `beta2=0.95`）。
 `nn::find_optimizer(name)` 查元数据（状态缓冲数、是否半精度存储）。
 
@@ -776,7 +782,7 @@ int main()
 
 ## 12. 模型文件：角色、保存、加载
 
-**一份格式、两种角色**（`model_serialization.hpp`，v7）：`*.nnmodel` = 推理角色
+**一份格式、两种角色**（`model_serialization.hpp`，v8）：`*.nnmodel` = 推理角色
 （三值层写打包形态），`*.nnckpt` = 训练断点（写 f32 latent）。文件头 =
 `magic | version | 精度 | role | spec`，之后是**参数级 `kind`** 条目。
 
@@ -1045,7 +1051,7 @@ nn::prof::dump(stdout);       // 进程结束前打表（stage / op / GPU / per-
 | `NN_PROFILE=1` / `NN_PROFILE_TRACE=<path>` / `NN_PROFILE_EVERY=<n>` | host + 设备侧聚合计时 / Chrome trace / 每 n 次 dump 打表 |
 | `NN_F16_DEBUG` / `NN_PREC_TRACE` / `NN_NAN_TRACE` / `NN_MEM_STATS` | 精度 / NaN / 内存归因探针（探针门 `NN_ENABLE_PROBES`） |
 | `NN_VULKAN_DEVICE` / `NN_VULKAN_NO_16BIT_ALU` / `NN_VULKAN_NO_16BIT_STORAGE` / `NN_VULKAN_NO_TIMELINE` / `NN_VULKAN_NO_INT8_DOT` | GPU 设备与特性逃生阀 |
-| `NN_STRICT_CLOSED_WORLD` / `NN_KERNEL_CACHE_DIR` / `NN_KERNEL_CACHE_PATH` / `NN_KERNELGEN_PATH` | 运行期 JIT 看门狗与缓存/生成器配置 |
+| `NN_KERNEL_CACHE_DIR` / `NN_KERNEL_CACHE_PATH` / `NN_KERNELGEN_PATH` | 运行期 JIT 缓存/生成器配置 |
 
 > 探针门语义（哪些算探针、默认为什么不编译）见 [`01-cmake-integration.md`](01-cmake-integration.md)。
 
@@ -1059,6 +1065,10 @@ nn::prof::dump(stdout);       // 进程结束前打表（stage / op / GPU / per-
 - 断言后仍会**使用被校验对象**（解引用 / 索引 / 除零）的点位，一律用 `NN_ASSERT_ALWAYS` /
   `NN_FATAL`（`core_assert.hpp`，与构建类型无关）；`NN_ASSERT` 是"可选诊断"（NDEBUG 展开为空），
   只留给失败也不影响后续正确性的检查。
+- **宏来源**（P2/D3 起）：宏段唯一真源 = 宏岛头 **`nn_error_macros.hpp`**（`engine/abstraction/
+  include/` 下、**不带 `neuralnet.cpp/` 前缀**）；`core_errors.hpp` / `core_assert.hpp` 均
+  include 它提供宏。宏不可随 C++ 模块导出（预处理器无模块边界）——`import nn.*` 的消费方
+  必须显式 `#include <nn_error_macros.hpp>`（`src/` 已全量如此；仅该头合法文本 include 库件）。
 
 失败协议要记牢（与 `create_tensor` 的"无效张量"不同）：
 `from_matrix` / `clone` / `cast` / `reshape` / 各类运算 / `model.forward` / `backward` 返回

@@ -10,12 +10,25 @@
 //   [5] 数值梯度检查（grad_query 与 grad_memory 各一轮，CPU 小规模）
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <nn_error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <vector>
 
-#include "neuralnet.cpp/nn.hpp"
 #include "test_common.hpp"
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 
 int g_fail = 0;
 

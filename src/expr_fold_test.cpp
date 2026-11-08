@@ -2,7 +2,7 @@
 //  expr_fold_test.cpp — 分块状态归约（FoldSpec）CPU 语义对拍
 //
 //  覆盖（通用样例走共享构造 expr_fold.hpp、注意力样例走
-//  compute_layer_attention.hpp —— 均与 scan_exprs AOT 收集同源，
+//  compute_layer_attention.hpp —— 结构与 JIT 现编同源（AOT 收集链已删，P3），
 //  保证 key/结构一致）：
 //    1. rowmax fold        vs 独立逐行 max 参考
 //    2. rowsum fold        vs 独立逐行 sum 参考
@@ -30,13 +30,12 @@
 #include <string>
 #include <vector>
 
-#include <neuralnet.cpp/compute_tensor.hpp>
-#include <neuralnet.cpp/engine.hpp>
-#include <neuralnet.cpp/expr_fold.hpp>
-#include <neuralnet.cpp/compute_layer_attention.hpp> // 注意力 fold 构造（定义于 Layer：表达式文本只写在 Layer）
 #include "test_common.hpp" // M1：upload/download（库外经引擎进出张量）
-
+import nn.engine;
+import nn.expr;
+import nn.layer;
 using nn::Scalar;
+
 
 int test_expr_fold()
 {
@@ -490,8 +489,8 @@ int test_expr_fold()
 
     // ── 7) 注册表去重 + key 契约（原 bin 序列化 roundtrip 的接替者）────────
     // 原先这里验证 write_registry/read_registry 往返不丢 tri_skip 位。bin 序列化
-    // 已删除（构建期单步：scan_exprs 直接调 `generate_fused_registry`），改验
-    // 注册表自身的两条不变量：① 同结构重复 add 只留一条；② tri_skip 进 key。
+    // 与其后的 AOT 收集链均已删除（P3，35 号 D4），改验结构 key 的两条不变量：
+    // ① 同结构重复构造 key 唯一；② tri_skip 进 key。
     {
         nn::fused::ExprRegistry reg;
         const nn::ExprSpec sk = nn::expr::make_fold_attn_o(64, 4, 2, nn::expr::AttnMaskKind::Causal,

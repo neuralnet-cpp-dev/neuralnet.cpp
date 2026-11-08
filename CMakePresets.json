@@ -15,7 +15,6 @@
         "CMAKE_BUILD_TYPE": "Release",
         "NN_BUILD_APPS": "ON",
         "NN_ENABLE_NATIVE": "ON",
-        "NN_ENABLE_PCH": "ON",
         "NN_ENABLE_TESTS": "OFF",
         "NN_ENABLE_PROBES": "OFF",
         "NN_ENABLE_GPU": "AUTO"
@@ -67,7 +66,7 @@
       "name": "probes",
       "inherits": "dev",
       "displayName": "Release + 测试 + 诊断探针",
-      "description": "打开 NN_ENABLE_PROBES（热路径扫描/归因代码 + mem_probe/f16_cpu_probe/gpu_stability_probe 目标）。⚠ 库头语义与正常构建不同，二进制/缓存不可混用。",
+      "description": "打开 NN_ENABLE_PROBES（热路径扫描/归因代码 + f16_cpu_probe/gpu_stability_probe 目标；mem_probe 已迁新仓库）。⚠ 库头语义与正常构建不同，二进制/缓存不可混用。",
       "cacheVariables": {
         "NN_ENABLE_PROBES": "ON"
       }

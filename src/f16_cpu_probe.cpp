@@ -3,14 +3,27 @@
 // 编译：CMake app 目标 f16_cpu_probe；亦可纯 CPU 独立编译（不经 AOT 管线）：
 //   clang++ -std=c++26 -O1 -fno-exceptions -fexperimental-library -Wno-pass-failed -Iinclude src/f16_cpu_probe.cpp -o build/f16_cpu_probe.exe
 // 每个阶段执行前打印标记（flush），崩溃时能直接看到断点位置。
+#include <nn_error_macros.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <random>
 #include <string>
+import nn.cli;
+import nn.core;
+import nn.dataset;
+import nn.domain;
+import nn.engine;
+import nn.expr;
+import nn.kvrecord;
+import nn.layer;
+import nn.loss;
+import nn.model;
+import nn.opt;
+import nn.tokenizer;
+import nn.train;
 
-#include "neuralnet.cpp/nn.hpp"
 
 namespace
 {

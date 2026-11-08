@@ -27,11 +27,11 @@ namespace nn
 //  注意力 fold 构造（双域旗舰样例）：fold attention 输出 O
 //  （S 不物化，online 单遍）
 //
-//  这是**注意力 Layer 自己的表达式文本**（AOT 收集原则：表达式只出现在
-//  Layer）：本文件是 make_fold_attn_o 构造与 AttnMaskKind 掩码种类的定义
-//  来源，expr_fold.hpp 只含与注意力无关的通用折叠样例。
-//  scan_exprs dry-run、fused_gpu/expr_cpu 对拍与 AttentionBase::forward
-//  共用本构造 → key 一致。
+//  这是**注意力 Layer 自己的表达式文本**（表达式只出现在 Layer 的既有原则）：
+//  本文件是 make_fold_attn_o 构造与 AttnMaskKind 掩码种类的定义来源，
+//  expr_fold.hpp 只含与注意力无关的通用折叠样例。fused_gpu/expr_cpu 对拍
+//  与 AttentionBase::forward 共用本构造 → 结构 key 一致（AOT 收集链已随
+//  P3 删除，35 号 D4；GPU 侧由运行期 JIT 现编同一结构）。
 //
 //  数学：O = softmax_masked(Q·Kᵀ) · V_t
 //    键域每块：S_tile = mm(Q,K)（内层 dk 收缩）→ [掩码] →
@@ -52,9 +52,9 @@ namespace expr
 // 位置偏置（ALiBi）不属于掩码：它由位置编码策略给出，作为独立的第二个维度
 // 传入（score_bias）。两者正交 —— 掩码策略不必知道位置编码的存在。
 //
-// 掩码清单是**单一真源**（X 宏）：枚举定义与下方 AOT 自登记表
-// （`#if defined(NN_EXPR_SCAN)` 段，见 make_fold_attn_o 之后）都由它展开 ——
-// 新增一种掩码只需在本清单加一项，scan_exprs 与登记表都无需改动。
+// 掩码清单是**单一真源**（X 宏）：枚举定义由它展开——新增一种掩码只需在
+// 本清单加一项；AOT 自登记段已随 P3 删除（35 号 D4），GPU 侧 JIT 按结构
+// key 现编，无需登记表。
 #define NN_ATTN_MASK_KIND_LIST(X) \
     X(Plain)                      \
     X(Causal)                     \
@@ -215,51 +215,6 @@ enum class AttnMaskKind
     return s;
 }
 
-#if defined(NN_EXPR_SCAN)
-// ── AOT 自登记锚点（表达式自登记约定：新增掩码/偏置组合不改 scan_exprs）──
-// 注意力 fold 由**值构造器**产出（结构取决于 mask / score_bias / kv_ratio 三个
-// 实参），类型层面不编码结构 → `FusedAnchor<Expr>` 按类型登记覆盖不到；层
-// forward 又是直调 `engine.eval_expr(make_fold_attn_o(...))`、不经 DSL 钩子。
-// 故由本文件（构造与掩码清单的唯一定义来源）在静态初始化期经 `FoldAnchor`
-// 自登记**全部**组合（与 compute_loss.hpp 的 CE logsumexp 折叠同一形态）：
-//   掩码（`NN_ATTN_MASK_KIND_LIST`）× {无偏置, 位置偏置} × {MHA, GQA}
-// 其中"无掩码 + 位置偏置"不是本仓会构造的组合（无层路径），故实际为 5×2 = 10
-// 条结构。形状/运行期参数（seq/dk/bh 与 kv_ratio 的具体值）**不进 key** → 一
-// 组代表值即覆盖所有形状（docs/internal/22 §3.2 P2；GQA 的 HeadGroup 视图种类进
-// key，比本身不进 → MHA/GQA 各一条）。
-// 可用 `-DNN_SCAN_NO_ANCHOR` 关掉（与 FusedAnchor 同一 A/B 开关：只影响登记
-// 集合、不改语义）。
-#if !defined(NN_SCAN_NO_ANCHOR)
-namespace attn_fold_anchor
-{
-inline constexpr AttnMaskKind kMaskKinds[] = {
-#define NN_ATTN_MASK_KIND_ITEM(name) AttnMaskKind::name,
-    NN_ATTN_MASK_KIND_LIST(NN_ATTN_MASK_KIND_ITEM)
-#undef NN_ATTN_MASK_KIND_ITEM
-};
-
-// 登记表 = 本层实际会构造的全部组合。形状取代表值（k/dk/bh/kv_ratio 均不进
-// key；这里的取值与既有登记块一致，便于逐字节比对生成物）。
-[[nodiscard]] inline bool register_all()
-{
-    constexpr std::uint32_t seq = 64, dk = 2, bh = 2;
-    for (const AttnMaskKind mask : kMaskKinds)
-    {
-        for (const bool score_bias : {false, true})
-        {
-            if (mask == AttnMaskKind::Plain && score_bias)
-                continue;   // 无掩码 + 位置偏置：本仓不构造该组合
-            for (const std::uint32_t kv_ratio : {1u, 2u})
-                (void)dsl::FoldAnchor{make_fold_attn_o(seq, dk, bh, mask, score_bias, kv_ratio)};
-        }
-    }
-    return true;
-}
-} // namespace attn_fold_anchor
-
-inline const bool g_attn_fold_anchors = attn_fold_anchor::register_all();
-#endif   // !NN_SCAN_NO_ANCHOR
-#endif   // NN_EXPR_SCAN
 
 } // namespace expr
 
@@ -286,8 +241,8 @@ inline const bool g_attn_fold_anchors = attn_fold_anchor::register_all();
 //    append_fold_inputs() → 按 make_fold_attn_o 的 views 顺序追加 fold 输入
 //    masked_scores()      → 反向重算 S 的 DSL 文本（与 fold 掩码语义同构）
 //
-//  AOT 注册表：每条 masked_scores() 的表达式文本都必须被 scan_exprs 的
-//  对应掩码 dry-run 覆盖。
+//  表达式结构（AOT 时代由 scan_exprs 覆盖，P3 后无注册表）：每条
+//  masked_scores() 的表达式文本由 JIT 按 key 现编，结构不变即 shader 同源。
 // ═══════════════════════════════════════════════════════════════════════════
 class AttnScoreMask
 {
@@ -1278,9 +1233,9 @@ public:
 //  输入。伴随正确性（dL/dK、dL/dV 累加回 memory 路径）与自反向同一套
 //  R/X 机器，仅形状参数不同。
 //
-//  AOT 注册表：fold（Plain/no-bias）与 backward 表达式结构与
-//  MultiHeadAttention 完全同 key（k/seq 是形状参数不进 key）——scan_exprs
-//  的 CrossAttention dry-run（seq_q ≠ seq_kv 矩形形状）另行登记确保覆盖。
+//  结构同 key 性质：fold（Plain/no-bias）与 backward 表达式结构与
+//  MultiHeadAttention 完全同 key（k/seq 是形状参数不进 key）——矩形
+//  seq_q ≠ seq_kv 形状亦命中同一 JIT 编译产物（AOT dry-run 已删，P3）。
 // ══════════════════════════════════════════════════════════════════════════
 
 // backward_pair 的双路梯度（query 与 memory 各一份）
