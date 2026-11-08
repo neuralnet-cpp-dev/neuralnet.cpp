@@ -70,7 +70,7 @@ out = x + scale · (B · h)      B: (dim, rank)   B 初始化为 0 ⇒ 初始为
 | 2.4 | 精度 profile 无自检（C7 类静默失效的成因） | 高 | `compute_layer_base.hpp:212` |
 | 2.5 | 一个表达式只允许一个 matmul，且未写进使用文档 | 中 | `expr_spec.hpp:423` |
 | 2.6 | 库外没有梯度检查工具 | 中 | `src/test_common.hpp:18` |
-| 2.7 | GPU 路径是"额外一步 + 运行期才失败"（**现状已消除**：AOT 收集链与 `nn_enable_gpu_fusion` 不存在，统一运行期 JIT，无额外 CMake 步骤） | 中 | `CMakeLists.txt`（`nn_enable_gpu_fusion`） |
+| 2.7 | GPU 路径曾是"额外一步 + 运行期才失败"（**现状已消除**：AOT 收集链与 `nn_enable_gpu_fusion` 不存在，统一运行期 JIT，无额外 CMake 步骤） | 低 | `CMakeLists.txt`（运行期 JIT） |
 
 ### 2.1 `NN_UNWRAP` 名为 CHECK 实为 unwrap（严重度：高）
 
@@ -190,21 +190,14 @@ return dsl::compute(engine,                                                     
 另注：铁律 #8（gradcheck 必须先 forward 填充缓存）目前在 AGENTS.md §5，#8 条，
 但**没有可复制的代码**——使用者只能自己从"缓存为空会崩"这个现象反推。
 
-### 2.7 GPU 路径是"额外一步 + 运行期才失败"（严重度：中）
+### 2.7 GPU 路径（严重度：低，已消除）
 
-> **2026-11-08 勘误**：构建期 AOT 收集链与 `nn_enable_gpu_fusion()` 已整体删除，
-> 自研 `dsl::compute` 结构现在与库内层走同一运行期 JIT 路径（`.nnk` 缓存 + `model_warmup`
-> 预热），**不再需要任何 CMake 步骤**；下述"额外一步"为 2026-10 快照的历史描述。
-
-CPU 上写完即可跑；切 GPU 需要额外在 CMake 加 `nn_enable_gpu_fusion(<target>)`
-（库外自定义层的表达式结构不在库内注册表里）。漏掉这一步时：
-
-- **构建期不报错**；
-- **运行期策略**（AOT 注册表；主路径未命中 JIT 兜底）。
-
-这是设计上必然的（铁律 #7），本报告不建议改机制，只建议把"CPU 通过 → 加一行 CMake → GPU 通过"
-写成使用文档里的检查清单。对使用者而言"CPU 对、GPU 报错"是最难自查的一类问题，
-而现有的 `examples/fusion_custom_layer*` 样例讲的是**融合表达式**，不是**层**。
+自研 `dsl::compute` 结构与库内层走同一运行期 JIT 路径：GPU 首次执行时按
+`expr_spec_key` 查 `.nnk` 缓存，miss 则现编 SPIR-V 并落盘，**不需要任何 CMake 步骤**。
+构建期 AOT 收集链与 `nn_enable_gpu_fusion()` 已整体删除；冷启动延迟用
+`nn::model_warmup()` 提前到部署首跑。接入与排错见
+[`01-cmake-integration.md`](01-cmake-integration.md) §6 与
+[`02-cpp-api-manual.md`](02-cpp-api-manual.md)。
 
 ---
 

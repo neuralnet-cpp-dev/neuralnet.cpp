@@ -108,5 +108,5 @@ STE 用恒等映射 `dWq/dW ≈ 1` 替代，于是 `dW_latent = γ · dY · Xᵀ
   本探针不含。
 - **不代表 STE 可被 gradcheck 验证**：量化器不可微，数值梯度与 STE 梯度本就不一致；
   落成层时只能验证"latent 梯度 = STE 公式"与"量化输出逐位符合 γ 规则"。
-- **没有验证 GPU**：探针走 `CpuEngine`。GPU 侧的新表达式需要经 AOT 收集
-  （库内 dry-run / 库外 `nn_enable_gpu_fusion`），否则闭合世界硬报错。
+- **没有验证 GPU**：探针走 `CpuEngine`。GPU 侧的新表达式由运行期 JIT 兜底
+  （构建期 AOT 收集链已删除），首次执行现编并写 `.nnk` 缓存。
