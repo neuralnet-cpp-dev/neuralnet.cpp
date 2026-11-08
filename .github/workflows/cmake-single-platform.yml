@@ -36,7 +36,14 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
+    # engine 子模块（LGPL 引擎 + 抽象层 + shaders）是 configure 的硬依赖：
+    # 主仓 CMakeLists 里 add_subdirectory(engine) 需要它，不拉则 configure 直接失败。
+    # 子模块 URL 是 git@github.com:（SSH），CI 无密钥 ⇒ 全局改写成 https 匿名拉取。
+    - name: Rewrite submodule URL to https
+      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
     # 注意：不缓存整个 build 目录——旧 CMakeCache.txt 会跨运行携带已移除的
     # -D 设置（如历史上的 CMAKE_CXX_FLAGS=-stdlib=libc++），导致编译/链接
@@ -269,43 +276,12 @@ jobs:
         retention-days: 1
 
   # ══════════════════════════════════════════════════════════════════════
-  # P1-5：MSVC Debug 冒烟
+  # 注：P1-5 的 MSVC Debug 冒烟 job（cl.exe / Visual Studio 生成器）已下线。
+  # 构建自 v1.17.0 起**无条件**走 C++ 模块（`nn_add_module` 用
+  # `${CMAKE_CXX_COMPILER} --precompile` + `-fmodule-file`）：cl.exe / clang-cl
+  # 不支持这两个开关，GCC 也不支持 `--precompile` ⇒ 仅 **GNU 驱动 Clang** 可构建
+  # （docs/development/01 §8.2、35 号 P1/P5）。支持范围的收窄写在 release note。
   # ══════════════════════════════════════════════════════════════════════
-  # 上面的 build 矩阵用 clang++ Release，覆盖不到：
-  #   ① cl.exe 的 Debug 代码生成 / STL 断言 / 迭代器调试；
-  #   ② 只在 Debug 下暴露的未初始化读、迭代器失效、assert 路径。
-  # 这里用 Visual Studio 2026 生成器直接拿到 cl.exe（无需 vcvars 脚本），
-  # 纯 CPU（NN_ENABLE_GPU=OFF）以避开 Vulkan/glslc 变量，保持冒烟稳定；
-  # ctest 除一个已知不稳定数值问题外全跑（见下）；其中 optimizer_test
-  # 的 [4] 段断言 8 步训练参数确实移动。
-  msvc-debug:
-    name: MSVC Debug smoke (cl.exe, CPU-only)
-    runs-on: windows-latest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Configure CMake (MSVC Debug, CPU-only)
-      shell: pwsh
-      run: >
-        cmake -B build-msvc-debug
-        -G "Visual Studio 18 2026" -A x64
-        -DNN_ENABLE_NATIVE=OFF
-        -DNN_ENABLE_GPU=OFF
-        -DNN_ENABLE_TESTS=ON
-
-    - name: Build (Debug)
-      shell: pwsh
-      run: cmake --build build-msvc-debug --config Debug --parallel
-
-    # ⚠ rapt_test_f16 是已知的 RAPT f16 NaN（18 §3.1 C11）：用户已排查，怀疑是
-    #   设备/后端自身问题；Release 下不触发只是概率，不是"Debug 专有"。
-    #   修好前显式排除；其余用例全跑，避免这个已知不稳定项把 Debug job 永久染红。
-    - name: Test ctest (Debug)
-      shell: pwsh
-      run: >
-        ctest --test-dir build-msvc-debug -C Debug --output-on-failure
-        -E "^rapt_test_f16$"
 
   # ══════════════════════════════════════════════════════════════════════
   # 文档一致性（不编译；engine 子模块经 https 重写拉取）
@@ -373,7 +349,7 @@ jobs:
       run: ctest --test-dir build-engine --output-on-failure
 
   release:
-    needs: [build, msvc-debug, engine-tests]
+    needs: [build, engine-tests]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
