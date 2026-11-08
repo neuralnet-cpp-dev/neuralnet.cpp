@@ -18,12 +18,11 @@
 //   无可用 Vulkan 设备 → 打印 SKIP 并返回 0（发布机无 GPU 不算失败）。
 // ─────────────────────────────────────────────────────────────────────────────
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
 #include <vector>
-
-#include <neuralnet.cpp/core_env.hpp>   // RV-09：环境变量读取唯一入口
 
 import nn.cli;
 import nn.core;

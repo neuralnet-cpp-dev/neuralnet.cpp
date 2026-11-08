@@ -27,7 +27,6 @@
 // ────────────────────────────────────────────────────────────────────────
 
 #include <nn_error_macros.hpp>
-#include <neuralnet.cpp/core_env.hpp>   // RV-09：环境变量读取唯一入口
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>

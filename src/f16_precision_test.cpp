@@ -18,7 +18,6 @@
 
 #define NN_TEST_COUNTER g_failures
 #include "test_common.hpp"
-#include <neuralnet.cpp/core_env.hpp>   // RV-09：环境变量读取唯一入口
 import nn.cli;
 import nn.core;
 import nn.dataset;

@@ -7,6 +7,7 @@
 module;
 #include <neuralnet.cpp/core_assert.hpp>
 #include <neuralnet.cpp/core_config.hpp>
+#include <neuralnet.cpp/core_env.hpp>
 #include <neuralnet.cpp/core_errors.hpp>
 #include <neuralnet.cpp/core_observer_ptr.hpp>
 #include <neuralnet.cpp/core_file.hpp>
@@ -58,8 +59,13 @@ export namespace nn {
     using nn::write_pod_span;
     namespace detail {
         using nn::detail::Sha256State;
+        using nn::detail::env_flag_raw;
+        using nn::detail::env_int_raw;
+        using nn::detail::env_string_raw;
         using nn::detail::float_to_half_bits;
         using nn::detail::half_bits_to_float;
+        using nn::detail::probe_flag_raw;
+        using nn::detail::probe_string_raw;
         using nn::detail::sha256_digest;
         using nn::detail::sha256_finalize;
         using nn::detail::sha256_update;
