@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
@@ -572,6 +573,133 @@ int test_expr_fold()
         keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
         check(keys.size() == 10, "attn fold 10 个组合（掩码 × 偏置 × {MHA,GQA}）互不相同 n=" +
                                      std::to_string(keys.size()));
+    }
+
+    // ── 9) 行并行门控覆盖（#T1）─────────────────────────────────────────
+    // 门控在 compute_cpu_engine.hpp 的 eval_fold_impl：rows*K >= 65536 才按行
+    // 分片并行（kFoldParallelMinWork），否则串行。此前所有 fold 用例都远低于
+    // 该阈值（rows=5、K≤1000），并行分支从未被执行。本段：
+    //   a) 真正越过门控（rows=64, K=4096 → 262144 ≥ 65536）并断言与"逐行
+    //      串行"（rows=1 → 门控不成立）**逐位**一致；
+    //   b) 门控边界（15×4096=61440 关 / 16×4096=65536 开）两侧前 15 行逐位相同。
+    // 行间完全独立、行内逐位确定 ⇒ 并行结果必须与串行完全相等（不用容差）。
+    {
+        constexpr std::size_t K = 4096;
+        const auto fill_rnd = [&](nn::Matrix& m)
+        { for (auto& v : m.span()) v = dist(rng); };
+
+        // 逐行求值：rows=1 使 rows*K=K < 65536，强制串行分支；行内容与整块相同。
+        const auto eval_rows_serial = [&](const nn::ExprSpec& spec, const nn::Matrix& mx,
+                                          std::size_t r_begin, std::size_t r_end,
+                                          const char* tag)
+        {
+            std::vector<Scalar> got;
+            got.reserve(r_end - r_begin);
+            const auto src = mx.span();
+            for (std::size_t r = r_begin; r < r_end; ++r)
+            {
+                nn::Matrix one(1, K);
+                auto dst = one.span();
+                for (std::size_t j = 0; j < K; ++j) dst[j] = src[r * K + j];
+                nn::Tensor t = upload(engine, one);
+                const std::array<nn::Tensor, 1> in{t};
+                auto o = engine.eval_expr(spec, in, 1, 1);
+                if (!o)
+                {
+                    check(false, std::string(tag) + " serial row " + std::to_string(r) +
+                                     ": " + o.error().message);
+                    return got;
+                }
+                const auto om = download(engine, *o);
+                got.push_back(om.span()[0]);
+            }
+            return got;
+        };
+        const auto check_gate_parallel = [&](const nn::ExprSpec& spec, std::size_t rows,
+                                             const char* tag)
+        {
+            nn::Matrix mx(rows, K);
+            fill_rnd(mx);
+            nn::Tensor x = upload(engine, mx);
+            const std::array<nn::Tensor, 1> ins{x};
+            auto o = engine.eval_expr(spec, ins, rows, 1);
+            if (!o)
+            {
+                check(false, std::string(tag) + " parallel eval: " + o.error().message);
+                return;
+            }
+            const auto om = download(engine, *o);
+            const auto os = om.span();
+            const auto ser = eval_rows_serial(spec, mx, 0, rows, tag);
+            std::size_t first_bad = rows;
+            if (ser.size() == rows)
+                for (std::size_t r = 0; r < rows; ++r)
+                    if (os[r] != ser[r])
+                    {
+                        first_bad = r;
+                        break;
+                    }
+            check(ser.size() == rows && first_bad == rows,
+                  std::string(tag) + " rows=" + std::to_string(rows) +
+                      " K=" + std::to_string(K) + " rows*K=" + std::to_string(rows * K) +
+                      "（门控内）并行 == 逐行串行（逐位）" +
+                      (first_bad < rows ? "：row " + std::to_string(first_bad) + " 首次不等" : ""));
+        };
+
+        // 门控边界：同一份 16 行数据，15 行（61440 < 65536，关）与 16 行
+        // （65536，开）各求值一次，比较两侧的前 15 行。
+        nn::Matrix m16(16, K);
+        fill_rnd(m16);
+        const auto eval_prefix = [&](const nn::ExprSpec& spec, std::size_t nrows)
+            -> std::optional<nn::Matrix>
+        {
+            nn::Matrix m(nrows, K);
+            const auto src = m16.span();
+            auto dst = m.span();
+            for (std::size_t i = 0; i < nrows * K; ++i) dst[i] = src[i];
+            nn::Tensor t = upload(engine, m);
+            const std::array<nn::Tensor, 1> in{t};
+            auto o = engine.eval_expr(spec, in, nrows, 1);
+            if (!o) return std::nullopt;
+            return download(engine, *o);
+        };
+        const auto check_gate_boundary = [&](const nn::ExprSpec& spec, const char* tag)
+        {
+            const auto off = eval_prefix(spec, 15); // 61440 < 65536
+            const auto on = eval_prefix(spec, 16);  // 65536 == 阈值
+            if (!off || !on)
+            {
+                check(false, std::string(tag) + " boundary eval failed");
+                return;
+            }
+            const auto a = off->span();
+            const auto b = on->span();
+            bool same = true;
+            std::size_t bad = 0;
+            for (std::size_t r = 0; r < 15; ++r)
+                if (a[r] != b[r])
+                {
+                    same = false;
+                    bad = r;
+                    break;
+                }
+            check(same, std::string(tag) +
+                            " 门控边界 15×4096(关) vs 16×4096(开) 前 15 行逐位相同" +
+                            (same ? "" : "：row " + std::to_string(bad) + " 首次不等"));
+        };
+
+        const nn::ExprSpec rowsum = nn::expr::make_fold_rowsum(static_cast<std::uint32_t>(K));
+        const nn::ExprSpec sden =
+            nn::expr::make_fold_softmax_denom(static_cast<std::uint32_t>(K));
+        // 分片数 = min(线程池, rows/8)：池 <2 时门控虽开但 n_chunks=1（分支不可达）。
+        // 打印实际分片数，避免"跑在单线程机上却误以为覆盖了并行"。
+        const std::size_t workers = nn::global_thread_pool().size();
+        std::cout << "    行并行门控：线程池 " << workers << " 线程，rows=64 → "
+                  << std::min(workers, std::size_t{8}) << " 片（rows*K=262144 ≥ 65536）\n";
+        check_gate_parallel(rowsum, 64, "rowsum");
+        check_gate_parallel(sden, 64, "softmax_denom");
+        check_gate_boundary(rowsum, "rowsum");
+        check_gate_boundary(sden, "softmax_denom");
     }
 
     return fail;
