@@ -45,7 +45,7 @@ GPT 训练需要一份文本语料（如 `datasets/llm_corpus.txt`，用 `script
 ./build/mnist_train --gpu=NVIDIA --epochs 10
 
 # 恢复训练
-./build/mnist_train --resume mnist_model.bin --epochs 5
+./build/mnist_train --resume mnist_model.nnmodel --epochs 5
 
 # 快速测试（限制样本数）
 ./build/mnist_train --max-samples 1000 --epochs 3
@@ -57,12 +57,12 @@ GPT 训练需要一份文本语料（如 `datasets/llm_corpus.txt`，用 `script
 |------|--------|------|
 | `--arch` | `mlp` | 架构：`mlp` / `transformer` / `cnn` |
 | `--resume <path>` | 无 | 从已有模型恢复训练 |
-| `--save <path>` | `mnist_model.bin` | 模型保存路径 |
+| `--save <path>` | `mnist_model.nnmodel` | 模型保存路径 |
 | `--dataset <path>` | `datasets/mnist_data` | 数据集目录 |
 | `--epochs <n>` | `10` | 训练轮数 |
 | `--lr <lr>` | `0.001` | 学习率 |
 | `--batch-size <n>` | `64` | 批大小 |
-| `--optimizer <name>` | `adam` | 优化器：`sgd`/`sgd_momentum`/`adam`/`adamw`/`muon` |
+| `--optimizer <name>` | `adam` | 优化器：`sgd`/`sgd_momentum`/`adam`/`adamw`/`adamwquant`/`adamwint8`/`muon` |
 | `--gpu <索引>` / `--gpu=<名称>` | 禁用 | 启用 Vulkan GPU 加速；可选指定计算设备（索引如 `2`，名称子串如 `--gpu=40HX`/`--gpu=NVIDIA`） |
 | `--max-samples <n>` | 全部 | 限制训练样本数 |
 | `--norm <type>` | `auto` | 归一化类型：`auto` / `layernorm` / `rmsnorm` / `batchnorm`（三架构通用；`auto` = 按架构：MLP/ViT = layernorm、CNN = batchnorm） |
@@ -75,7 +75,7 @@ GPT 训练需要一份文本语料（如 `datasets/llm_corpus.txt`，用 `script
 
 ```bash
 # 使用已训练的模型推理（图片路径是位置参数）
-./build/mnist_infer my_digit.csv --model mnist_model.bin
+./build/mnist_infer my_digit.csv --model mnist_model.nnmodel
 ```
 
 ---
@@ -148,16 +148,16 @@ GPT 训练需要一份文本语料（如 `datasets/llm_corpus.txt`，用 `script
 
 ```bash
 # 单次生成
-./build/text_infer --model gpt_model.bin --prompt "Once upon a time" --max-tokens 200
+./build/text_infer --model gpt_model.nnmodel --prompt "Once upon a time" --max-tokens 200
 
 # 交互模式
 ./build/text_infer --interactive
 
 # 调节温度（0=贪心，>1=更随机）
-./build/text_infer --model gpt_model.bin --prompt "Hello" --temperature 0.8
+./build/text_infer --model gpt_model.nnmodel --prompt "Hello" --temperature 0.8
 
 # 采样截断 + 可复现（同 seed 同 prompt ⇒ 同输出）
-./build/text_infer --model gpt_model.bin --prompt "Hello" --seed 7 \
+./build/text_infer --model gpt_model.nnmodel --prompt "Hello" --seed 7 \
     --top-k 40 --top-p 0.9 --repeat-penalty 1.2
 
 # 多轮对话（历史自带：GUI 的「💬 发送（多轮）」发的就是这条形状）
@@ -166,14 +166,14 @@ GPT 训练需要一份文本语料（如 `datasets/llm_corpus.txt`，用 `script
     --reply-out reply.txt
 
 # 使用 GPU
-./build/text_infer --model gpt_model.bin --gpu --prompt "Hello"
+./build/text_infer --model gpt_model.nnmodel --gpu --prompt "Hello"
 ```
 
 **完整参数：**
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--model <path>` | `gpt_model.bin` | 模型文件路径 |
+| `--model <path>` | `gpt_model.nnmodel` | 模型文件路径 |
 | `--vocab <path>` | `bpe_vocab.nnvocab` | 词表 `.nnvocab` 路径（仅模型未嵌入时） |
 | `--prompt <text>` | `Hello` | 输入提示文本 |
 | `--interactive` | 禁用 | 交互式生成模式（**多轮**：上下文累积保留，输入 `quit`/`exit` 退出） |
@@ -334,7 +334,7 @@ int main() {
     nn::ModelSpec spec;
     spec.type = nn::ModelType::MLP;
     spec.layer_dims = {784, 512, 256, 128, 64, 10};
-    auto save_result = nn::save_model("mnist_model.bin", model, spec);
+    auto save_result = nn::save_model("mnist_model.nnmodel", model, spec);
 }
 ```
 
@@ -421,7 +421,7 @@ int main() {
     nn::CpuEngine& engine = *engine_owner;
 
     // 1. 加载模型（v4+ 自描述格式：文件头部含 spec + tokenizer；Model 需预先构建以提供 spec 用于校验）
-    auto load_result = nn::load_model("gpt_model.bin", model);
+    auto load_result = nn::load_model("gpt_model.nnmodel", model);
     auto tokenizer_json = std::move(*load_result);
     auto tokenizer = nn::load_tokenizer_from_string(tokenizer_json);
 
@@ -535,7 +535,7 @@ python gui.py
 │  训练 Tab                                         │
 │                                                    │
 │  数据集目录:  [datasets/mnist_data    ] [浏览…]     │
-│  模型保存路径: [mnist_model.bin        ] [浏览…]     │
+│  模型保存路径: [pretrained/mnist_model.nnmodel] [浏览…] │
 │  ☑ 从已有模型恢复训练                                │
 │                                                    │
 │  ┌─ 超参数 ────────────────────────────────────┐   │
@@ -578,8 +578,8 @@ python gui.py
 **操作步骤：**
 
 1. **选择数据集** — 点击"浏览…"选择 `datasets/mnist_data` 目录（默认已填好）
-2. **设置保存路径** — 模型训练完成后保存的 `.bin` 文件路径
-3. **配置超参数** — 轮数、学习率、批大小、优化器（`sgd`/`adam`/`adamw`/`muon`）、权重衰减
+2. **设置保存路径** — 模型训练完成后保存的 `.nnmodel`（推理角色；断点续训用 `.nnckpt`）文件路径
+3. **配置超参数** — 轮数、学习率、批大小、优化器（`sgd`/`adam`/`adamw`/`adamwquant`/`adamwint8`/`muon`）、权重衰减
 4. **选择模型类型**：
    - `mlp`：可自定义层维度（如 `784,512,256,128,10`）
    - `transformer`：可配置模型维度、注意力头数、FFN 维度、层数、Patch 大小
@@ -596,7 +596,7 @@ python gui.py
 
 **基本推理：**
 
-1. **选择模型文件** — 点击"浏览…"选择训练好的 `.bin` 模型
+1. **选择模型文件** — 点击"浏览…"选择训练好的 `.nnmodel` 模型（断点续训文件为 `.nnckpt`）
 2. **选择图片** — 输入单张 CSV 图片路径或包含多张图片的目录
 3. **设置 Top-K** — 控制显示前 K 个预测结果
 4. **点击 "▶ 开始推理"** — 左侧显示图片预览，右侧显示 Top-K 置信度条形图
@@ -615,7 +615,7 @@ python gui.py
 ┌──────────────────────────────────────────────────┐
 │  推理 Tab                                         │
 │                                                    │
-│  模型文件:  [pretrained/model.bin    ] [浏览…]     │
+│  模型文件:  [pretrained/model.nnmodel ] [浏览…]     │
 │  图片/目录: [                        ] [浏览…]     │
 │  Top-K: [3]   架构: 自动识别   ☐ GPU  ☐ 显示像素   │
 │                                                    │
@@ -659,7 +659,7 @@ python gui.py
 │  GPT 训练 Tab                                     │
 │                                                    │
 │  数据集文件:  [datasets/llm.nndataset  ] [浏览…]   │
-│  模型保存路径: [gpt_model.bin           ] [浏览…]   │
+│  模型保存路径: [gpt_model.nnmodel       ] [浏览…]   │
 │  ☑ 从已有模型恢复训练                                │
 │                                                    │
 │  ┌─ 超参数 ────────────────────────────────────┐   │
@@ -708,7 +708,7 @@ python gui.py
 
 **操作步骤：**
 
-1. **选择模型** — 指定训练好的 GPT 模型 `.bin` 文件
+1. **选择模型** — 指定训练好的 GPT 模型 `.nnmodel` 文件
 2. **选择词表** — 模型未嵌入词表时指定 `.nnvocab` 词表文件
 3. **设置生成参数** — 最大 token 数（默认 200）、温度（0=贪心，>1=更随机，默认 1.0）
 4. **输入提示文本** — 在输入框中输入起始文本（如 "Hello"）

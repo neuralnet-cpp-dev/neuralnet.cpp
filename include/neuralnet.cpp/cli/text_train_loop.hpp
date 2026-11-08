@@ -271,7 +271,7 @@ inline void log_text_train_gradient_stats(nn::ComputeEngine& engine,
 }
 
 // ── 显存阶段采样（NN_MEM_STATS=1；探针门关时恒 false 且不读环境变量）─────────
-// 与 src/mem_probe.cpp 同口径：把峰值归因到具体生命周期阶段。默认构建里
+// 与新仓库 mem_probe（已随引擎 .so 化迁出本仓）同口径：把峰值归因到具体生命周期阶段。默认构建里
 // `on == false` ⇒ 训练热路径与探针无关（判定是常量）。
 struct TextTrainMemProbe
 {

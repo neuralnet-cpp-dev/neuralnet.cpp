@@ -3,7 +3,7 @@
 
 复现：`python bench/gui_cli_audit.py`（需先构建 build/ 下的可执行文件）
 
-四节：
+七节：
   [1] GUI → CLI flag：把每个 Tab 可能发出的完整 kwargs 喂给对应 Controller，
       提取生成的 `--flag`，与该可执行文件 `--help` 的 flag 集合求差集。
       → 抓"GUI 会发出的、CLI 不认识的参数"（多余项 / flag 名写错）。

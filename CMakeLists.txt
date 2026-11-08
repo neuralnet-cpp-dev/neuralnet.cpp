@@ -1026,8 +1026,8 @@ option(NN_ENABLE_TESTS "Build test/verification executables" OFF)
 # "探针" = 会在**热路径**采样/打印/下载/扫描的诊断代码 + 只服务于排障的可执行
 # 目标。打开后：① 库头里的探针门打开（`nn_dbg_scan`/`NN_F16_DEBUG` 中间量扫描、
 # `NN_PREC_TRACE` 变体与边界 cast 归因、`text_train` 的 `NN_NAN_TRACE` /
-# `NN_MEM_STATS`）；② 创建探针可执行目标（mem_probe / f16_cpu_probe /
-# gpu_stability_probe）。
+# `NN_MEM_STATS`）；② 创建探针可执行目标（f16_cpu_probe / gpu_stability_probe；
+# 显存分项探针 mem_probe 已随引擎 .so 化迁往新仓库 compute.neuralnet.cpp）。
 # 关闭（默认）时这些代码**不参与编译**：没有额外分支、没有字符串、没有 host
 # 下载路径，相关环境变量一律无效——探针只在排障时按需打开，不允许"设了环境
 # 变量就悄悄拖慢正常训练/推理"。运行时**行为开关**（NN_VULKAN_DEVICE 设备选择、
@@ -1087,7 +1087,7 @@ if(NN_BUILD_APPS)
     list(APPEND NN_APP_TARGETS layer_bench)
 
     # ── 探针目标（诊断专用；需 -DNN_ENABLE_PROBES=ON，默认不构建）───────────
-    # 这三个只服务排障，不进任何正常流程：正常构建里连可执行文件都不存在，
+    # 这两个只服务排障，不进任何正常流程：正常构建里连可执行文件都不存在，
     # 文档里引用它们的复现步骤须先配置 NN_ENABLE_PROBES=ON。
     if(NN_ENABLE_PROBES)
         # 运行时显存分项探针（双池采样 + nvidia-smi + 逻辑分项归因）

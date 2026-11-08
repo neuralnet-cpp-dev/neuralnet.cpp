@@ -89,11 +89,11 @@ target_link_libraries(my_app PRIVATE neuralnet::nn)
 
 | 变量 | 取值 | 默认 | 含义 |
 |---|---|---|---|
-| `NN_ENABLE_GPU` | `AUTO` / `ON` / `OFF` | `AUTO` | `AUTO` = 探测到 Vulkan + glslc 就启用 GPU；`ON` = 强制要求，缺依赖则**配置期失败**（不静默降级）；`OFF` = 完全跳过（不探测、不编 `scan_exprs`、不生成 shader → 纯 CPU 最快路径） |
+| `NN_ENABLE_GPU` | `AUTO` / `ON` / `OFF` | `AUTO` | `AUTO` = 探测到 Vulkan + glslc 就启用 GPU；`ON` = 强制要求，缺依赖则**配置期失败**（不静默降级）；`OFF` = 完全跳过（不探测、不生成 shader → 纯 CPU 最快路径） |
 | `NN_BUILD_APPS` | `ON` / `OFF` | **嵌入时 OFF**（顶层工程 ON） | 是否构建本仓 app / 基准可执行文件。嵌入时默认 OFF —— 消费方只拿库目标 |
 | `NN_ENABLE_TESTS` | `ON` / `OFF` | `OFF` | 是否构建并注册本仓测试目标（`list(APPEND NN_TEST_TARGETS ...)` 收集） |
 | `NN_ENABLE_NATIVE` | `ON` / `OFF` | `ON` | `-march=native`（只作用于本仓目标，不影响消费方编译选项）。分发 / CI 用 `OFF` 生成可移植基线 |
-| `NN_ENABLE_PROBES` | `ON` / `OFF` | `OFF` | **探针编译门**：打开才编译库内热路径探针并创建探针目标（`mem_probe` / `f16_cpu_probe` / `gpu_stability_probe`）。会改变库头语义 → **不可与默认构建的对象 / 缓存混用** |
+| `NN_ENABLE_PROBES` | `ON` / `OFF` | `OFF` | **探针编译门**：打开才编译库内热路径探针并创建本仓探针目标（`f16_cpu_probe` / `gpu_stability_probe`；GPU 显存分项探针 `mem_probe` 已随引擎 .so 化迁往新仓库 `compute.neuralnet.cpp`）。会改变库头语义 → **不可与默认构建的对象 / 缓存混用** |
 | `NN_COMPILER_LAUNCHER` | path | 自动探测 ccache / sccache | 编译器缓存启动器；显式传空串 = 禁用。**模块消费方一律绕开**（ccache 4.13 不支持标准 C++ modules，见「C++ 模块」小节） |
 
 ```cmake
@@ -117,39 +117,33 @@ add_subdirectory(3rd_party/neuralnet.cpp)
   `NN_HAS_VULKAN`、SPIR-V 嵌入头目录、`Vulkan::Vulkan`、shader 生成顺序。
 - **`NN_ENABLE_GPU=AUTO` 的静默降级**：找不到 Vulkan / glslc 时走纯 CPU。
   想要「没 GPU 就配置失败」用 `ON`。
-- **注册表（预热）**：库内层的融合 shader 构建期全部生成，你的目标直接跑库内层**开箱即用**（未命中主路径走 JIT 兜底）。
-  但若你在自己的层里写了 `nn::dsl::compute` 表达式，必须再加一行（见 §6），
-  否则 GPU 运行期按 `expr_spec_key` **硬报错**（无 eager 回退，设计使然）。
+- **表达式执行**：库内层的结构在 GPU 首次执行时按 `expr_spec_key` 走运行期 JIT
+  （懒加载 `libnn-kernelgen` → SPIR-V → 写 `.nnk` 缓存），预热可用 `model_warmup()`。
+  你在自己的层里写的 `nn::dsl::compute` 表达式**无需任何构建期步骤**——同一套 JIT 路径覆盖，
+  首次有一次性编译延迟（之后命中缓存）。
 
 ---
 
-## 6. 自研算子的融合注册：`nn_enable_gpu_fusion`
+## 6. 自研算子的 GPU 执行：运行期 JIT（无需 CMake 步骤）
 
-```cmake
-nn_enable_gpu_fusion(<target> MAIN <含 main 的源文件> [OUT_DIR <目录>])
-```
+构建期 AOT 收集链（`scan_exprs` / `fused_registry.hpp` 生成 / `NN_EXPR_SCAN` 分支 /
+`nn_enable_gpu_fusion()`）已随 P3/D4 整体删除，**本仓与 engine 子仓都不再有这个函数**。
 
-| 参数 | 说明 |
-|---|---|
-| `<target>` | 你的可执行/库目标（函数会为其创建 `<target>_nnfusion_collect`） |
-| `MAIN` | **必须**指向含 `main` 的源文件——收集器自带 main，会从目标源列表剔除它（漏写 / 写错路径会在配置期报错） |
-| `OUT_DIR` | 可选，生成 `fused_registry.hpp` 的目录（默认 `${CMAKE_CURRENT_BINARY_DIR}/nn_fusion/<target>`） |
+自研 `nn::dsl::compute` 表达式在 GPU 上的执行路径与库内层完全一致：
 
-它在构建期为你的目标收集全部 `nn::dsl::compute` 调用点（含 `#ifdef` 内的），生成**目标专属**
-的 `fused_registry.hpp` 与融合 shader，并把该目录 `BEFORE` 放到 include 路径最前
-（让 `__has_include("fused_registry.hpp")` 解析到你这份）。
+1. **首次 miss**：引擎按 `expr_spec_key` 未命中 `.nnk` 缓存 → 懒加载 `libnn-kernelgen`
+   （`NN_KERNELGEN_PATH` 可覆盖路径）→ 现编 SPIR-V → 建 pipeline → 执行；
+2. **落盘缓存**：生成的 kernel 写入 `NN_KERNEL_CACHE_PATH` / `NN_KERNEL_CACHE_DIR` 指定的
+   `.nnk`（默认用户缓存目录），后续进程直接命中；
+3. **预热**：`nn::model_warmup()` 在加载模型后跑一遍前向，把冷启动成本提前到部署首跑；
+   也可用构建期/发布期预热目标（见 CMakeLists 的 `nn_warmup` 相关目标与 `--no-warmup` 语义）。
 
 ```cmake
 add_executable(my_app main.cpp my_layer.cpp)          # 自研层在 my_layer.cpp
 target_link_libraries(my_app PRIVATE neuralnet::nn)
-nn_enable_gpu_fusion(my_app MAIN ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
 ```
 
-- 该函数**只在 GPU 启用时可用**；未启用时调用会得到指向根因的明确报错
-  （也提供了一个 stub，报 "需要 GPU 构建"）。
-- 样例：`examples/fusion_custom_layer*`（库内形态）、
-  `examples/downstream`（`-DNN_DOWNSTREAM_FUSION=ON`，**从消费方 CMakeLists 调用**，
-  验证函数在调用方作用域求值的路径）。
+无需额外 CMake 行；本仓样例 `examples/downstream/` 演示最小消费形态。
 
 ---
 
@@ -181,7 +175,7 @@ cmake -B build -G Ninja -DNN_ENABLE_TESTS=ON && cmake --build build && ctest --t
 
 构建出的应用入口：`build/{mnist_train,mnist_infer,text_train,text_infer,tokenizer_train,
 tokenizer_infer,dataset_gen,dataset_convert}`，另有 `layer_bench`（性能）与测试类可执行文件。
-`NN_BUILD_APPS` 控制这批 app；探针目标（`mem_probe` / `f16_cpu_probe` / `gpu_stability_probe`）
+`NN_BUILD_APPS` 控制这批 app；探针目标（`f16_cpu_probe` / `gpu_stability_probe`；`mem_probe` 已随引擎 .so 化迁往新仓库）
 另受 `NN_ENABLE_PROBES` 控制。
 
 **已知构建坑**：链接报 `permission denied`（`build/` 下 exe 正在运行被占用 → 构建中止）
@@ -285,9 +279,8 @@ src/ 全量 import 化。动机与实测结论见 `research/modules-import-nn/RE
 | 症状 | 原因 / 处理 |
 |---|---|
 | `target was not found: Vulkan::Vulkan` | 在自己的 CMakeLists 里直接链了 `Vulkan::Vulkan`（imported 目标不可跨目录引用）→ 改链 `neuralnet::nn` |
-| GPU 运行期 `expr_spec_key ... closed world` 硬报错 | 自研 `dsl::compute` 未注册 → 加 `nn_enable_gpu_fusion(...)`（§6） |
-| `nn_enable_gpu_fusion` 报 "Unknown CMake command" | 构建缓存过旧 → 重新 configure（当前版本在 GPU 不可用时也定义了 stub，会给出指向根因的报错） |
-| `nn_enable_gpu_fusion` 报 "MAIN=... 不在目标的源文件列表里" | `MAIN` 路径写错 / 目标里没有该文件（防链接期 duplicate main） |
+| GPU 报 `libnn-kernelgen` 加载失败 | JIT 生成器缺失 → 确认引擎 .so 部署目录含 `libnn-kernelgen.so`（Windows = `nn-kernelgen.dll`），或用 `NN_KERNELGEN_PATH` 指定 |
+| 自研 `dsl::compute` 首次执行慢 | 运行期 JIT 冷启动 → 用 `nn::model_warmup()` 预热，或复用 `.nnk` 缓存（`NN_KERNEL_CACHE_PATH`） |
 | 编译报 `cxx_std_26 not known to CXX compiler` | 编译器过旧 |
 | 找不到 `neuralnet.cpp/nn.hpp` | 确认链接的是 `neuralnet::nn`，且在 `add_subdirectory` **之后** |
 | 找到了 Vulkan 但想要纯 CPU | `-DNN_ENABLE_GPU=OFF`（在 add_subdirectory 之前或命令行） |

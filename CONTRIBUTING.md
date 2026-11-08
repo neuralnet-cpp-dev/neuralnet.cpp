@@ -55,7 +55,7 @@ cmake -B build -G Ninja -DNN_ENABLE_TESTS=ON && cmake --build build && ctest --t
 |------|------|------|
 | `NN_ENABLE_NATIVE` | `ON` | `-march=native`。**分发/换机请设 `OFF`**（否则可能 SIGILL） |
 | `NN_ENABLE_TESTS` | `OFF` | 编测试与 gradcheck（在 `build/test/` 下，注册 ctest） |
-| `NN_ENABLE_PROBES` | `OFF` | 诊断探针（热路径扫描/归因 + `mem_probe` 等）。⚠ 会改变库头语义，**不可与正常构建混用缓存/二进制** |
+| `NN_ENABLE_PROBES` | `OFF` | 诊断探针（热路径扫描/归因 + `f16_cpu_probe`/`gpu_stability_probe`；`mem_probe` 已迁新仓库）。⚠ 会改变库头语义，**不可与正常构建混用缓存/二进制** |
 | `NN_ENABLE_GPU` | `AUTO` | `AUTO`/`ON`（缺 Vulkan 直接配置失败）/`OFF`（纯 CPU 最短路径） |
 | `NN_BUILD_APPS` | 顶层=ON | 嵌入本库当你自己工程的一部分时自动为 `OFF` |
 

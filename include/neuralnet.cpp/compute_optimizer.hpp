@@ -1222,10 +1222,10 @@ public:
 // ── 优化器元数据表（RV-04：新增一个优化器不再要改 5~6 处）─────────────────
 // **名单的唯一真源**。此前同一份名单散落多处：本文件工厂、text_train 的硬编码
 // 白名单、mnist_train 帮助文本、gui.py 的 OPTIMIZER_OPTIONS、
-// mem_probe 的状态缓冲分支等（AGENTS §3 把"别忘了改这几处"写成提醒
+// mem_probe 的状态缓冲分支（该探针已迁新仓库）等（AGENTS §3 把"别忘了改这几处"写成提醒
 // ——提醒本身就说明设计有问题）。现在全部查表：
 //   · CLI 校验 / 帮助文本  → find_optimizer / optimizer_names
-//   · mem_probe 状态预算   → state_bufs / half_state
+//   · 显存状态预算（新仓库 mem_probe）→ state_bufs / half_state
 //   · GUI 选项             → CLI --help（由本表生成）+ bench/gui_cli_audit.py 断言
 // 新增优化器只需：① 在本表加一行；② 在下方 create_optimizer 加一个分支
 //（构造器必须手写，无法表驱动）。

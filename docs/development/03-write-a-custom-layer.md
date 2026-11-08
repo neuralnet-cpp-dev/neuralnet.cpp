@@ -285,19 +285,12 @@ std::printf("gradcheck: max|num-an| = %.3e\n", max_err);   // 应 << 1e-3
 
 ## 4. GPU 检查清单（CPU 通过 ≠ GPU 通过）
 
-自定义层的新结构不在库内嵌注册表里。两条路把它跑到 GPU 上（见 docs/internal/33 Phase 2）：
+自定义层的新结构不需要进任何库内嵌注册表（构建期 AOT 收集链已删除）。把它跑到 GPU 上：
 
 1. **先保证 CPU 上通过**（含上面的数值梯度检查）；
-2. **两条 GPU 路径**（任选）：
-   - **AOT 注册表**（构建期枚举）：CMake 加一行，把你的表达式结构编进目标专属注册表：
-     ```cmake
-     nn_enable_gpu_fusion(my_app MAIN ${CMAKE_CURRENT_SOURCE_DIR}/my_app_main.cpp)
-     ```
-     `MAIN` 必须指向含 `main` 的源文件（收集器自带 main，需从目标源列表剔除）。
-     该函数只在 GPU 启用时可用；未启用时调用会给出指向根因的报错。
-   - **运行期 JIT**（默认兜底，无需 CMake）：不枚举也能跑——GPU `eval_expr` miss 时
-     引擎懒加载 `libnn-kernelgen.so` 现编并持久化进 `.nnk` 缓存。首次有一次性编译延迟
-     （可用 `nn::model_warmup()` 提前预热）。
+2. **GPU 执行（运行期 JIT，无需 CMake）**：结构在 GPU `eval_expr` miss 时按
+   `expr_spec_key` 懒加载 `libnn-kernelgen` 现编 SPIR-V 并持久化进 `.nnk` 缓存；
+   首次有一次性编译延迟（可用 `nn::model_warmup()` 提前预热）。
 3. 训练/推理时用 `engine.begin_batch()` / `engine.end_batch()` 包住 forward（可选，消提交开销）——
    注意**录制期引用的张量必须活到 `end_batch()` 之后**（铁律 #6）。
 

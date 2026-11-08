@@ -1628,8 +1628,9 @@ public:
 > `NN_MEM_STATS`（以及训练入口的 `NN_NAN_TRACE`）都是**探针**，只在
 > `-DNN_ENABLE_PROBES=ON` 配置的构建里存在——默认构建（不传该选项）连这些代码
 > 都不参与编译，环境变量设了也一律无效（避免"设了环境变量就悄悄拖慢正常
-> 训练/推理"）。探针可执行目标 `mem_probe` / `f16_cpu_probe` /
-> `gpu_stability_probe` 同样只在 `NN_ENABLE_PROBES=ON` 时创建。
+> 训练/推理"）。本仓探针可执行目标为 `f16_cpu_probe` / `gpu_stability_probe`
+> （`mem_probe` 已随引擎 .so 化迁往新仓库 `compute.neuralnet.cpp`），同样只在
+> `NN_ENABLE_PROBES=ON` 时创建。
 > 例外：`NN_VULKAN_*`、`NN_POOL_*` 是**初始化期读一次**的行为开关，任何构建都有效
 > （零热路径开销）。设备域检查是默认行为，没有调试开关。
 
@@ -1637,7 +1638,7 @@ public:
 |---|---|
 | `NN_PREC_TRACE=1`（**需探针构建**） | 打印每个 `(结构 key, 精度签名)`；`[prec][alu-hit]` = 命中**变体**（`key#x` 运行期精度分派 **或** `key#a` native16，key 本身即区分）；`[prec][fallback]` = 该结构没有可用的 `#x`（回退基类边界 cast）；`[into] branch=…` 打印 `eval_expr_into` 的分支。**`[prec][miss]` 保留为通用诊断**（V1 覆盖后 f16 融合路径实测 `miss=0`）；"回填清单"工作流（`tools/prec_backfill.txt`）已随"运行期精度分派"删除。日志只由真正 dispatch 的入口、且在确认命中后打——`supports_expr_precision_variant` 是查询，不产生命中日志 |
 | `NN_F16_DEBUG=1`（**需探针构建**） | f16 中间量数值扫描（`nn_dbg_scan`）、`accumulate` 巨值打印、`compute_into` 预绑定失败原因 |
-| `NN_MEM_STATS=1`（**需探针构建**） | 训练中内存采样（配合 `pool_stats()`） |
+| `NN_MEM_STATS=1`（**需探针构建**） | 训练中按阶段打印 `pool_stats()`（`text_train` 的 `[mem] <tag>` 行） |
 | `NN_VULKAN_DEVICE` | 强制指定 Vulkan 计算设备（索引 `"2"` 或名称子串 `"NVIDIA"`）。优先级：显式 API > 本变量 > 自动打分 |
 | `NN_NO_EARLY_REAP=1` | 析构/帧末**不**提前把张量内存还池（内存 A/B 对照用；脚本 `bench/run_mem_ab.ps1`）。初始化期读一次，任何构建都有效 |
 

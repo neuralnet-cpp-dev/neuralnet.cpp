@@ -59,7 +59,7 @@ error: module file '.../nn.tokenizer.pcm' cannot be loaded due to a configuratio
 - `model_warmup(Model&, const Tensor&)` 已实现：`include/neuralnet.cpp/model_container.hpp` L350-L362——跑一遍代表性 forward，把用到的表达式现编进 `.nnk` 缓存。**当前 `src/` 无任何调用方**。
 - JIT 架构设计见 `docs/internal/33` L39-L59；L125-L131 明确「`model_warmup()` 可拆掉 scan_exprs 的 FusedAnchor 自登记、dry-run、模型 pass、`NN_EXPR_SCAN`、glslc 构建步和 `nn_enable_gpu_fusion` 收集器；首次预热编译，之后共享缓存秒命中」。
 - JIT 正确性已有回归：`src/fused_gpu_test.cpp` L563-L603（未注册表达式 → `libnn-kernelgen.so` 现编 → 执行 → 持久化，与 CPU 结果一致，`--hash` 位级对拍）。
-- GPU 路径描述（AGENTS.md L483-L485）：`dsl::compute*` → 折成 `ExprSpec` 查构建期注册表 → miss 默认运行期 JIT → **`fold / reduce / into / multi` 入口 miss 硬报错** → 运行期 JIT 兜底（严格模式开关已于 2026-11-08 删除）。
+- GPU 路径描述（AGENTS.md L483-L485）：`dsl::compute*` → 折成 `ExprSpec` 查构建期注册表 → miss 默认运行期 JIT → **`fold / reduce / into / multi` 入口 miss 硬报错** → 运行期 JIT 兜底（无严格模式开关）。
 - CPU 路径模板直接求值，不依赖注册表（`docs/internal/02` L171：CPU no-op）。
 - 收集器 `scan_exprs.cpp` 在源文件内 include 前 `#define NN_EXPR_SCAN`，不套 PCH、不进模块（L427-L430）；**不在 `src/` 下**（`src/` 仅 `expr_fuse_shapes.hpp:7` 注释提及）。
 
@@ -110,7 +110,7 @@ error: module file '.../nn.tokenizer.pcm' cannot be loaded due to a configuratio
 | D3 | **宏岛头**：宏段拆到**不带 `neuralnet.cpp/` 前缀**的 `engine/abstraction/include/nn_error_macros.hpp`，`core_errors.hpp`/`core_assert.hpp` include 它（库内单一真源、零改动）；src/ 消费方 include 该头 + `import nn.*` | 否决「宏全函数化」：`NN_TRY*` 是 early-return（~70 处逐点改写、函数替代不了）、`NN_ASSERT` 的 NDEBUG 语义天然要预处理器；函数化无法零改写达标 |
 | D4 | **AOT 收集链直接删除、不留开关**（`scan_exprs`、`fused_registry.hpp` 生成、`NN_EXPR_SCAN` 分支、`nn_enable_gpu_fusion()`、depfile/glslc 扫描步） | 与 D2「不保留开关」一致；`docs/internal/33` L125-L131 已给出可拆清单。若 P3 验证门失败，仅在那四个入口局部补救，不恢复全链 |
 | D5 | **预热双入口**：① 运行期 `model_warmup()` 接线进 GPU 训练/推理入口（含 `--no-warmup` 逃生阀）；② 构建期新增 `nn_warmup` 目标（常用 layer × 代表性 shape 过 GPU forward，产物 `kernels.nnk` 落 `NN_KERNEL_CACHE_DIR`，随发布物分发） | 用户提出的两种做法都做：①消除人工遗漏，②消除冷启动 JIT 与部署环境对 kernelgen 的首跑依赖 |
-| D6 | **`NN_STRICT_CLOSED_WORLD` 语义重定义**为「只用预生成缓存、miss 即报错」；默认 OFF 不变。实现时若代码形态不允许则删除该开关。**2026-11-08 裁定：该开关已删除，不保留旧行为兼容** | 闭合世界随 AOT 注册表一起失去对象，保留旧语义等于不可用 |
+| D6 | **`NN_STRICT_CLOSED_WORLD` 语义重定义**为「只用预生成缓存、miss 即报错」；默认 OFF 不变。实现时若代码形态不允许则删除该开关。**裁定：该开关不存在，不保留旧行为兼容** | 闭合世界随 AOT 注册表一起失去对象，保留旧语义等于不可用 |
 | D7 | **粒度模块全量铺开**（nn.hpp 46 头 → ~8 个新域模块），export 清单先试 `export using namespace nn;`，不接受再逐符号 | 否决单体（已证伪，§2.4）；`export { #include }` 包裹已被 §4.1（L54-L55）证死（STL 私有头撞全局片段防护） |
 | D8 | **`nn_add_executable` 自动 `nn_use_modules(<全部域>)`** 单点接线 | 否决 107 处逐目标登记：错误成本高、无信息增量 |
 | D9 | PCH 机制随 src/ 全出候选后**评估整体删除**（`nn_pch`、`cmake/nn_pch_stub.cpp`、L1202-L1233 块），候选为空时至少保持自动空转 | 保留给范围外目标的可能性在实施时看剩余候选数决定 |

@@ -390,7 +390,7 @@ loss = ce.forward_sparse(engine, logits, labels, mask, vocab,
 - 权重/嵌入表由工厂按 `param` 创建；优化器状态按 `optimizer` 创建。
 - 优化器更新算子全部显式：参数更新 P = `param`（in-place，存储不变），状态更新 P = `optimizer`。
 - **per-layer 覆盖 = Phase 2**：`p_` 本就是每层成员，改成员即覆盖（如末层 head 强制 F32），纯增量。
-- CLI 入口的 `--f16` 标志 = `profile_f16()` = **{param=F16, compute=F16, stable=F32, optimizer=F32}**（§9.4"f16 存储"行）；`text_train`/`mnist_train` 另有 `--precision-param/compute/stable/optimizer` 逐字段覆盖，`mem_probe` 有 `--f16` / `--f16-all`。master-weights 配方 {param=F32, compute=F16, stable=F32, optimizer=F32} 对应 `profile_master_weights()`。
+- CLI 入口的 `--f16` 标志 = `profile_f16()` = **{param=F16, compute=F16, stable=F32, optimizer=F32}**（§9.4"f16 存储"行）；`text_train`/`mnist_train` 另有 `--precision-param/compute/stable/optimizer` 逐字段覆盖（`mem_probe` 已迁新仓库，该处保留 `--f16` / `--f16-all` 口径）。master-weights 配方 {param=F32, compute=F16, stable=F32, optimizer=F32} 对应 `profile_master_weights()`。
 - **精度预设（2026-10-10 新增）**：CLI `--t1_58` = `profile_t1_58()` = **{param=T1_58, compute=F16, stable=F32, optimizer=F32}** —— 定义上就是 `profile_f16()` 把 `param` 换成三值（另三槽在同一函数里派生 → 不可能与 `--f16` 漂移），即"**其他默认 f16，模型参数 1.58**"。三值只描述**权重**（`T1_58` 不是存储精度），落地点是 `BitLinear`，见 `docs/internal/21-quantized-weights.md` §4.10。
 
 ### 9.4 典型配方
@@ -559,7 +559,7 @@ compute/stable/optimizer 与 `--f16` 逐字段相同；字面"四槽全 f16 + �
 | DSL | `dsl::compute / compute_reduce` 带 `Precision P`（输出精度）；`compute_into` 取 dst 存储精度；CPU 侧 f16 叶子一次性转 f32 镜像（`CpuViewCache`，`at()` 保持无分支 → 热路径零回归）、`eval_cpu`/`eval_into_tensor_cpu` 支持 f16 输出 |
 | Layer 接线 | `Linear`（param + compute）、`ReLU/GeLU/SwiGLU`（compute）、`LayerNorm/RMSNorm`（stable + param）、`AttentionBase`（4 投影 + Softmax + RoPE 一并下传）、`FeedForward`、`GPTModel`（位置编码器下传；**LM head 强制 stable**，见下）、`TransformerEncoderLayer/Encoder/PatchEmbedding/PositionalEncoding` |
 | Loss / Optimizer | `Loss` 基类带 `p_`（loss 链 = stable，D9）；`Optimizer` 构造器接 `PrecisionProfile`，状态张量按 `p.optimizer` 创建，参数更新 in-place |
-| 工厂 / CLI | `Model::set_default_precision_profile`（必须在 `add` 之前调用：权重在 `init` 时按精度创建）；`build_mnist_*`、`create_optimizer` 接 profile；`--f16`（= `profile_f16()`）/`--t1_58`（= `profile_t1_58()`）/`--precision-*` 在 `text_train`/`mnist_train`/`mem_probe` 启用适配层 |
+| 工厂 / CLI | `Model::set_default_precision_profile`（必须在 `add` 之前调用：权重在 `init` 时按精度创建）；`build_mnist_*`、`create_optimizer` 接 profile；`--f16`（= `profile_f16()`）/`--t1_58`（= `profile_t1_58()`）/`--precision-*` 在 `text_train`/`mnist_train` 启用适配层（`mem_probe` 已迁新仓库，同口径仍在） |
 | 测试 | `f16_precision_test`：f32 零回归逐字节、f16 DSL / 搬运 / 归约 / matmul、in-place 存储精度不变、**GPT 模型级 f32↔f16 逐 step 轨迹对拍** |
 
 **机制结论（当前有效）**
@@ -620,7 +620,7 @@ compute/stable/optimizer 与 `--f16` 逐字段相同；字面"四槽全 f16 + �
 
 ### 12.8 剩余开销归因（当前结论）
 
-**归因手段（当前工具）**：`mem_probe` 逐阶段探针（transient live / pending / 池分桶）+ `ComputeEngine` 基类入口的**形状级 cast 归因**（`NN_PREC_TRACE=1` → `note_temp_()` 记录每次"物化临时量"的 `(rows, cols, 方向)` → 次数/字节，`dump_temp_stats()` 在 mem_probe 末尾按字节降序打印）。⚠ 两者都属**探针**：需 `-DNN_ENABLE_PROBES=ON` 配置构建（默认构建里 `mem_probe` 目标不创建、`note_temp_` 为空实现，见 AGENTS §2）。
+**归因手段（当前工具）**：本仓 `text_train` 的 `NN_MEM_STATS` 逐阶段打印 `engine.pool_stats()`（transient live / pending / 池分桶）+ `ComputeEngine` 基类入口的**形状级 cast 归因**（`NN_PREC_TRACE=1` → `note_temp_()` 记录每次"物化临时量"的 `(rows, cols, 方向)` → 次数/字节；`dump_temp_stats()` 按字节降序输出，本仓需自行调用）。GPU 显存分项探针 `mem_probe` **已随引擎 .so 化迁往新仓库 `compute.neuralnet.cpp`**（该探针会在末尾自动 dump）。⚠ 两者都属**探针**：需 `-DNN_ENABLE_PROBES=ON` 配置构建（默认构建里探针目标不创建、`note_temp_` 为空实现，见 AGENTS §2）。
 
 **结论（当前有效）**：
 
@@ -644,11 +644,11 @@ compute/stable/optimizer 与 `--f16` 逐字段相同；字面"四槽全 f16 + �
 
 #### ① 池粒度裁决（§12.9 的复测）
 
-`bench/run_ab_env.ps1`（按 env/args **同窗交错** A/B + 峰值/耗时配对）复测三档池配置（默认 12MB 固定块 / 16MB 阶梯 / 4MB 小块）→ 峰值均值差仅个位数百分比、耗时全部 ≈5.7s：**池粒度不是杠杆，池保持默认**；`NN_POOL_BLOCK_MB` / `NN_POOL_LADDER_MAX_MB` 调参变量已随实现收敛删除（2026-11）。池账本计数器并入 `pool_stats()`（`calls / blk_new-free / 扫描 block/region 数 / vkalloc ms`，mem_probe 每阶段打印）——1 万次 allocate 只扫 ~5 万 block、`vkAllocateMemory` 累计 ~150ms，**池记账不是瓶颈**。
+`bench/run_ab_env.ps1`（按 env/args **同窗交错** A/B + 峰值/耗时配对）复测三档池配置（默认 12MB 固定块 / 16MB 阶梯 / 4MB 小块）→ 峰值均值差仅个位数百分比、耗时全部 ≈5.7s：**池粒度不是杠杆，池保持默认**；`NN_POOL_BLOCK_MB` / `NN_POOL_LADDER_MAX_MB` 调参变量已随实现收敛删除（2026-11）。池账本计数器并入 `pool_stats()`（`calls / blk_new-free / 扫描 block/region 数 / vkalloc ms`，由 `text_train` 的 `NN_MEM_STATS` 每阶段打印；`mem_probe` 已迁新仓库）——1 万次 allocate 只扫 ~5 万 block、`vkAllocateMemory` 累计 ~150ms，**池记账不是瓶颈**。
 
 #### ② 归因工具：形状级 cast 归因
 
-`ComputeEngine::note_temp_()`（`NN_PREC_TRACE=1` 时记录每次"物化临时量"的 `(rows, cols, 方向)` → 次数/字节）+ `ComputeEngine::dump_temp_stats()`（mem_probe 末尾按字节降序打印）。这份表把 GB 级 cast **直接落到具体形状**——判定"哪些 cast 还在、哪些已被变体消掉"的当前手段（如注意力反向物化的 `(32768,256)` W / grad_A，曾是单项最大头，补齐 matmul 段变体后该项消失，见 §12.11）。
+`ComputeEngine::note_temp_()`（`NN_PREC_TRACE=1` 时记录每次"物化临时量"的 `(rows, cols, 方向)` → 次数/字节）+ `ComputeEngine::dump_temp_stats()`（按字节降序；本仓无自动打印点——新仓库 `mem_probe` 会在末尾打印，或自行调用）。这份表把 GB 级 cast **直接落到具体形状**——判定"哪些 cast 还在、哪些已被变体消掉"的当前手段（如注意力反向物化的 `(32768,256)` W / grad_A，曾是单项最大头，补齐 matmul 段变体后该项消失，见 §12.11）。
 
 #### ③ 落地的三类带类型变体（**V0 时代的按签名枚举**；其生成器代码现由 V1 复用）
 
@@ -714,9 +714,9 @@ matmul 段 / 归约 / 目标传递三类变体落地后的同窗交错实测（f
 - `matmul_gpu` / `batched_matmul_gpu` 带 `f16_io`：输出按 **2B/元素** 分配（`GpuTensorF16::create_empty` 后包一层 `GpuTensor(shared_buffer, rows, cols)` 纯绑定视图，与 `run_fused_gpu` 的 `out_f16` 同一套做法），pipeline 选 f16 版，调用方按 `GpuTensorF16` 重贴标签；`f16_view(Tensor)` 只借 buffer + 形状、不做精度转换。
 - **适配层把 `P != F32` 直接下传**内层（`matmul` / `batched_matmul` / `matmul_with_bias`）——本层不再预 cast，否则内层永远看不到 f16、原生 GEMM 永远命中不了。
 - **小 N 走 f32 回退**（`matmul` 的 `n_out > 8` 门槛）：GEMV 场景张量本就小，f16 收益为零却要吃 64×64 块空转（推理 batch=1 热路径）。
-- `CpuEngine::matmul_with_bias` 同样下传 `P`——scan 的 f16 dry-run 靠 `dsl::compute` 的 `NN_EXPR_SCAN` 钩子按**真实操作数精度 + P** 登记 `(结构, 签名)`，吞掉 P 就只登记全 f32 签名，Linear::forward 的带类型 matmul 段变体永远发现不到。
+- `CpuEngine::matmul_with_bias` 同样下传 `P`——GPU 侧运行期 JIT 按运行期观察到的真实操作数精度生成/缓存变体；吞掉 P 就只剩 f32 结构，Linear::forward 的带类型 matmul 变体永远命中不到。
 
-#### ③ 当前实测（40HX，同窗交错 3 轮，mem_probe batch32 / steps2 / no-kv）
+#### ③ 当前实测（40HX，同窗交错 3 轮；旧 `mem_probe` 口径 batch32 / steps2 / no-kv）
 
 | | 峰值 MiB（3 轮） | 耗时 | text_train avg_loss |
 |---|---|---|---|
@@ -724,7 +724,7 @@ matmul 段 / 归约 / 目标传递三类变体落地后的同窗交错实测（f
 | **f16（`--f16`）** | **1570 / 1570 / 1570** | **5.05s** | 6.7493（差 0.77%，f16 容差内） |
 
 - **−10.5% 显存（184 MiB）且略快**；f16 峰值完全确定（不再双峰）。batch64 同为 −10.5%（3052 vs 3412 MiB；batch64 不再 OOM）。`f16_precision_test` 覆盖 f32 零回归逐字节 + GPT 逐 step 轨迹对拍。
-- 该数字是 **op-level f16 GEMM 落地时**的记录；其后 fold 带类型变体（Phase D2）、run-only 签名回填（Phase D3，§12.10 ⑤）与更多 op 级 f16 变体继续落地，**当前峰值以 `mem_probe --f16` 同窗复测为准**。
+- 该数字是 **op-level f16 GEMM 落地时**的记录；其后 fold 带类型变体（Phase D2）、run-only 签名回填（Phase D3，§12.10 ⑤）与更多 op 级 f16 变体继续落地，**当前峰值以新仓库 `mem_probe --f16` 同窗复测为准**。
 - 演进全景（f16 峰值如何从"高于 f32"走到"低于 f32"）见 `docs/history/history.md`。
 
 #### ④ 当前剩余（收益递减，按需再做）
