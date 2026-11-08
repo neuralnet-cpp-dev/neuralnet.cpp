@@ -697,7 +697,7 @@ public:
         // 1. token embedding 查表 → (1, d_model) → transpose → (d_model, 1)
         std::vector<Scalar> id_v(1);                  // 宿主桥（17 §3 D11）
         id_v[0] = static_cast<Scalar>(token_id);
-        NN_TRY(id_t, detail::upload_span(engine, 1, 1, Precision::F32, std::span(id_v)));
+        NN_TRY(id_t, nn::upload_span(engine, 1, 1, Precision::F32, std::span(id_v)));
         NN_TRY(emb, engine.gather_rows(token_emb_, *id_t));
         NN_TRY(x_new, engine.transpose(*emb));
 
@@ -818,7 +818,7 @@ public:
             }
 
             // Sample from last_logits_t (from prefill or previous step)
-            auto logits_v = detail::download_vector(engine, last_logits_t);  // 宿主桥
+            auto logits_v = nn::download_vector(engine, last_logits_t);  // 宿主桥
             NN_TRY_CHECK(logits_v);
 
             std::vector<Scalar> last_logits(vocab_size_);

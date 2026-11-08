@@ -168,7 +168,7 @@ public:
 
         // 仅一次下载获取全局平方和（宿主桥，17 §3 D11）
         std::vector<Scalar> total_buf(acc.rows() * acc.cols());
-        auto dl_r = detail::download_span(engine_, acc, std::span(total_buf));
+        auto dl_r = nn::download_span(engine_, acc, std::span(total_buf));
         NN_TRY_CHECK(dl_r);
         const Scalar total_sq = total_buf[0];
 
@@ -1020,7 +1020,7 @@ newton_schulz_orthogonalize(ComputeEngine& engine, const Tensor& G, std::size_t 
     // 从 (1,1) Tensor 提取标量值
     // 使用宿主桥下载后取值（一次 PCIe 下载，可接受；17 §3 D11）
     std::vector<Scalar> total_buf(total_norm_sq->rows() * total_norm_sq->cols());
-    auto dl_r = detail::download_span(engine, *total_norm_sq, std::span(total_buf));
+    auto dl_r = nn::download_span(engine, *total_norm_sq, std::span(total_buf));
     NN_TRY_CHECK(dl_r);
     Scalar norm_sq_val = total_buf[0];
     Scalar inv_norm_scalar = Scalar{1} / std::sqrt(norm_sq_val + eps * eps);

@@ -100,7 +100,7 @@ public:
         auto total_t = dsl::compute_reduce(engine, dsl::row_reduce_sum(dsl::leaf(*col_sum)),
                                            col_sum->rows(), col_sum->cols(), p_.stable);
         NN_TRY_CHECK(total_t);
-        auto total_v = detail::download_vector(engine, *total_t);   // 宿主桥（17 §3 D11）
+        auto total_v = nn::download_vector(engine, *total_t);   // 宿主桥（17 §3 D11）
         NN_TRY_CHECK(total_v);
         const Scalar loss = (*total_v)[0] / total;
 
@@ -238,7 +238,7 @@ public:
                                            col_s->rows(), col_s->cols(), Precision::F32);
         NN_TRY_CHECK(total_t);
         // 6. loss = -total / batch — 下载标量
-        auto total_v = detail::download_vector(engine, *total_t);   // 宿主桥（17 §3 D11）
+        auto total_v = nn::download_vector(engine, *total_t);   // 宿主桥（17 §3 D11）
         NN_TRY_CHECK(total_v);
         return -(*total_v)[0] / static_cast<Scalar>(batch);
     }
@@ -298,7 +298,7 @@ public:
         std::size_t num_valid = 0;
         auto sum_t = forward_sparse_sum(engine, logits, labels, loss_mask, vocab_size, num_valid);
         NN_TRY_CHECK(sum_t);
-        auto sum_v = detail::download_vector(engine, *sum_t);
+        auto sum_v = nn::download_vector(engine, *sum_t);
         NN_TRY_CHECK(sum_v);
         return (num_valid > 0) ? -(*sum_v)[0] / static_cast<Scalar>(num_valid) : Scalar{0};
     }
@@ -328,7 +328,7 @@ public:
         std::vector<Scalar> labels_v(total);
         for (std::size_t i = 0; i < total; ++i)
             labels_v[i] = static_cast<Scalar>((labels[i] < vocab_size) ? labels[i] : 0);
-        auto labels_t = detail::upload_span(engine, 1, total, Precision::F32, std::span(labels_v));
+        auto labels_t = nn::upload_span(engine, 1, total, Precision::F32, std::span(labels_v));
         NN_TRY_CHECK(labels_t);
         // 2. 有效 mask（总是构造，(1,total) 0/1；含 mask 缺失与 label 越界修正）：
         //    valid = (loss_mask 空 || mask[i]>=0.5) && labels[i] < vocab_size
@@ -338,7 +338,7 @@ public:
             const bool masked = !loss_mask.empty() && loss_mask[i] < Scalar{0.5};
             mask_v[i] = (!masked && labels[i] < vocab_size) ? Scalar{1} : Scalar{0};
         }
-        auto mask_t = detail::upload_span(engine, 1, total, Precision::F32, std::span(mask_v));
+        auto mask_t = nn::upload_span(engine, 1, total, Precision::F32, std::span(mask_v));
         NN_TRY_CHECK(mask_t);
         // 3. num_valid（与 mask 判定一致）
         std::size_t num_valid = 0;

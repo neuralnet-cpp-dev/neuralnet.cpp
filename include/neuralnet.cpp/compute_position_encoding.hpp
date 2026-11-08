@@ -86,9 +86,9 @@ private:
         std::vector<Scalar> c(d_k_ * seq), s(d_k_ * seq);
         for (std::size_t pos = 0; pos < seq; ++pos)
             fill_pos_column_(c, s, seq, pos + pos_offset_, pos);
-        NN_TRY(cr, detail::upload_span(engine, d_k_, seq, Precision::F32, std::span(c)));
+        NN_TRY(cr, nn::upload_span(engine, d_k_, seq, Precision::F32, std::span(c)));
         cos_cache_ = std::move(*cr);
-        NN_TRY(sr, detail::upload_span(engine, d_k_, seq, Precision::F32, std::span(s)));
+        NN_TRY(sr, nn::upload_span(engine, d_k_, seq, Precision::F32, std::span(s)));
         sin_cache_ = std::move(*sr);
         seq_cached_ = seq;
         return {};
@@ -153,8 +153,8 @@ public:
             NN_FAIL("RotaryEmbedding::apply_step: d_k must be positive and even");
         std::vector<Scalar> c(d_k_), s(d_k_);       // 宿主桥（17 §3 D11）
         fill_pos_column_(c, s, 1, pos, 0);
-        NN_TRY(cr, detail::upload_span(engine, d_k_, 1, Precision::F32, std::span(c)));
-        NN_TRY(sr, detail::upload_span(engine, d_k_, 1, Precision::F32, std::span(s)));
+        NN_TRY(cr, nn::upload_span(engine, d_k_, 1, Precision::F32, std::span(c)));
+        NN_TRY(sr, nn::upload_span(engine, d_k_, 1, Precision::F32, std::span(s)));
         const std::uint32_t dk = static_cast<std::uint32_t>(d_k_);
         if (backward)
             return dsl::compute(engine,
@@ -309,7 +309,7 @@ protected:
         for (std::size_t b = 0; b < batch; ++b)
             for (std::size_t t = 0; t < seq; ++t)
                 pidx[b * seq + t] = static_cast<Scalar>(t);
-        auto pidx_t = detail::upload_span(engine, batch * seq, 1, Precision::F32, std::span(pidx));
+        auto pidx_t = nn::upload_span(engine, batch * seq, 1, Precision::F32, std::span(pidx));
         NN_TRY_CHECK(pidx_t);
         pos_indices_cache_ = std::move(*pidx_t);
         pos_indices_batch_ = batch;
@@ -339,7 +339,7 @@ public:
     {
         std::vector<Scalar> pos_v(1);                 // 宿主桥（17 §3 D11）
         pos_v[0] = static_cast<Scalar>(pos);
-        NN_TRY(pos_t, detail::upload_span(engine, 1, 1, Precision::F32, std::span(pos_v)));
+        NN_TRY(pos_t, nn::upload_span(engine, 1, 1, Precision::F32, std::span(pos_v)));
         NN_TRY(pos_emb_g, engine.gather_rows(pos_emb_, *pos_t));
         NN_TRY(pos_T, engine.transpose(*pos_emb_g));
         auto x_wp =
@@ -417,8 +417,8 @@ public:
                 pe[pos * d_model_ + i] = (i % 2 == 0) ? std::sin(angle) : std::cos(angle);
             }
         // 闭式公式（非分布/常数）仍宿主计算 → span 上传进引擎（M2 裁定：InitSpec
-        // 只收分布与常数初始化；公式数据自 M4 起经 detail::upload_span，不经 Matrix）
-        auto pe_t = detail::upload_span(engine, seq_len_, d_model_, p_.param, std::span(pe));
+        // 只收分布与常数初始化；公式数据自 M4 起经 nn::upload_span，不经 Matrix）
+        auto pe_t = nn::upload_span(engine, seq_len_, d_model_, p_.param, std::span(pe));
         NN_TRY_CHECK(pe_t);
         return init_(engine, std::move(*pe_t), /*learnable=*/false);
     }
@@ -506,7 +506,7 @@ public:
         for (std::size_t b = 0; b < batch; ++b)
             for (std::size_t h = 0; h < num_heads_; ++h)
                 s[b * num_heads_ + h] = slopes_[h];
-        NN_TRY(t, detail::upload_span(engine, 1, BH, Precision::F32, std::span(s)));
+        NN_TRY(t, nn::upload_span(engine, 1, BH, Precision::F32, std::span(s)));
         slopes_cache_ = std::move(*t);
         // ② 反向行表 (rows,1)：row_broadcast 按全局行号直读 → 不需要 grid 的
         //    batch 分解（不能依赖 matmul 段，见 apply_score_bias 注释）
@@ -516,9 +516,9 @@ public:
             sr[r] = slopes_[(r / seq) % num_heads_];
             pr[r] = static_cast<Scalar>(r % seq);
         }
-        NN_TRY(tr, detail::upload_span(engine, rows, 1, Precision::F32, std::span(sr)));
+        NN_TRY(tr, nn::upload_span(engine, rows, 1, Precision::F32, std::span(sr)));
         slope_row_cache_ = std::move(*tr);
-        NN_TRY(tp, detail::upload_span(engine, rows, 1, Precision::F32, std::span(pr)));
+        NN_TRY(tp, nn::upload_span(engine, rows, 1, Precision::F32, std::span(pr)));
         pos_row_cache_ = std::move(*tp);
         cached_batch_ = batch;
         cached_seq_ = seq;
@@ -575,7 +575,7 @@ public:
             }
         }
         auto bias_t =
-            detail::upload_span(engine, num_heads_, new_len, Precision::F32, std::span(bias));
+            nn::upload_span(engine, num_heads_, new_len, Precision::F32, std::span(bias));
         NN_TRY_CHECK(bias_t);
         return dsl::compute(engine, dsl::leaf(scores) + dsl::leaf(*bias_t), scores.rows(),
                             scores.cols(), p.compute);

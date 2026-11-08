@@ -1383,8 +1383,12 @@ CPU 引擎的默认实现：`submit` 立刻取值、`poll` 恒立刻就绪。
 
 层自算的辅助数据（没有引擎侧生成原语的那类：索引 / 位置编码表 / 掩码 / 斜率 / 编码表 …）走**宿主桥**：
 
+> **API 边界（#R6）**：库外使用者只能依赖 `nn::` 下的符号；`nn::detail` 是内部
+> 实现细节（含 DSL 求值器专用的禁用后门），不承诺兼容性。宿主桥的正式归属就是
+> `nn::`，历史文档里的 `nn::detail::upload_span` 只是过渡别名，现已删除。
+
 ```cpp
-namespace nn::detail {
+namespace nn {
 
 // 标量缓冲 → 新建 (rows, cols, P) 张量
 // f16 目标按 round-half-to-even 舍入，与 from_matrix(m, P) 逐位同口径

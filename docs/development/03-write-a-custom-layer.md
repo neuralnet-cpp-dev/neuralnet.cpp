@@ -226,8 +226,8 @@ auto opt = nn::create_optimizer("adam", engine, model.parameters(),
 ### 2.3 层内辅助数据（索引/位置/掩码/斜率等）
 
 层自算的小规模辅助数据经**正式宿主桥** `nn::upload_span` / `nn::download_span` /
-`nn::download_vector` 进出（定义在 `compute_engine.hpp`，`nn::detail::` 下同名符号只是库内
-过渡别名，新代码一律写 `nn::`）：
+`nn::download_vector` 进出（定义在 `compute_engine.hpp`）。库外代码只依赖 `nn::`；
+`nn::detail` 是内部实现细节与禁用后门，不承诺兼容性：
 
 ```cpp
 // 上传：(rows, cols, P) 新建张量；f16 目标按 RNE 舍入，与 from_matrix 同口径

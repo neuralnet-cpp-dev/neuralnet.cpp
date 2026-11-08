@@ -64,7 +64,7 @@ private:
                 }
             }
         }
-        NN_TRY(r, detail::upload_span(engine, d_model_, total_len, p_.param, std::span(enc)));
+        NN_TRY(r, nn::upload_span(engine, d_model_, total_len, p_.param, std::span(enc)));
         encoding_cache_ = std::move(*r);
         cached_total_ = total_len;
         return {};
@@ -495,7 +495,7 @@ public:
         // （patch 提取是 PatchEmbedding 的算法职责，无对应 op-level 原语；
         //  此处为 batch 边界的合法 CPU 预处理，与 GPTModel 的 gather_rows 同性质；
         //  宿主桥走 span，不经 Matrix——17 §3 D11）
-        NN_TRY(in_v, detail::download_vector(engine, input));
+        NN_TRY(in_v, nn::download_vector(engine, input));
         const std::size_t in_cols = input.cols();
 
         std::vector<Scalar> all_patches(patch_dim_ * batch * num_patches_);
@@ -517,7 +517,7 @@ public:
             }
         }
 
-        auto ap_t = detail::upload_span(engine, patch_dim_, batch * num_patches_, Precision::F32,
+        auto ap_t = nn::upload_span(engine, patch_dim_, batch * num_patches_, Precision::F32,
                                         std::span(all_patches));
         NN_TRY_CHECK(ap_t);
 
@@ -535,7 +535,7 @@ public:
         NN_TRY(bp, projection_.backward(grad_output));
 
         // Step 2: 散射梯度回输入 → (img_size², batch)
-        auto gp_v = detail::download_vector(engine, *bp);   // 宿主桥（17 §3 D11）
+        auto gp_v = nn::download_vector(engine, *bp);   // 宿主桥（17 §3 D11）
         NN_TRY_CHECK(gp_v);
         const std::size_t gp_cols = bp->cols();
 
@@ -557,7 +557,7 @@ public:
                     }
             }
         }
-        return detail::upload_span(engine, img_size_ * img_size_, batch, Precision::F32,
+        return nn::upload_span(engine, img_size_ * img_size_, batch, Precision::F32,
                                    std::span(grad_input));
     }
 };

@@ -133,7 +133,7 @@ private:
         for (std::size_t bh = 0; bh < BH; ++bh)
             for (std::size_t t = 0; t < seq; ++t)
                 e0[(bh * dk) * seq + t] = Scalar{1};
-        auto e0t = detail::upload_span(engine, rows, seq, Precision::F32, std::span(e0));
+        auto e0t = nn::upload_span(engine, rows, seq, Precision::F32, std::span(e0));
         NN_TRY_CHECK(e0t);
         e_0_cache_ = std::move(*e0t);
         ones_BH_ = BH;
@@ -280,7 +280,7 @@ public:
             for (std::size_t h = 0; h < num_heads_; ++h)
                 for (std::size_t j = 0; j < d_k_; ++j)
                     idx[h * d_k_ + j] = static_cast<Scalar>(h);
-            auto t = detail::upload_span(engine, rows, 1, Precision::F32, std::span(idx));
+            auto t = nn::upload_span(engine, rows, 1, Precision::F32, std::span(idx));
             NN_TRY_CHECK(t);
             den_idx_ = std::move(*t);
         }
@@ -475,7 +475,7 @@ public:
             std::vector<Scalar> bm(batch * seq, Scalar{0});   // 宿主桥（17 §3 D11）
             for (std::size_t i = 0; i < boundary.size(); ++i)
                 bm[i] = static_cast<Scalar>(boundary[i]);
-            auto bt = detail::upload_span(engine, 1, batch * seq, Precision::F32, std::span(bm));
+            auto bt = nn::upload_span(engine, 1, batch * seq, Precision::F32, std::span(bm));
             NN_TRY_CHECK(bt);
             boundary_t = std::move(*bt);
             has_bnd = true;
@@ -588,7 +588,7 @@ public:
             std::vector<Scalar> bm(batch * seq, Scalar{0});   // 宿主桥（17 §3 D11）
             for (std::size_t i = 0; i < boundary.size(); ++i)
                 bm[i] = static_cast<Scalar>(boundary[i]);
-            auto bt = detail::upload_span(engine, 1, batch * seq, Precision::F32, std::span(bm));
+            auto bt = nn::upload_span(engine, 1, batch * seq, Precision::F32, std::span(bm));
             NN_TRY_CHECK(bt);
             boundary_t = std::move(*bt);
             has_bnd = true;
@@ -1345,7 +1345,7 @@ public:
         {
             std::vector<Scalar> idx_v(1);              // 宿主桥（17 §3 D11）
             idx_v[0] = static_cast<Scalar>(tok);
-            auto idx_t = detail::upload_span(engine, 1, 1, Precision::F32, std::span(idx_v));
+            auto idx_t = nn::upload_span(engine, 1, 1, Precision::F32, std::span(idx_v));
             NN_TRY_CHECK(idx_t);
             auto emb = engine.gather_rows(token_emb_, *idx_t);   // (1, d_model)
             NN_TRY_CHECK(emb);
@@ -1359,7 +1359,7 @@ public:
             }
             NN_TRY(ln, ln_f_->forward(h));
             NN_TRY(logits, lm_head_.forward(*ln));
-            auto lm_v = detail::download_vector(engine, *logits);   // 宿主桥 D11
+            auto lm_v = nn::download_vector(engine, *logits);   // 宿主桥 D11
             NN_TRY_CHECK(lm_v);
             const std::size_t lm_cols = logits->cols();
             std::vector<Scalar> last(vocab_size_);

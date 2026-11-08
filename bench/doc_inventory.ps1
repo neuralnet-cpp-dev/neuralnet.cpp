@@ -37,7 +37,7 @@ Write-Output ($unused -join ', ')
 #    规则：Layer / Loss / Optimizer / Model（L2 计算路径）头文件中——
 #      [硬] 不得出现 Matrix / MatrixT 类型（不持有、不构造、不交换）
 #      [硬] 不得出现 Matrix 型 I/O 动词 from_matrix / to_matrix / copy_from
-#      [披露] 宿主桥 read/write/get_index/set_index 与 detail::upload_span /
+#      [披露] 宿主桥 read/write/get_index/set_index 与 nn::upload_span /
 #             download_span/download_vector 只计数
 #             （层自算辅助数据的受控通道，17 §3 D11；数据集/权重仍走 I/O 层）
 #    注释已剥离后才匹配（注释里讲规则/讲历史不算命中）。

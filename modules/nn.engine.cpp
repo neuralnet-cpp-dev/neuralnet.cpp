@@ -16,10 +16,6 @@ module;
 export module nn.engine;
 export import nn.core;
 export namespace nn {
-    namespace detail {
-        using nn::detail::upload_span;
-        using nn::detail::download_vector;
-    }
     namespace trit_pack {
         using nn::trit_pack::code_of;
         using nn::trit_pack::dequant_row;

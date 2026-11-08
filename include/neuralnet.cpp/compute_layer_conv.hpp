@@ -39,7 +39,7 @@ namespace conv_engine
     for (std::size_t c = 0; c < C; ++c)
         for (std::size_t p = 0; p < P; ++p)
             perm[c * P + p] = static_cast<Scalar>(p * C + c);
-    return detail::upload_span(engine, C * P, 1, Precision::F32, std::span(perm));
+    return nn::upload_span(engine, C * P, 1, Precision::F32, std::span(perm));
 }
 
 // (C, B*P) → (C*P, B)：cols 布局转 samples 布局（Conv/Pool 层输出）
@@ -308,7 +308,7 @@ private:
         for (std::size_t c = 0; c < channels_; ++c)
             for (std::size_t i = 0; i < kk; ++i)
                 expand[c * kk + i] = static_cast<Scalar>(c);
-        auto t = detail::upload_span(engine, channels_ * kk, 1, Precision::F32, std::span(expand));
+        auto t = nn::upload_span(engine, channels_ * kk, 1, Precision::F32, std::span(expand));
         NN_TRY_CHECK(t);
         expand_cache_ = std::move(*t);
         return {};

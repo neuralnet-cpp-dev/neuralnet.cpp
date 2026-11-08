@@ -76,7 +76,7 @@ private:
             NN_FAIL("CategoricalDistribution: logits 不能为空");
         if (actions.rows() != 1 || actions.cols() != logits.cols())
             NN_FAIL("CategoricalDistribution: action 形状必须为 (1,T)");
-        NN_TRY(v, detail::download_vector(engine, actions));
+        NN_TRY(v, nn::download_vector(engine, actions));
         for (std::size_t i = 0; i < v->size(); ++i)
         {
             const Scalar a = (*v)[i];
@@ -191,7 +191,7 @@ public:
     {
         if (logits.rows() == 0 || logits.cols() == 0)
             NN_FAIL("CategoricalDistribution::sample: logits 不能为空");
-        NN_TRY(values, detail::download_vector(engine, logits));
+        NN_TRY(values, nn::download_vector(engine, logits));
         std::mt19937_64 rng(seed);
         std::uniform_real_distribution<double> uniform(0.0, 1.0);
         std::vector<Scalar> actions(logits.cols(), Scalar{0});
@@ -221,7 +221,7 @@ public:
             }
             actions[c] = static_cast<Scalar>(chosen);
         }
-        NN_TRY(action, detail::upload_span(engine, 1, logits.cols(), precision_,
+        NN_TRY(action, nn::upload_span(engine, 1, logits.cols(), precision_,
                                            std::span<const Scalar>(actions)));
         NN_TRY_CHECK(validate_actions(engine, logits, *action));
         NN_TRY(lp, log_prob(engine, logits, *action));

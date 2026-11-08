@@ -360,7 +360,7 @@ public:
             for (std::size_t h = 0; h < num_heads_; ++h)
                 for (std::size_t i = 0; i < seq; ++i)
                     d[(b * num_heads_ + h) * seq + i] = static_cast<Scalar>(doc_ids_[b * seq + i]);
-        auto t = detail::upload_span(engine, 1, BH * seq, Precision::F32, std::span(d));
+        auto t = nn::upload_span(engine, 1, BH * seq, Precision::F32, std::span(d));
         NN_TRY_CHECK(t);
         doc_ids_cache_ = std::move(*t);
         if (doc_ids_cache_.is_gpu())
@@ -374,7 +374,7 @@ public:
         else
         {
             // CPU：直接构造目标形状，避免为一个小表引入额外转置遍历。
-            auto tc = detail::upload_span(engine, BH * seq, 1, Precision::F32, std::span(d));
+            auto tc = nn::upload_span(engine, BH * seq, 1, Precision::F32, std::span(d));
             NN_TRY_CHECK(tc);
             doc_col_ = std::move(*tc);
         }
@@ -448,7 +448,7 @@ protected:
     std::size_t n_head_kv_ = 0;
     // GQA 头分组比 = num_heads_ / n_head_kv_（1 = MHA，= head_mapping 的 n_rep）
     std::size_t kv_ratio_ = 1;
-    // 展开索引表：(num_heads·d_k, 1) 宿主常量（detail::upload_span 上桥）。
+    // 展开索引表：(num_heads·d_k, 1) 宿主常量（nn::upload_span 上桥）。
     // 前向 gather_rows(K_kv) → K_full；反向 scatter_add_rows(该表) → grad_K_kv。
     // MHA 时 invalid（不建表、零开销）。
     Tensor gqa_expand_idx_;
@@ -596,7 +596,7 @@ public:
                 for (std::size_t r = 0; r < d_k_; ++r)
                     idx[h * d_k_ + r] = static_cast<Scalar>(src + r);
             }
-            NN_TRY(gi, detail::upload_span(engine, num_heads_ * d_k_, 1, Precision::F32, idx));
+            NN_TRY(gi, nn::upload_span(engine, num_heads_ * d_k_, 1, Precision::F32, idx));
             gqa_expand_idx_ = std::move(*gi);
         }
         // M6 段 C：softmax_ 是子 Layer（engine 由 init 绑定），否则 forward 内 fail-fast

@@ -49,7 +49,7 @@ nn::Tensor matrix_tensor(nn::ComputeEngine& engine, std::size_t rows, std::size_
 
 bool finite(nn::ComputeEngine& engine, const nn::Tensor& tensor)
 {
-    auto values = nn::detail::download_vector(engine, tensor);
+    auto values = nn::download_vector(engine, tensor);
     if (!values) return false;
     for (float v : *values)
         if (!std::isfinite(v)) return false;

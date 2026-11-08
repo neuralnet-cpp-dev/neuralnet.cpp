@@ -60,7 +60,7 @@ public:
     {
         ++calls;
         const nn::Scalar value = static_cast<nn::Scalar>(rng.next_u64() % 100000u);
-        NN_TRY(tensor, nn::detail::upload_span(engine_, 1, 1, nn::Precision::F32,
+        NN_TRY(tensor, nn::upload_span(engine_, 1, 1, nn::Precision::F32,
                                                std::span<const nn::Scalar>(&value, 1)));
         return nn::TensorRecord::create(schema_, {nn::NamedTensor{.name = "x", .value = *tensor}});
     }
@@ -117,7 +117,7 @@ nn::Result<void> run_pipeline(nn::RLTrainingPipeline& pipeline, std::size_t upda
             for (const nn::TensorRecord* record : batch)
             {
                 NN_TRY(value, record->require("x"));
-                NN_TRY(v, nn::detail::download_vector(engine, **value));
+                NN_TRY(v, nn::download_vector(engine, **value));
                 trace.batches.push_back((*v)[0]);
                 sum += (*v)[0];
             }

@@ -104,16 +104,16 @@ int main()
         }
     }
 
-    // [4] nn::detail:: 过渡别名可用（旧调用点不破坏）
+    // [4] nn::download_vector 取值便捷形态（公开 API，round-trip）
     {
         std::vector<nn::Scalar> src{7.0f, 8.0f};
-        auto t = nn::detail::upload_span(*engine, 1, 2, nn::Precision::F32, src);
-        CHECK(t.has_value(), "detail::upload_span 别名应可用");
+        auto t = nn::upload_span(*engine, 1, 2, nn::Precision::F32, src);
+        CHECK(t.has_value(), "upload_span 应可用");
         if (t)
         {
-            auto v = nn::detail::download_vector(*engine, *t);
+            auto v = nn::download_vector(*engine, *t);
             CHECK(v.has_value() && (*v)[0] == 7.0f && (*v)[1] == 8.0f,
-                  "detail::download_vector 别名应可用");
+                  "nn::download_vector round-trip 应可用");
         }
     }
 

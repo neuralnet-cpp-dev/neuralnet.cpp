@@ -84,6 +84,33 @@ bool run_linear(nn::ComputeEngine& engine, const char* tag, float& first_out)
     return true;
 }
 
+// 公开宿主桥 round-trip（#R6 边界验收：库外样例只依赖 nn:: 即可编译）
+bool run_host_bridge(nn::ComputeEngine& engine, const char* tag)
+{
+    const std::vector<float> src{1.5f, -2.5f, 3.25f, 0.0f};
+    auto t = nn::upload_span(engine, 2, 2, nn::Precision::F32, std::span(src));
+    if (!t)
+    {
+        std::fprintf(stderr, "[%s] upload_span 失败: %s\n", tag, t.error().message.c_str());
+        return false;
+    }
+    auto back = nn::download_vector(engine, *t);
+    if (!back || back->size() != src.size())
+    {
+        std::fprintf(stderr, "[%s] download_vector 失败\n", tag);
+        return false;
+    }
+    for (std::size_t i = 0; i < src.size(); ++i)
+    {
+        if ((*back)[i] != src[i])
+        {
+            std::fprintf(stderr, "[%s] round-trip 数值不一致（第 %zu 个）\n", tag, i);
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 int main()
@@ -91,24 +118,30 @@ int main()
     std::printf("[downstream] neuralnet.cpp 最小消费样例\n");
 
     // ── CPU 路径（始终执行）─────────────────────────────────────────────
-    auto cpu_owner = nn::CpuEngine::create();
-    nn::CpuEngine& cpu = *cpu_owner;
+    // 只用公开工厂 nn::create_cpu_engine（具体引擎类体在 .so 内，库外不可见）。
+    auto cpu_owner = nn::create_cpu_engine();
+    if (!cpu_owner)
+    {
+        std::fprintf(stderr, "[downstream] CPU 引擎创建失败: %s\n", nn::last_error());
+        return 1;
+    }
+    nn::ComputeEngine& cpu = *cpu_owner;
     float cpu_out = 0.0f;
     if (!run_linear(cpu, "cpu", cpu_out)) return 1;
     std::printf("[downstream] CPU Linear forward OK（y[0]=%.6f）\n", static_cast<double>(cpu_out));
+    if (!run_host_bridge(cpu, "cpu")) return 1;
+    std::printf("[downstream] CPU 宿主桥 round-trip OK\n");
 
 #ifdef NN_HAS_VULKAN
     // ── GPU 路径（neuralnet::nn 自动传入 NN_HAS_VULKAN 才编译进来）────────
     // 无 Vulkan 设备/初始化失败 → 按 ctest 约定返回 77（skip），不算失败。
-    auto backend_owner = nn::GpuBackend::shared();
-    nn::GpuBackend& backend = *backend_owner;
-    if (auto ir = backend.initialize(); !ir)
+    auto gpu_owner = nn::create_gpu_engine(nullptr);
+    if (!gpu_owner)
     {
-        std::printf("[downstream] GPU 初始化失败，跳过 GPU 校验：%s\n", ir.error().message.c_str());
+        std::printf("[downstream] GPU 不可用，跳过 GPU 校验：%s\n", nn::last_error());
         return 77;
     }
-    auto gpu_owner = nn::GpuEngine::create(backend);
-    nn::GpuEngine& gpu = *gpu_owner;
+    nn::ComputeEngine& gpu = *gpu_owner;
     float gpu_out = 0.0f;
     if (!run_linear(gpu, "gpu", gpu_out)) return 1;
 

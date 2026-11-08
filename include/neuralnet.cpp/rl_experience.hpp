@@ -475,11 +475,11 @@ public:
                                              values.cols(), precision_));
         NN_TRY(total_m, dsl::compute_reduce(engine, dsl::row_reduce_sum(dsl::leaf(*sum_m)), 1,
                                             values.cols(), precision_));
-        auto w = detail::download_vector(engine, *total_w);
+        auto w = nn::download_vector(engine, *total_w);
         NN_TRY_CHECK(w);
-        auto sq = detail::download_vector(engine, *total_sq);
+        auto sq = nn::download_vector(engine, *total_sq);
         NN_TRY_CHECK(sq);
-        auto m = detail::download_vector(engine, *total_m);
+        auto m = nn::download_vector(engine, *total_m);
         NN_TRY_CHECK(m);
 
         const Scalar count = (*m)[0];

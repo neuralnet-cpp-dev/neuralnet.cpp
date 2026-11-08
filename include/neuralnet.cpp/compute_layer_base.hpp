@@ -37,7 +37,7 @@ inline void nn_dbg_scan(const char* tag, ComputeEngine& eng, const Tensor& t)
     static const bool on = nn::dsl::env_flag("NN_F16_DEBUG");
     if (!on) return;
     std::vector<Scalar> buf(t.rows() * t.cols());   // 宿主桥（17 §3 D11）：不经 Matrix
-    if (auto er = detail::download_span(eng, t, std::span(buf)); !er)
+    if (auto er = nn::download_span(eng, t, std::span(buf)); !er)
     {
         std::fprintf(stderr, "[bwd][%s] download fail: %s\n", tag, er.error().message.c_str());
         return;
