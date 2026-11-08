@@ -781,8 +781,8 @@ int run_fallback(ComputeEngine& cpu, ComputeEngine& gpu)
     auto cr = nn::dsl::compute(cpu, nn::dsl::leaf(xt_cpu) * nn::dsl::leaf(yt_cpu) + three, R, C);
     NN_EXIT(cr, 1, "  CPU 求值失败: ");
 
-    // 未扫描表达式在 GPU 上经 **JIT 现编**成功（不再硬报错；NN_STRICT_CLOSED_WORLD
-    // 才是 opt-in 硬报错）。成功即证明走了融合 kernel（key 不在内嵌注册表）。
+    // 未扫描表达式在 GPU 上经 **JIT 现编**成功（不再硬报错）。成功即证明走了融合 kernel
+    // （key 不在内嵌注册表）。
     auto gr = nn::dsl::compute(gpu, nn::dsl::leaf(xt_gpu) * nn::dsl::leaf(yt_gpu) + three, R, C);
     if (!gr)
     {

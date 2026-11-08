@@ -297,8 +297,7 @@ std::printf("gradcheck: max|num-an| = %.3e\n", max_err);   // 应 << 1e-3
      该函数只在 GPU 启用时可用；未启用时调用会给出指向根因的报错。
    - **运行期 JIT**（默认兜底，无需 CMake）：不枚举也能跑——GPU `eval_expr` miss 时
      引擎懒加载 `libnn-kernelgen.so` 现编并持久化进 `.nnk` 缓存。首次有一次性编译延迟
-     （可用 `nn::model_warmup()` 提前预热）；`NN_STRICT_CLOSED_WORLD=1` 可关闭 JIT、
-     恢复构建期闭合世界硬报错（把漏枚举变成显式失败，适合当 CI 看门狗）。
+     （可用 `nn::model_warmup()` 提前预热）。
 3. 训练/推理时用 `engine.begin_batch()` / `engine.end_batch()` 包住 forward（可选，消提交开销）——
    注意**录制期引用的张量必须活到 `end_batch()` 之后**（铁律 #6）。
 

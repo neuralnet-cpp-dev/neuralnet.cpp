@@ -863,7 +863,7 @@ TEST_CASE("linear_gradcheck") {
 ### Q6: GPU 报「未找到该内联表达式的 AOT 融合 shader（AOT 注册表）」怎么办？
 
 **A**: 这是**注册表 miss**（铁律 #7：AOT 注册表为预热加速器；`eval_expr` 主路径未命中默认走运行期
-JIT 现编，`NN_STRICT_CLOSED_WORLD=1` 或 fold / reduce / into / multi 入口下为硬报错，不静默回退），
+JIT 现编，fold / reduce / into / multi 入口下为硬报错，不静默回退），
 不是崩溃。按 key 依次排查：
 
 1. **改了 Layer 里的内联表达式但没重新构建**：直接重跑构建即可——`scan_exprs` 单步

@@ -671,7 +671,7 @@ template <typename E>
 |---|---|
 | CPU 且表达式**不含**归约/matmul/索引叶子 | 编译期模板内联求值（SIMD 融合）。**无任何形状校验**（见 §8.7 陷阱 ①） |
 | CPU 且含归约/matmul/索引 | 先试"预绑定 + 模板内联"快路径；不行则折叠 `ExprSpec` 走 CPU 解释器（此时**有**形状校验） |
-| GPU | 折叠 `ExprSpec` → `validate_expr_spec` → `eval_expr` 匹配**构建期预生成** shader；**未命中主路径 = JIT 现编**（`NN_STRICT_CLOSED_WORLD=1` 恢复硬报错） |
+| GPU | 折叠 `ExprSpec` → `validate_expr_spec` → `eval_expr` 匹配**构建期预生成** shader；**未命中主路径 = JIT 现编** |
 
 **`compute_into` 的等价改写**（把"原地更新"纳入 DSL，无需逐操作调用引擎原地原语）：
 
@@ -1273,7 +1273,7 @@ auto back = engine.rearrange_3d(*ctx, heads * d_k, batch, seq, true);   // inver
 
 - 所有输入张量必须**绑定到同一引擎**（`bind_check_`）。
 - `inputs.size()` 必须与 spec 记录的输入数一致。
-- **注册表**：GPU 上该 `(结构 key, 精度签名)` 没有预生成 shader → 主路径 JIT 现编（`NN_STRICT_CLOSED_WORLD=1` 恢复硬报错）。
+- **注册表**：GPU 上该 `(结构 key, 精度签名)` 没有预生成 shader → 主路径 JIT 现编。
 
 **辅助工具**：
 

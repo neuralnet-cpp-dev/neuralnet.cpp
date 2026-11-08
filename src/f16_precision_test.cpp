@@ -10,8 +10,8 @@
 // 重要：f16 与 f32 **不逐字节可比**（§11.2）——只做容差比对；同设备同路径的
 // f32 路径则做逐字节比对（回归护栏）。
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
-#include <cstdlib>
 #include <random>
 #include <string>
 #include <vector>

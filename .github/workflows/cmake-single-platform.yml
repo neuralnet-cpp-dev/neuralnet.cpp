@@ -330,8 +330,52 @@ jobs:
     - name: doc_audit
       run: python3 scripts/doc_audit.py
 
+  # ══════════════════════════════════════════════════════════════════════
+  # engine 子模块独立构建 + ctest（CPU-only 稳定口径）
+  #   engine 仓自身没有 CI workflow；这里兜住它作为独立仓的编译与回归，
+  #   避免主仓"绿"而 submodule 代码无人验证。
+  # ══════════════════════════════════════════════════════════════════════
+  engine-tests:
+    name: Engine submodule build & ctest (Linux, CPU-only)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Rewrite submodule URL to https
+      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Clang & Ninja
+      run: |
+        wget https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        sudo ./llvm.sh all
+        sudo ln -sf $(ls /usr/bin/clang-[0-9]* | sort -V | tail -n1) /usr/bin/clang
+        sudo ln -sf $(ls /usr/bin/clang++-[0-9]* | sort -V | tail -n1) /usr/bin/clang++
+        sudo apt-get install -y ninja-build
+
+    - name: Configure engine (CPU-only, tests ON)
+      run: |
+        cmake -S engine -B build-engine -G Ninja \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DNN_ENABLE_NATIVE=OFF \
+          -DNN_ENABLE_GPU=OFF \
+          -DNN_BUILD_TESTS=ON
+      env:
+        CC: clang
+        CXX: clang++
+
+    - name: Build engine
+      run: cmake --build build-engine --parallel
+
+    - name: Test engine ctest
+      run: ctest --test-dir build-engine --output-on-failure
+
   release:
-    needs: [build, msvc-debug]
+    needs: [build, msvc-debug, engine-tests]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

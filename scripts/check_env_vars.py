@@ -120,6 +120,8 @@ KNOWN_DEAD = {
     'NN_SCAN_DUMP_SOURCES',
     # kernelgen 独立仓（libnn-kernelgen）读取，主仓 CODE_DIRS 覆盖不到
     'NN_SCAN_NO_DISPATCH',
+    # 2026-11-08 用户裁定删除（不保留旧行为兼容）；33/35 号内部文档保留决策记录
+    'NN_STRICT_CLOSED_WORLD',
 }
 
 

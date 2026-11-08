@@ -214,7 +214,10 @@ clang-format -i path/to/new_file.hpp
 * `-DNN_ENABLE_TESTS=ON` 构建并**真跑 `ctest`**（需 Vulkan 的用例在无 GPU 的 runner 上按退出码 77 记 skip，非失败）；
 * 设备域检查是**默认入口检查**（v3 起每个操作数必须属于本引擎域），不再需要绑定调试开关的第二轮 ctest；
 * 构建 **8** 个应用入口（`mnist_train/infer`、`text_train/infer`、`tokenizer_train/infer`、`dataset_gen`、`dataset_convert`）并打包成 `.7z` 产物；
-* push 到 `main` 时创建/更新 `nightly` 预发布。
+* push 到 `main` 时创建/更新 `nightly` 预发布；
+* **engine 子模块独立验证**：`engine-tests` job（ubuntu + clang + Ninja，CPU-only
+  `NN_ENABLE_GPU=OFF`、`NN_BUILD_TESTS=ON`）对 `engine/` 独立 configure/build/ctest，
+  `release` 依赖它——engine 仓自身无 workflow，由主仓兜住。
 
 > 本地复现 CI 门禁：`ctest --preset dev`（应全绿；需 Vulkan 的用例无设备时按 77 记 skip）。
 

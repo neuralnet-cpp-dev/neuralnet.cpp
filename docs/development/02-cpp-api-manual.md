@@ -1050,7 +1050,7 @@ nn::prof::dump(stdout);       // 进程结束前打表（stage / op / GPU / per-
 | `NN_PROFILE=1` / `NN_PROFILE_TRACE=<path>` / `NN_PROFILE_EVERY=<n>` | host + 设备侧聚合计时 / Chrome trace / 每 n 次 dump 打表 |
 | `NN_F16_DEBUG` / `NN_PREC_TRACE` / `NN_NAN_TRACE` / `NN_MEM_STATS` | 精度 / NaN / 内存归因探针（探针门 `NN_ENABLE_PROBES`） |
 | `NN_VULKAN_DEVICE` / `NN_VULKAN_NO_16BIT_ALU` / `NN_VULKAN_NO_16BIT_STORAGE` / `NN_VULKAN_NO_TIMELINE` / `NN_VULKAN_NO_INT8_DOT` | GPU 设备与特性逃生阀 |
-| `NN_STRICT_CLOSED_WORLD` / `NN_KERNEL_CACHE_DIR` / `NN_KERNEL_CACHE_PATH` / `NN_KERNELGEN_PATH` | 运行期 JIT 看门狗与缓存/生成器配置 |
+| `NN_KERNEL_CACHE_DIR` / `NN_KERNEL_CACHE_PATH` / `NN_KERNELGEN_PATH` | 运行期 JIT 缓存/生成器配置 |
 
 > 探针门语义（哪些算探针、默认为什么不编译）见 [`01-cmake-integration.md`](01-cmake-integration.md)。
 

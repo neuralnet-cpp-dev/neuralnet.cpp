@@ -3,8 +3,7 @@
 // 常用架构 × 代表性 shape 过一遍 **GPU forward** → 用到的表达式全部现编进
 // kernels.nnk（.nnk 算子缓存），产物随发布物分发：
 //   · 部署首跑无需现场依赖 libnn-kernelgen.so/glslc（配合各 app 的
-//     model_warmup / --no-warmup 语义；NN_STRICT_CLOSED_WORLD=1 的
-//     "只用预生成缓存"模式也能命中）；
+//     model_warmup / --no-warmup 语义）；
 //   · 同时充当"编译目标预热"（35 §P3 D5 入口②）。
 //
 // 覆盖（forward 即触发 eval_expr/fold/reduce/into 各入口的 JIT 编译）：
@@ -18,7 +17,7 @@
 //     落在 build/<preset>/ 里随发布拷走）。
 //   无可用 Vulkan 设备 → 打印 SKIP 并返回 0（发布机无 GPU 不算失败）。
 // ─────────────────────────────────────────────────────────────────────────────
-#include <cstdlib>
+#include <cstddef>
 #include <cstring>
 #include <iostream>
 #include <string>
