@@ -404,22 +404,21 @@ protected:
         const Scalar s2 = s_scale * s_scale;
         const Scalar eps_scaled = eps_ * s_scale;
 
-        // K1: m = β1*m + (1-β1)*g（单 kernel 融合；状态精度 = p_.optimizer）
-        auto m_new = dsl::compute(engine_,
-                                  dsl::leaf(m_[i]) * dsl::rparam(beta1_) +
-                                      dsl::leaf(g) * dsl::rparam(one_minus_beta1 * s_scale),
-                                  rows, cols, p_.optimizer);
-        NN_TRY_CHECK(m_new);
-        m_[i] = std::move(*m_new);
+        // K1: m = β1*m + (1-β1)*g（目标传递：m_[i] 是跨步持久句柄，录制段内
+        //   必须 compute_into——compute+move 的输出会在单输出融合中被内联吞掉，
+        //   占位永不写入 → 下一步读未初始化内存（pitfalls §2.6/模式 I））
+        NN_TRY(mr, dsl::compute_into(
+                       engine_,
+                       dsl::leaf(m_[i]) * dsl::rparam(beta1_) +
+                           dsl::leaf(g) * dsl::rparam(one_minus_beta1 * s_scale),
+                       m_[i]));
 
-        // K2: v = β2*v + (1-β2)*g²（单 kernel 融合；状态精度 = p_.optimizer）
-        auto v_new =
-            dsl::compute(engine_,
-                         dsl::leaf(v_[i]) * dsl::rparam(beta2_) +
-                             dsl::leaf(g) * dsl::leaf(g) * dsl::rparam(one_minus_beta2 * s2),
-                         rows, cols, p_.optimizer);
-        NN_TRY_CHECK(v_new);
-        v_[i] = std::move(*v_new);
+        // K2: v = β2*v + (1-β2)*g²（同 K1：into 写回持久状态 v_[i]）
+        NN_TRY(vr, dsl::compute_into(
+                       engine_,
+                       dsl::leaf(v_[i]) * dsl::rparam(beta2_) +
+                           dsl::leaf(g) * dsl::leaf(g) * dsl::rparam(one_minus_beta2 * s2),
+                       v_[i]));
 
         // K3: p -= lr * (inv_bc1*m) / (sqrt(inv_bc2*v)+eps)（全链单 kernel 融合；
         //     依赖刚更新的 m_[i]/v_[i]，偏置修正系数 inv_bc1/inv_bc2 逐步变化
@@ -494,24 +493,18 @@ public:
         // 下 4 节点金刚石单 kernel 3 extras；混精度按门禁自动分裂），替代逐表达式
         // 数百个小 dispatch（P2 前实测 266 设备 kernel/步、host 提交 4.5ms/步）。
         // CPU begin/end 为 no-op（行为不变）。
-        // ⚠ optimizer=f16 **不录制**（P3 验收门 D 实测）：m/v 状态为 f16 时，
-        //   录制/降级派发链路在第 2 步即把参数打成 NaN（同表达式直求值全绿、
-        //   f32 optimizer 图融合正常、NN_NO_GRAPH A/B 实证）。根因收敛到
-        //   "IR-C 录制 × f16 状态"组合且未再下钻——full-f16 本是告警级配方
-        //   （docs/internal/24 §2），正确性优先：该配方退回直求值；f32
-        //   optimizer（推荐默认 --f16 的 optimizer 槽）保持图融合性能。
-        const bool graph_ok = precision_bytes(p_.optimizer) >= 4;
-        if (graph_ok)
-        {
-            NN_TRY(b, engine_.begin_expr());
-        }
+        // （C1 已消灭 2026-11-07：原 optimizer=f16 跳录制门控已删，全精度常态
+        //   走图。历史 NaN 根因 = 融合内联图外持有的持久输出 → 读未初始化内存；
+        //   修法 = K1/K2 目标传递 + 融合器拒绝拼接 into 节点为非尾。见
+        //   docs/contributors/pitfalls.md §2.6/模式 I。）
+        NN_TRY(b, engine_.begin_expr());
         std::optional<ExprSegment> seg;
-        if (graph_ok) seg.emplace(engine_owner_);
+        seg.emplace(engine_owner_);
         for (std::size_t i = 0; i < params_.size(); ++i)
         {
             NN_TRY(ur, adam_update_(i, inv_bc1, inv_bc2));
         }
-        if (graph_ok) NN_TRY_CHECK(seg->end());
+        NN_TRY_CHECK(seg->end());
         t_ = t_next;  // 全部参数成功才推进步数（失败时不推进）
         return {};
     }
@@ -589,14 +582,10 @@ public:
         // （稳定拓扑序保持列表序），故 decay 必须写在 adam_update_ 之前
         // （先衰减后更新 = AdamW 语义）；两者不连通 → 各自独立 kernel，天然
         // 顺序执行，不会同 kernel 双写 p。
-        // ⚠ optimizer=f16 不录制（同 Adam::step，P3 门 D 实测）
-        const bool graph_ok = precision_bytes(p_.optimizer) >= 4;
-        if (graph_ok)
-        {
-            NN_TRY(b, engine_.begin_expr());
-        }
+        // （C1 已消灭 2026-11-07：optimizer=f16 跳录制门控已删，见 Adam::step。）
+        NN_TRY(b, engine_.begin_expr());
         std::optional<ExprSegment> seg;
-        if (graph_ok) seg.emplace(engine_owner_);
+        seg.emplace(engine_owner_);
         for (std::size_t i = 0; i < params_.size(); ++i)
         {
             // 权重衰减解耦：p = (1 - lr*wd) * p（目标传递：原地、单 dispatch）
@@ -610,7 +599,7 @@ public:
             // Adam 更新
             NN_TRY(ur, adam_update_(i, inv_bc1, inv_bc2));
         }
-        if (graph_ok) NN_TRY_CHECK(seg->end());
+        NN_TRY_CHECK(seg->end());
         t_ = t_next;  // 全部参数成功才推进步数（失败时不推进）
         return {};
     }
