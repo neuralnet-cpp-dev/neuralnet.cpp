@@ -11,7 +11,7 @@
 
 | 级别 | 数量 | 特征 | 典型案例 |
 |------|------|------|----------|
-| 灾难级 | 4 | 数据损坏 / 设备永久失效 / 训练白费数小时 | GPT 布局混用、GPU-resident 10% 正确率 |
+| 灾难级 | 5 | 数据损坏 / 设备永久失效 / 训练白费数小时 | GPT 布局混用、GPU-resident 10% 正确率、融合吞持久输出 |
 | 高危 | 6 | 内存爆炸 / 崩溃 / 断言失败 | BPE 60-80GB、reshape 视图断言 |
 | 中危 | 13 | 结果偏差 / 性能退化 / 并行不确定 | BPE 迭代序泄漏、one-hot 3.2GB、scatter_add 非确定性 |
 | 低危 | 15+ | 构建失败 / UI 异常 / 兼容性 | CRLF、MSVC 编译器版本、tkinter 保留属性 |
@@ -62,6 +62,18 @@
   2. 跨 submit 依赖用**时间线信号量**：实例版本请求到 1.2，启用 `timelineSemaphore` 特性；上传 submit 带 `VkTimelineSemaphoreSubmitInfo.pSignalSemaphoreValues`（region 内单调递增 value），消费 submit 带 `pWaitSemaphoreValues`；同一 value 可被多个 submit 等待、等待已达成的 value 是 no-op → 重复等待天然幂等。`acquire()` 不销毁重建信号量（销毁重建会让已提交的 submit 引用失效）。不支持时退回 `drain_in_flight()`（host 等在飞上传），可用 `NN_VULKAN_NO_TIMELINE=1` 强制该路径验证。
   3. 所有 `waitSemaphoreCount>0` 的 submit 补 `pWaitDstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT`。
 - **教训**：`VkResult` 原值必须翻译（`VK_TIMEOUT` vs `VK_ERROR_DEVICE_LOST` 的处置完全不同）；"第一张独显"在多卡 + 转译层机器上不成立；**二进制信号量不能当"事件"反复等**，多消费者场景必须时间线信号量；校验层是"规范违规但某些驱动容忍"这类问题的唯一可靠放大器。
+
+### 2.6 融合内联"图外句柄持有的持久输出"→ 状态读未初始化内存（全 f16 必现 NaN，他机不复现）
+
+- **症状**：full-f16 GPU 训练 step 3 起 loss=-nan（step 1/2 正常）；同会话有四重掩护：CPU 全绿、f32/param=f16/opt=f16 各段全绿、CMP 40HX 同代码全绿、JIT 产物 122 个 kernel 零 Float16 capability——排查期几乎误判为"本机显卡/驱动问题"（同期确有 f32 长训偶发 NaN 的独立观察混入，加重了误导）。
+- **根因**：Adam 的 K2（v 更新）输出被 `v_[i] = std::move(*v_new)` 交由**图外持久句柄**持有；全 f16 下 K2/K3/p+=delta 同精度可融合，而 P2 写穿（extras 多输出）**只允许全 F32**（生成器对带 extras 的结构只发 V0 变体）⇒ 全 f16 退化为**单输出**融合（tail=p）。v_new 于是成为融合中间寄存器量，**其占位 buffer 从未被写入**；下一步 `v_[i]` 读到内存池未初始化残留（本机恰为负值垃圾）→ `sqrt(v·inv_bc2)` 对负值 → NaN，一个 step 全链扩散。f32 段因走 extras=3 全落盘、param=f16/opt=f16 段因 K2 输出 F16 与 K3 输出 F32 **异精度断链**（K2 单成员、tail=v_new 落盘），所以全部安全——分段对照是钉死根因的关键证据。
+- **为什么"他机不复现/偶发"**：未初始化池残留的内容是**环境依赖**的（40HX 上恰好是 0/无害值）。同一 bug 在不同机器/分配序列下表现为"必现 / 偶发 / 仅本机"——这是环境依赖的未初始化内存读取的典型迷惑形态。
+- **定位手段**：① 四层对拍探针逐层下钻（L0 输入**位级直读** → L1 `to_f32_all` → L2 f32 融合求值 → L3 `cast_into` 写回），L0 全净、L2 突变 → 问题在输入值本身而非 shader；② 按测试段切片做融合形态对照表（各段 members/tail/extras 统计）；③ op 序列解码确认 NaN 产自 `Sqrt(负输入)`（数学正确，坏在输入）。
+- **修复**：持久状态写入改 `compute_into(v_[i])`（into 节点的输出就是句柄本身，融合必须写它；`p+=delta` 本来就是 into 模式，所以从未中招）。
+- **教训**：
+  a. **融合器只看得见图内依赖，看不见图外句柄**——`compute+move` 交给成员变量的持久状态，在单输出融合下会被静默内联吞掉。**录制段（begin_expr/end_expr）内的持久状态（优化器 m/v 等）必须用 `compute_into` 写入，禁止 `compute` + `move` 接收**（不开图的直求值路径 `compute+move` 无害，但新代码建议统一 into，见 §7 清单）；
+  b. **"他机不复现 / 偶发 / 怀疑硬件"先查未初始化内存读取**——环境依赖的垃圾内容会让同一个 bug 呈现完全不同的触发率；
+  c. 怀疑硬件前先做**逐层对拍 + 分段对照**：本例两组探针把范围从"驱动/shader 能力"一步缩小到"融合不写盘"，而全量 shader capability 审计（本文假设方向）只能排除、不能定位。
 
 ---
 
@@ -305,7 +317,7 @@
 
 ## 6. 根因模式（跨领域总结）
 
-> 上面 30+ 个坑收敛到 **7 个根因模式**。新代码评审时对照此表自查。
+> 上面 30+ 个坑收敛到 **8 个根因模式**。新代码评审时对照此表自查。
 
 ### 模式 A：同一数据多份表示，不变量未集中维护
 GPU 影子一致性、Tensor reshape 视图、模型格式版本默认值、`.tokcache` 缓存——都因"两份数据 + 分散的同步点"出错。
@@ -344,6 +356,11 @@ GPU-resident 单算子对、链式错；attn batch=1 对、batch=2 错；gradche
 
 **对策**：① 每个缓存持有层在 backward 入口做 size/valid 校验；② checkpoint 分支显式清缓存；③ 复合层 `forward_recompute` 走虚函数传播；④ 每个"支持 checkpoint/offload 的模型"都要有"与全存基线**逐位一致**"的测试（GPT/RAPT/CNN 各自覆盖）。
 
+### 模式 I：优化变换的视界小于数据的实际持有面
+
+图融合只按**图内依赖边**决定谁是中间量、谁是 tail；但 `compute+move` 交出去的持久句柄（`m_`/`v_`、running 统计、断点状态）持有在**图外**——变换看不见它，于是"图内唯一消费者"的输出被内联，图外持有者读未初始化内存（§2.6）。同类风险：任何"把多步合一步 / 把输出收进寄存器"的优化（融合、死代码消除、缓存复用），都默认了"输出只有图内消费者"。
+**对策**：① **录制段内的持久状态写入一律 `compute_into`（目标传递）**，不用 `compute+move` 接收——into 节点的输出即句柄本身，任何变换都必须写它；融合器侧对 `dst_id != 0` 的节点拒绝拼接为非尾（尊重 into 的落盘声明）；② 优化变换落地前校验"被内联输出的占位是否被外部引用"，做不到就宁可不融合（fail-fast 优于静默错值）；③ 新增持久张量持有者时，对照本模式问一句："它的写入者会不会被优化变换吞掉？"
+
 ---
 
 ## 7. 开发活动防坑清单
@@ -371,6 +388,7 @@ GPU-resident 单算子对、链式错；attn batch=1 对、batch=2 错；gradche
 - [ ] 双份状态：新增任何 CPU/GPU 双份张量状态时，同步点收敛到单一方法并配 invalidate 测试（旧影子一致性机制已随 GPU-resident 路径移除，勿重新引入分散同步；见 §4.4/模式 A）
 - [ ] 内存预算：矩阵尺寸 × 4B × 张量个数，超 staging 走分块
 - [ ] 校验集合不对称：ExprSpec 校验只在 GPU/scan 路径（CPU 模板路径不校验）→ 新表达式必须跑 GPU 用例（如 `cnn_test --gpu`），CPU 绿不作数（§4.13）
+- [ ] **录制段内持久状态写入**（优化器 m/v、running 统计、断点状态等图外句柄）一律 `compute_into`，**禁止 `compute` + `move` 接收**——单输出融合会把 `compute+move` 的输出内联吞掉，读未初始化内存（§2.6/模式 I）；融合器对 `dst_id != 0` 成员已强制不拼接为非尾，新写录制代码不要绕过该保护；改录制/融合相关代码后跑 full-f16（`f16_precision_test` 的 `test_full_f16_training`）确认 NaN 未回归
 
 ### 修改 BPE/Tokenizer
 - [ ] 确定性：所有 ID 分配显式排序，平局按 key 打破
