@@ -68,18 +68,20 @@
 复现：`bench/doc_inventory.ps1`）
 
 ```
-begin_batch, begin_expr, cast_into, clone, col_reduce_max, col2im, copy_into,
+begin_batch, begin_expr, cast, cast_into, clone, col_reduce_max, col2im, copy_into,
 create_offload_buffer, create_tensor, device, end_batch, eval_expr, flush_batch,
-gather_rows, get, im2col, insert_rows, matmul_q, matmul_q_i8, matmul_q_t,
+gather_rows, get, grouped_reduce_sum, im2col, insert_rows, matmul_q, matmul_q_i8, matmul_q_t,
 offload_restore, offload_save, outer_col, quantize_i8, quantized_adamw_step,
 rearrange_3d, reshape, scale_inplace, scan_prefix_outer, scan_suffix_outer,
 scatter_add_rows, slice_rows, transpose, trit_pack_into, try_create_tensor,
 unpack_i8, weak_from_this, zero
 ```
-（9 个计算类原语不在此列：`matmul`/`matmul_with_bias`/`batched_matmul`/
-`row_reduce_sum`/`col_reduce_sum`/`grouped_reduce_sum`/`grouped_reduce_max`/
+（8 个计算类原语不在此列：`matmul`/`matmul_with_bias`/`batched_matmul`/
+`row_reduce_sum`/`col_reduce_sum`/`grouped_reduce_max`/
 `add_inplace`/`accumulate` 一律不经 Layer 直调
 ——Layer 写 `dsl::compute`/`compute_into`/`compute_reduce`（归类见 §7.2）。
+`grouped_reduce_sum` 已由 `RAPT` decode 分母路径直调（`compute_layer_rapt.hpp:839-851`），
+故从本排除表移出。）
 这 38 个按设计保留：**基础设施 / 张量形变**（begin/end/flush_batch、create/offload_*、
 clone、reshape、try_create_tensor、zero）、**数据搬运**（transpose/slice_rows/insert_rows/
 rearrange_3d/gather_rows/scatter_add_rows/im2col/col2im——DSL 表达式是"每输出元素
@@ -120,17 +122,18 @@ int8/AdamW 量化路径的 op-level 原语，不进 DSL 注册表，见 `docs/in
 **DSL lowering 内部**（`MatmulRef::prepare*` 调 `eng.matmul/batched_matmul`、
 `ReduceViewRef::prepare` 调各 reduce）、**基类 NVI 边界 cast 入口转发**（原 `PrecisionEngine`，P-1 已下沉）与
 **测试/bench**（`f16_*_test`/`gpu_f16_test`/`layer_bench`/`f16_cpu_probe` 等）使用。
-精确集合以 `bench/doc_inventory.ps1` 的"not layer-called"清单为准（59 − 38 = 21 个）。
+精确集合以 `bench/doc_inventory.ps1` 的 "not layer-called" 清单为准；该清单含 `*_impl`
+名字，与本文 public 名字口径不同，直接引用脚本输出，不要用 59 减直调数推算。
 
 | 算子 | 实际调用方 |
 |------|-----------|
 | `eval_expr_into` / `eval_expr_reduce` | `dsl::compute_into` / `dsl::compute_reduce`（`expr_dsl.hpp`）+ 基类 NVI 入口转发 |
 | `matmul` / `matmul_with_bias` / `batched_matmul` | DSL lowering（`MatmulRef::prepare*`）+ 基类 NVI 入口转发 + 测试/bench |
-| `row_reduce_sum` / `col_reduce_sum` / `grouped_reduce_sum` / `grouped_reduce_max` | DSL lowering（`ReduceViewRef::prepare`）+ 基类 NVI 入口转发 + 测试 |
+| `row_reduce_sum` / `col_reduce_sum` / `grouped_reduce_max` | DSL lowering（`ReduceViewRef::prepare`）+ 基类 NVI 入口转发 + 测试 |
 | `add_inplace` / `accumulate` | 基类 NVI 入口（accumulate 为非虚入口本体，无 `_impl`）+ 测试/bench/probe |
 | `import` / `import_impl` | **跨设备/引擎拉取**（M6 新增，17 §4.3）：`GpuEngine::import_impl` = 原 `ensure_gpu` 的直传路径（16 §2 的 43 处调用点已全部改名 `import`）；基类默认 = 同设备别名/引擎内 cast + 跨设备宿主中转 |
 | `from_matrix` / `to_matrix` | **I/O 层**（`domain_*.hpp` 数据集与初值、`model_serialization.hpp`、`cli_*`、测试）——**M4 起 L2+ 禁用**（铁律 #12 / 17 §3 D11） |
-| `cast` / `copy_from` | `model_serialization.hpp` + f16 测试 / gradcheck |
+| `copy_from` | `model_serialization.hpp` + f16 测试 / gradcheck |
 | `cast_into` / `copy_into` / `supports_*` | 基类 NVI 边界 cast 的"写回原存储"路径（`compute_engine.hpp`）+ 引擎实现互调（CPU `cast_into` 同精度分支转 `copy_into`）+ `write` 的 f16 目标（经 `copy_from` → f32 上传 + `cast_into`） |
 | `pool_stats` | `src/text_train.cpp`（池账本统计） |
 | `release_idle_pool_blocks` | `cli/cli_mnist_io.hpp`、`src/text_train.cpp`（mem_probe 探针已随引擎 .so 化删除，T9） |
