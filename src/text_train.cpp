@@ -240,7 +240,7 @@ namespace
 
     // ── 显存阶段采样（NN_MEM_STATS=1，诊断用，默认关闭）─────────────────
     // 在真实训练负载的各生命周期阶段打印池统计 + 延迟销毁字节，用于把
-    // 峰值归因到具体阶段（与 src/mem_probe.cpp 的口径一致）。
+    // 峰值归因到具体阶段（与新仓库 mem_probe 的口径一致）。
     // 探针门：默认构建里 on 恒 false（且不求值 getenv），mark 是空判定——
     // 训练热路径与探针无关（实现见 cli/text_train_loop.hpp）。
     const nn::cli::TextTrainMemProbe mem_probe = nn::cli::make_text_train_mem_probe();
@@ -413,8 +413,8 @@ namespace
         nn::Tensor warm_x =
             engine->create_tensor(cfg.seq_len, micro > 0 ? micro : 1, nn::Precision::F32,
                                   nn::InitSpec::zero());
-        NN_EXIT(nn::cli::jit_warmup(trainer.session().model(), *engine, warm_x, cfg.jit_warmup), 1,
-                "预热失败: ");
+        NN_TRY_MSG(warmup_r, "预热失败",
+                   nn::cli::jit_warmup(trainer.session().model(), *engine, warm_x, cfg.jit_warmup));
     }
 
     // ── 训练循环（库层 TextTrainer；CLI 只装诊断/断点 hooks）──────────────
