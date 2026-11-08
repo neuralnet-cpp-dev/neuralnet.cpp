@@ -10,8 +10,13 @@
 //   [4] optimizer 先于 Model 析构（契约要求的顺序）下 step 正常
 // ─────────────────────────────────────────────────────────────────────────
 
+#include <array>
+#include <bit>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -128,6 +133,15 @@ void test_offload_f16_roundtrip()
     nn::Tensor h = engine->create_tensor(4, 1, nn::Precision::F16);
     CHECK(a.valid() && h.valid(), "创建 f32/f16 激活张量");
 
+    // 数据保真：offload 是纯搬运，往返后内容必须一致。f16 原值取不可精确
+    // 表示的数（0.1/-2.7/123.456/1e-4），先量化到 f16 再作为比较基准。
+    std::array<nn::Scalar, 6> a_src{0.5f, -1.25f, 3.0f, 0.0f, 7.75f, -0.125f};
+    const std::array<float, 4> h_orig{0.1f, -2.7f, 123.456f, 1.0e-4f};
+    std::array<nn::f16, 4> h_src{};
+    for (std::size_t i = 0; i < h_src.size(); ++i) h_src[i] = nn::f16{h_orig[i]};
+    CHECK(engine->write(a, std::span<nn::Scalar>(a_src)), "写入 f32 激活数据");
+    CHECK(engine->write(h, std::span<nn::f16>(h_src)), "写入 f16 激活数据");
+
     nn::ActivationOffloader off;
     off.set_enabled(true);
     auto r = off.export_activations(*engine, {a, h});
@@ -142,6 +156,29 @@ void test_offload_f16_roundtrip()
           "f32 激活形状/精度原样恢复");
     CHECK(h.valid() && h.precision() == nn::Precision::F16 && h.rows() == 4 && h.cols() == 1,
           "f16 激活形状/精度原样恢复（不再被抬成 f32）");
+
+    std::array<nn::Scalar, 6> a_got{};
+    std::array<nn::f16, 4> h_got{};
+    CHECK(engine->read(a, std::span<nn::Scalar>(a_got)), "读回 f32 激活数据");
+    CHECK(engine->read(h, std::span<nn::f16>(h_got)), "读回 f16 激活数据");
+
+    bool a_same = true;
+    for (std::size_t i = 0; i < a_src.size(); ++i)
+        a_same &= std::bit_cast<std::uint32_t>(a_got[i]) == std::bit_cast<std::uint32_t>(a_src[i]);
+    CHECK(a_same, "f32 激活内容逐位一致（offload 纯搬运）");
+
+    bool h_bits_same = true, h_within_half_ulp = true;
+    for (std::size_t i = 0; i < h_src.size(); ++i)
+    {
+        h_bits_same &= h_got[i].bits() == h_src[i].bits();
+        // f16 表示精度判据：读回值与量化基准之差 ≤ 0.5 ulp（相邻 f16 间距）。
+        const float q = static_cast<float>(h_src[i]);
+        const float g = static_cast<float>(h_got[i]);
+        const float up = static_cast<float>(nn::f16{static_cast<std::uint16_t>(h_src[i].bits() + 1u)});
+        h_within_half_ulp &= std::fabs(g - q) <= 0.5f * std::fabs(up - q);
+    }
+    CHECK(h_bits_same, "f16 激活内容位级一致（按 f16 量化后比较）");
+    CHECK(h_within_half_ulp, "f16 往返逐元素误差 ≤ 0.5 ulp");
 #else
     std::printf("[SKIP] offload f16 协议：构建未启用 Vulkan\n");
 #endif
