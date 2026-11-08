@@ -191,6 +191,11 @@ void write_file(const std::filesystem::path& p, const std::string& bytes)
 
 [[nodiscard]] std::uint64_t rd_u64(const std::string& b, std::size_t off)
 {
+    if (off > b.size() || b.size() - off < sizeof(std::uint64_t))
+    {
+        CHECK(false, "rd_u64: 越界读（测试输入畸形）");
+        return 0;
+    }
     std::uint64_t v = 0;
     std::memcpy(&v, b.data() + off, sizeof(v));
     return v;
