@@ -308,13 +308,13 @@ jobs:
         -E "^rapt_test_f16$"
 
   # ══════════════════════════════════════════════════════════════════════
-  # 文档 / 双仓一致性（不编译；engine 子模块经 https 重写拉取）
-  #   · check_header_sync.py：主仓 include/neuralnet.cpp ↔ engine/engine/include
-  #     的层/模型头副本必须逐字一致（防双仓漂移）；
+  # 文档一致性（不编译；engine 子模块经 https 重写拉取）
   #   · check_env_vars.py：环境变量"代码读取点 ↔ AGENTS/docs"三方对照（死变量门禁）；
   #   · doc_audit.py：文档↔代码对齐审计（含 [E2] AGENTS internal 索引检查）。
+  #   层/模型/优化器头已在 2026-11 收敛为单一真源（主仓 include/），
+  #   双仓逐字比对门禁（check_header_sync.py）随之删除。
   consistency:
-    name: Docs & header-sync consistency
+    name: Docs consistency
     runs-on: ubuntu-latest
 
     steps:
@@ -323,8 +323,6 @@ jobs:
     - uses: actions/checkout@v4
       with:
         submodules: recursive
-    - name: Header sync (dual-repo copies)
-      run: python3 scripts/check_header_sync.py
     - name: Env var three-way audit
       run: python3 scripts/check_env_vars.py
     - name: doc_audit

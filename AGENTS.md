@@ -9,7 +9,7 @@
 
 从零实现的 C++26 神经网络库：CPU / Vulkan 双后端，支持 MLP / ViT / GPT 训练推理 + BPE 分词器，可选 f16 混合精度。
 `include/neuralnet.cpp/` 是库的 **MIT 消费侧头**（层/模型/DSL/CLI；**统一聚合入口 `nn.hpp`**；也可按需 include `engine/layer/loss/optimizer/model/train.hpp` 薄转发头），`src/` 是可执行入口。
-**引擎实现（LGPL）在 submodule `engine/`（新仓库 `compute.neuralnet.cpp`，git@github.com:neuralnet-cpp-dev/compute.neuralnet.cpp）**：`abstraction/include` = MIT 抽象层接口头（`compute_engine.hpp` 完整接口面 + Tensor 值类型 + expr_spec/expr_graph/expr_opt + 工厂），`engine/include` = LGPL 引擎实现头（`compute_cpu/gpu_engine.hpp`、`backend/*`、`expr_emitter/glsl_gen`、层/模型头副本），`engine/shaders/` = GPU 原语 shader；双引擎编成 `libnn-cpu.so` / `libnn-gpu.so`（消费方只 include 抽象层 + 工厂 `create_cpu_engine`/`create_gpu_engine` + 链接 .so）。**引擎级测试在新仓库 `tests/`**（消费方形态，见 §2）。边界清单/实施记录：`docs/internal/34` §10。
+**引擎实现（LGPL）在 submodule `engine/`（新仓库 `compute.neuralnet.cpp`，git@github.com:neuralnet-cpp-dev/compute.neuralnet.cpp）**：`abstraction/include` = MIT 抽象层接口头（`compute_engine.hpp` 完整接口面 + Tensor 值类型 + expr_spec/expr_graph/expr_opt + 工厂），`engine/include` = LGPL 引擎实现头（`compute_cpu/gpu_engine.hpp`、`backend/*`、`expr_emitter/glsl_gen`；层/模型/优化器头**不再存副本**，单一真源在主仓 `include/`，`model_keyvalue_record` 单一真源在 `abstraction/include`），`engine/shaders/` = GPU 原语 shader；双引擎编成 `libnn-cpu.so` / `libnn-gpu.so`（消费方只 include 抽象层 + 工厂 `create_cpu_engine`/`create_gpu_engine` + 链接 .so）。**引擎级测试在新仓库 `tests/`**（消费方形态，见 §2）。边界清单/实施记录：`docs/internal/34` §10。
 
 ## 2. 构建与测试
 

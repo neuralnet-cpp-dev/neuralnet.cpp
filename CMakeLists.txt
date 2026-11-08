@@ -352,10 +352,13 @@ add_library(nn_core INTERFACE)
 # 主仓库已删除与抽象层重复的接口/值类型头（algebra_* / compute_engine /
 # compute_tensor / core_* / expr_spec 等），同名头一律解析到抽象层 —— 与
 # libnn-cpu.so / libnn-gpu.so（LGPL）按同一份头编译，跨界 ABI 一致。
-# engine/engine/include（LGPL 实现目录）放**最后**兜底：主仓库不再维护
-# 与引擎重复的功能头副本（expr_dsl / expr_fold / expr_registry / ternary_pack /
-# int8_pack / kernel_cache / kernelgen_api / nn_api，2026-11 v1.16.0 后去重），
-# 消费侧头（层/模型/训练/数据集/分词器）仍在主仓库 include/ 优先命中。
+# engine/engine/include（LGPL 实现目录）放**最后**，只保留引擎实现头
+# （expr_dsl / expr_fold / expr_registry / ternary_pack / int8_pack / kernel_cache /
+# kernelgen_api / nn_api 等），不再保存层/模型/优化器头副本（2026-11 去重，
+# scripts/check_header_sync.py 随之下线）；消费侧头（层/模型/训练/数据集/
+# 分词器/优化器）单一真源在主仓库 include/，引擎测试也已改为引用该目录。
+# model_keyvalue_record 为 engine kernel_cache 与主仓共用的 MIT 值类型，
+# 单一真源在抽象层（engine/abstraction/include/neuralnet.cpp/）。
 target_include_directories(nn_core INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include>
@@ -486,6 +489,7 @@ set(NN_MOD_CORE_HEADERS
     ${NN_ABST_INC}/core_assert.hpp
     ${NN_ABST_INC}/core_observer_ptr.hpp
     ${NN_ABST_INC}/core_config.hpp
+    ${NN_ABST_INC}/core_env.hpp
     ${NN_ABST_INC}/core_errors.hpp
     include/neuralnet.cpp/core_file.hpp
     ${NN_ABST_INC}/core_parallel.hpp
@@ -494,14 +498,14 @@ set(NN_MOD_CORE_HEADERS
     ${NN_ABST_INC}/precision.hpp)
 # kvrecord 闭包 = 自身 + core（model_keyvalue_record → core_errors）
 set(NN_MOD_KVRECORD_HEADERS
-    include/neuralnet.cpp/model_keyvalue_record.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
     ${NN_MOD_CORE_HEADERS})
 # dataset 闭包 = dataset/dataset_format + kvrecord + core_file/core_sha256/core_errors
 #   （dataset 不依赖 threadpool/parallel/config/precision/assert，无需全 core）
 set(NN_MOD_DATASET_HEADERS
     include/neuralnet.cpp/dataset.hpp
     include/neuralnet.cpp/dataset_format.hpp
-    include/neuralnet.cpp/model_keyvalue_record.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
     ${NN_ABST_INC}/core_errors.hpp
     include/neuralnet.cpp/core_file.hpp
     include/neuralnet.cpp/core_sha256.hpp)
@@ -520,7 +524,7 @@ set(NN_MOD_TOKENIZER_HEADERS
     ${NN_ABST_INC}/core_assert.hpp
     ${NN_ABST_INC}/precision.hpp
     include/neuralnet.cpp/dataset_format.hpp
-    include/neuralnet.cpp/model_keyvalue_record.hpp)
+    ${NN_ABST_INC}/model_keyvalue_record.hpp)
 
 # ── P4 新域闭包（35 号）：跨域头改动触发对应 BMI 重编；宁多勿少 ──────────
 # 由头包含图解析生成（expr 22 / engine 37 / layer 22 / loss 10 / opt 12 /
@@ -586,7 +590,7 @@ set(NN_MOD_ENGINE_HEADERS
     engine/engine/include/neuralnet.cpp/kernel_cache.hpp
     engine/engine/include/neuralnet.cpp/kernelgen_api.h
     engine/engine/include/neuralnet.cpp/ternary_pack.hpp
-    include/neuralnet.cpp/model_keyvalue_record.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
 )
 set(NN_MOD_LAYER_HEADERS
     engine/abstraction/include/neuralnet.cpp/core_assert.hpp
@@ -607,7 +611,7 @@ set(NN_MOD_LAYER_HEADERS
     include/neuralnet.cpp/compute_layer_softmax.hpp
     include/neuralnet.cpp/compute_layer_transformer.hpp
     include/neuralnet.cpp/compute_position_encoding.hpp
-    include/neuralnet.cpp/model_keyvalue_record.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
     include/neuralnet.cpp/tensor_schema.hpp
@@ -619,7 +623,7 @@ set(NN_MOD_LOSS_HEADERS
     engine/abstraction/include/nn_error_macros.hpp
     include/neuralnet.cpp/compute_layer_base.hpp
     include/neuralnet.cpp/compute_loss.hpp
-    include/neuralnet.cpp/model_keyvalue_record.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
     include/neuralnet.cpp/tensor_schema.hpp
@@ -633,7 +637,7 @@ set(NN_MOD_OPT_HEADERS
     include/neuralnet.cpp/compute_layer_base.hpp
     include/neuralnet.cpp/compute_optimizer.hpp
     include/neuralnet.cpp/lr_scheduler.hpp
-    include/neuralnet.cpp/model_keyvalue_record.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
     include/neuralnet.cpp/tensor_schema.hpp
@@ -662,7 +666,7 @@ set(NN_MOD_MODEL_HEADERS
     include/neuralnet.cpp/core_file.hpp
     include/neuralnet.cpp/core_sha256.hpp
     include/neuralnet.cpp/model_container.hpp
-    include/neuralnet.cpp/model_keyvalue_record.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
     include/neuralnet.cpp/model_serialization.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
@@ -707,7 +711,7 @@ set(NN_MOD_TRAIN_HEADERS
     include/neuralnet.cpp/domain_tokenizer_charbpe.hpp
     include/neuralnet.cpp/lr_scheduler.hpp
     include/neuralnet.cpp/model_container.hpp
-    include/neuralnet.cpp/model_keyvalue_record.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
     include/neuralnet.cpp/model_serialization.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
@@ -745,7 +749,7 @@ set(NN_MOD_DOMAIN_HEADERS
     include/neuralnet.cpp/domain_mnist.hpp
     include/neuralnet.cpp/domain_rla.hpp
     include/neuralnet.cpp/model_container.hpp
-    include/neuralnet.cpp/model_keyvalue_record.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
     include/neuralnet.cpp/tensor_schema.hpp
@@ -815,7 +819,7 @@ set(NN_MOD_CLI_HEADERS
     include/neuralnet.cpp/domain_tokenizer_charbpe.hpp
     include/neuralnet.cpp/lr_scheduler.hpp
     include/neuralnet.cpp/model_container.hpp
-    include/neuralnet.cpp/model_keyvalue_record.hpp
+    ${NN_ABST_INC}/model_keyvalue_record.hpp
     include/neuralnet.cpp/model_serialization.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp

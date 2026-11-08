@@ -2,7 +2,7 @@
 
 > **读者**：调用者（读写 `.nnvocab` / `.nngames` 等容器的工具作者）——本分册定位见 [`README.md`](README.md)。
 > **一句话**：KeyValueRecord 容器的字节级稳定契约；自 v2 起承诺同版本字节布局不变，演进只经"新增版本哨兵值"通道（§4）。
-> **状态**：现行（格式契约 · 权威实现 [`model_keyvalue_record.hpp`](../../include/neuralnet.cpp/model_keyvalue_record.hpp)；Python 参考实现 [`scripts/kvrecord.py`](../../scripts/kvrecord.py)，单文件、仅标准库）。
+> **状态**：现行（格式契约 · 权威实现 [`model_keyvalue_record.hpp`](../../engine/abstraction/include/neuralnet.cpp/model_keyvalue_record.hpp)；Python 参考实现 [`scripts/kvrecord.py`](../../scripts/kvrecord.py)，单文件、仅标准库）。
 
 **字节序：全程小端（little-endian）。** 所有整数均为无符号。
 
