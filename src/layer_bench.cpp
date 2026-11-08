@@ -641,7 +641,11 @@ void bench_op(ComputeEngine& engine, const BenchConfig& cfg, const OpSpec& spec)
     // 刻意放在计时之后：`to_matrix` 会改变池/流水线状态，放计时前会污染 ms。
     if (cfg.hash)
     {
-        auto out_m = engine.to_matrix(ctx.c);
+        // in-place 系算子（add_inplace / scale_inplace）写的是 ctx.a，不产出
+        // ctx.c；对空 Tensor 调 to_matrix 会在 cpu_matrix<P>() 的断言上崩。
+        // 故哈希目标 = 实际被写的那个张量（ctx.c 有值则仍以它为输出）。
+        const Tensor& out = ctx.c.valid() ? ctx.c : ctx.a;
+        auto out_m = engine.to_matrix(out);
         if (!out_m)
         {
             std::printf("  哈希：to_matrix 失败\n");
