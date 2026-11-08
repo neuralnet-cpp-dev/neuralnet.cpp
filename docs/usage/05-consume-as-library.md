@@ -89,7 +89,7 @@ add_subdirectory(3rd_party/neuralnet.cpp)
 ## 5. 已知限制
 
 - **编译耗时**：header-only，单 TU 首次 parse `nn.hpp`（含全部层 + SPIR-V 嵌入 +
-  融合注册表，约 7MB 头文本）较慢（本机实测约 17.5s 无 PCH）。消费方可对**自己的**
+  融合注册表，约 7MB 头文本）较慢（本机实测约 17.5s）。消费方可对**自己的**
   目标用 `target_precompile_headers(my_app PRIVATE <path>/neuralnet.cpp/nn.hpp)` 加速。
 - **`-Wno-pass-failed` / `-fexperimental-library`（Clang）与 `/utf-8`（MSVC）**
   已作为接口选项随 `neuralnet::nn` 传递——库头文件的 `#pragma clang loop` 与
