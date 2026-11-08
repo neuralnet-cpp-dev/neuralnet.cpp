@@ -202,8 +202,8 @@ include 路径全部来自 `target_include_directories`（`include/` +
 
 1. `CMAKE_CXX_SCAN_FOR_MODULES OFF`：本仓 C++ 模块走**显式接线**（见 8.1「C++ 模块」小节），
    不开 CMake 模块扫描 → 只有 13 个模块单元参与，其余 ~270 个 TU 零扫描；
-2. `scan_exprs` 的 glslc **并行**（环境变量 `NN_SCAN_JOBS=<n>` 覆盖，`=1` 回串行）
-   + `fused_registry.hpp` 内容稳定写入（内容不变则不动 mtime，靠 `restat` 掐断下游重编）；
+2. 构建期 shader 生成链已删除（P3/D4）：GPU kernel 由运行期 JIT 现编并写 `.nnk`，
+   不再有 `scan_exprs` 的 glslc 并行（`NN_SCAN_JOBS`）与 `fused_registry.hpp` 稳定写入；
 3. 编译器缓存探测扩到 ccache / sccache（可用 `-DNN_COMPILER_LAUNCHER=<path>` 指定），
    但**模块消费方一律绕开 launcher**（ccache 4.13 不支持标准 C++ modules，key 不含
    `-fmodule-file` 的 BMI 内容 → "BMI 重编 + 消费方源码没动"时会吐出旧 .o）；

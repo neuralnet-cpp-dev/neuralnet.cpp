@@ -21,9 +21,9 @@ ninja -C build
 NN_VULKAN_DEVICE=850M ctest --test-dir build -j1
 ```
 
-- `add_subdirectory(engine)` 挂入 submodule（新仓库根），构建期先产出
-  `libnn-cpu.so` / `libnn-gpu.so` / `libnn-kernelgen.so`（`scan_exprs` AOT 融合 →
-  `fused_registry.hpp`，158 条表达式）；主仓库全部可执行目标统一链接 `.so`。
+- `add_subdirectory(engine)` 挂入 submodule（新仓库根），构建期产出
+  `libnn-cpu.so` / `libnn-gpu.so` / `libnn-kernelgen.so`；GPU kernel 由运行期 JIT
+  现编并写 `.nnk` 缓存（构建期 AOT 收集/生成链已删除）；主仓库全部可执行目标统一链接 `.so`。
 - 默认 Release：`-O3 -fno-math-errno -fno-trapping-math -funroll-loops -march=native`
   （Clang 另开 thin LTO）。
 - `NN_ENABLE_GPU`（`AUTO`/`ON`/`OFF`）一行控制 GPU：`OFF` 时不定义 `create_gpu_engine`

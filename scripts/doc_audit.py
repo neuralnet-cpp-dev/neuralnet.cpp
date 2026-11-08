@@ -31,9 +31,13 @@ HISTORICAL_FILES = [
     'ternary_deploy.hpp',                    # NNQT 独立部署格式，随库级清理（internal/23）删除
     '08-object-lifetimes.md',                # 2026-11 文档重构删除的转发页（真源 = 07-engine-ownership.md）
     'doc_align_audit.ps1',                   # 文档审计由 scripts/doc_audit.py 承担（口径见文档规范 §5）
-    'scan_exprs.cpp', 'fused_generate.hpp',  # 35 号 P3 删 AOT 收集/生成链（归档 history）；
-                                             # 02/18/35 与历史 release-notes 的提及待 P6 正文改写后复核摘除
 ]
+# [A] 冻结文档：按设计记录当时状态（release-notes 随版本冻结；35 号为用户提供只读实施文档），
+#     其中提到后来被删除的文件属正常——仅豁免"代码文件名不存在"，链接仍照查。
+FROZEN_DOC_PAT = re.compile(r'^docs/(history/|release-notes/v|internal/35-)')
+# [A] 删除陈述语境（与 [B] 的 NEGATION_PAT 同旨，额外接受"删除/不再有"等动作词）：
+#     命中行或其上下 1 行内出现这些词，说明文档是在说明"该文件不存在"，不是把它当现行文件。
+NEGATION_A_PAT = re.compile(r'不存在|删除|移除|没有|无此|已归档|归档于|历史|不再有')
 
 # [B] 已删除符号（命中行若带"不存在/已删除"等否定语境则跳过）
 DEAD_SYMBOLS = [
@@ -166,14 +170,13 @@ def check_A(docs):
     for fn in os.listdir(ROOT):
         if os.path.isfile(os.path.join(ROOT, fn)):
             real_names.add(fn)
-    # 构建生成物（AOT 融合管线产物，ps1 扫 build/generated；未构建机器上不存在，勿报）
-    GENERATED_FILES = {'fused_registry.hpp'}
     # 目录/仓库名被反引号包裹（非文件引用）与外部项目文件引用
     NON_FILE_NAMES = {'neuralnet.cpp', 'go_train_cli.cpp'}
     for d in docs:
         if d == HISTORY_MD:
             continue  # 历史归档按设计记录已删符号/已删文件（ps1 同口径，整体豁免 A）
         hits = []
+        frozen = bool(FROZEN_DOC_PAT.match(rel(d)))
         lines = read_lines(d)
         for i, line in enumerate(lines):
             for m in re.finditer(r'`([A-Za-z0-9_]+\.(hpp|cpp|comp|py|md))`', line):
@@ -181,9 +184,10 @@ def check_A(docs):
                 if name.endswith('.md'):
                     continue  # md 引用走链接检查（裸文件名跨目录歧义大）
                 if name not in real_names:
-                    if name in GENERATED_FILES or name in NON_FILE_NAMES:
+                    if name in NON_FILE_NAMES:
                         continue
-                    if name in HISTORICAL_FILES:
+                    if (frozen or name in HISTORICAL_FILES
+                            or NEGATION_A_PAT.search(' '.join(lines[max(0, i - 1):i + 2]))):
                         hist += 1
                     else:
                         hits.append(f'{i+1}: `{name}`')

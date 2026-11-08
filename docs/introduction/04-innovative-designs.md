@@ -77,23 +77,23 @@ Shader / 融合逻辑是引擎内部实现，用户不可见
 
 算法表达式**直接写在 C++ 源码里**（如 `exp(x - row_max) / sum(...)`），而不是单独维护一份"计算图定义"。
 
-### 2.2 构建期扫描 + 生成
+### 2.2 运行期 JIT 生成
 
 ```
 Layer 内联表达式 → to_expr_spec 折叠 → ExprSpec（扁平 SSA IR）
-    → expr_spec_key（规范结构 key）→ scan_exprs 收集
-    → 生成阶段 用 glsl_gen 合成 GLSL → glslc → 内联 SPIR-V → fused_registry.hpp
-运行时：fold → key → find_fused(key) → 精确 dispatch（注册表命中；miss 主路径 JIT 兜底）
+    → expr_spec_key（规范结构 key）→ 查 .nnk 缓存（KVRecord v2）
+    → miss：libnn-kernelgen 合成 GLSL → SPIR-V → 写 .nnk / 建 pipeline
+运行时：fold → key → 缓存命中即 dispatch；miss 由运行期 JIT 现编（model_warmup 可预热）
 ```
 
 **创新点**：
-- **AOT 注册表（预热加速）**：库内已知的融合 kernel 在构建期预编译、内联进最终程序；`eval_expr` 主路径未命中走运行期 JIT 现编兜底（懒加载 `libnn-kernelgen.so` → 生成 SPIR-V → 懒建 pipeline）。
-- **派生而非手写**：`scan_exprs` 通过 dry-run 执行 Layer 的 forward/backward 触达表达式，把折叠后的**结构（派生物）**采集进注册表，而不是手工维护一份 kernel 清单。
-- **未命中策略**：GPU 上遇到未预生成的表达式结构，主路径走 JIT 现编，绝不静默回退 CPU，保持项目"不降级"哲学。
+- **运行期 JIT（唯一路径）**：GPU 首次执行某结构时现编并写 `.nnk`，`nn::model_warmup()` 提前预热；构建期 AOT 收集/生成链已整体删除（`818a63a`/`cd92ab1`，历史见 `docs/history/history.md`）。
+- **表达式是唯一真源**：结构由 Layer 内联表达式折叠得到（派生物），不存在手工维护的 kernel 清单或注册表。
+- **未命中策略**：GPU 上未命中缓存即 JIT 现编；JIT 不可用且缓存 miss 时硬报错，绝不静默回退 CPU，保持项目"不降级"哲学。
 
 ### 2.3 确定性 key 铁律
 
-key 定义在 **canonical（优化后）IR** 上，scan 与 runtime 两端必须先 canonicalize 再算 key。且 pass 遍历顺序固定、CSE 胜利者选择固定、寄存器分配固定——避免跨编译器（Clang/MSVC）漂移（C++ 实参求值顺序未指定是这类漂移的常见来源，属必须规避的坑）。
+key 定义在 **canonical（优化后）IR** 上，录制与 JIT 两端必须先 canonicalize 再算 key。且 pass 遍历顺序固定、CSE 胜利者选择固定、寄存器分配固定——避免跨编译器（Clang/MSVC）漂移（C++ 实参求值顺序未指定是这类漂移的常见来源，属必须规避的坑）。
 
 ---
 

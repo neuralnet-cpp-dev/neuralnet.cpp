@@ -230,7 +230,7 @@ CPU/GPU 全部通过。
   GPU = `8ef51b2927253c50`（均与历史锚逐位一致 → f32 路径零影响）；
 - `bench/doc_inventory.ps1`：`L2-VIOLATIONS: 0`、virtual 49；
   `bench/doc_align_audit.ps1`：A/D/E/F 可行动项 0；
-- `fused_registry.hpp` 的内容 hash 改变（内嵌 SPIR-V 字节），**结构集不变**
+- **（历史 AOT 产物）`fused_registry.hpp` 的内容 hash 改变**（内嵌 SPIR-V 字节；该构建期链路已删除），**结构集不变**
   （scan 仍为 91 条结构 / 130 条精度变体）——即"改结构不改数"判据下属预期。
 
 ### 8.5 已知边界
