@@ -63,11 +63,23 @@ struct CnnConfig
 // 默认 MNIST CNN（LeNet-5 风格）：
 //   Conv(1→6, k5) + Pool2 → Conv(6→16, k5) + Pool2 → flatten(16*4*4=256)
 //   → Linear(256,120) → ReLU → Linear(120,10)
-inline const std::vector<CnnConvSpec> MNIST_CNN_CONVS = {
-    {6, 5},   // out_channels=6, kernel=5
-    {16, 5},  // out_channels=16, kernel=5
-};
-inline const std::vector<std::size_t> MNIST_CNN_FC = {120, 10};
+// ⚠ 与 domain_mnist.hpp 的 MNIST_LAYER_DIMS 同理：不要退回成 inline 容器全局
+// （模块 + 直接包含头两条定义路径会让析构登记两次 → 退出时 double-free）。
+[[nodiscard]] inline const std::vector<CnnConvSpec>& mnist_cnn_convs()
+{
+    static const std::vector<CnnConvSpec> convs = {
+        {6, 5},   // out_channels=6, kernel=5
+        {16, 5},  // out_channels=16, kernel=5
+    };
+    return convs;
+}
+[[nodiscard]] inline const std::vector<std::size_t>& mnist_cnn_fc()
+{
+    static const std::vector<std::size_t> fc = {120, 10};
+    return fc;
+}
+inline const std::vector<CnnConvSpec>& MNIST_CNN_CONVS = mnist_cnn_convs();
+inline const std::vector<std::size_t>& MNIST_CNN_FC = mnist_cnn_fc();
 
 // ── 卷积输出尺寸（不含池化） ─────────────────────────────────────────────
 [[nodiscard]] inline std::size_t conv_out_size(std::size_t in, std::size_t k, std::size_t s,
