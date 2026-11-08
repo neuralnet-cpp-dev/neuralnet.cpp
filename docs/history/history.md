@@ -5836,6 +5836,41 @@ DSL 完成（与 AdamWQuant 逐位一致）；参数更新用重建值 m̂ = sm�
 （57 virtual、L2 违规 0）、gui_cli_audit（优化器名单）、doc_audit 全绿。GPU 数值对拍
 待权威设备（shader 已编译验证）。
 
-**已知取舍（如实记录）**：v̂ 下限是"保守过估"（qv=0 元素按分辨率下限更新）；块量化
-（每 64 元素尺度，bitsandbytes 风格）是后续精化方向；原语 = 逐元素参考内核，宽 batch
-性能另行 A/B；GPU 数值未实测。
+
+---
+
+## v1.17.0 发布前收尾：CI 子模块拉取 / MSVC Debug job 下线 / 构建提速文档改口径（2026-11-08）
+
+**背景**：v1.16.0（2026-11-02）起 main 的 CI 一直红。发布 v1.17.0 前的文档 + 代码审查定位到两处结构性原因：
+
+1. **build / msvc-debug job 没有拉取 engine 子模块**：`actions/checkout@v4` 未带
+   `submodules: recursive`，而主仓 CMakeLists 的 `add_subdirectory(engine)` 是其硬依赖
+   ⇒ configure 直接报 `does not contain a CMakeLists.txt`（Linux/Windows 同因）。
+   修法：两处补 `git config --global url."https://github.com/".insteadOf "git@github.com:"`
+   + `submodules: recursive`（与 `consistency` / `engine-tests` job 同款）。
+2. **`msvc-debug` job 与模块无条件化冲突**：`nn_add_module` 用
+   `${CMAKE_CXX_COMPILER} --precompile` + `-fmodule-file`，cl.exe / clang-cl 无这两个
+   能力（GCC 亦无 `--precompile`）⇒ 该 job 必然红。与 35 号 P1/P5 定下的「仅 GNU 驱动
+   Clang 可构建本仓 src/」口径一致，**下线该 job**（`release.needs` 同步改为
+   `[build, engine-tests]`），原注释位置改记下线原因。历史四组「编译器 × 标准库」
+   验证记录与 MSVC Debug 的三条必需开关（`/Zc:preprocessor` / `/bigobj` /
+   `/STACK:8388608`）的来由归档在本文件。
+
+**同步的文档**（原写「PCH 默认开」「GCC/MSVC 均可」「msvc-debug job 存在」均已过时）：
+
+- `CONTRIBUTING.md` §5：构建提速段落改为模块/BMI 口径（PCH 机制整体删除、
+  `NN_ENABLE_PCH` / `NN_ENABLE_MODULES` 开关下线、ccache 对模块消费方 TU 绕开的实测口径）。
+- `docs/development/01-cmake-integration.md` §9 与 `docs/introduction/01-architecture.md`
+  环境要求：本仓 src/ 构建只支持 GNU 驱动 Clang；头文件消费路径（`#include <nn.hpp>`）
+  不依赖模块，嵌入消费方用自己的编译器仍可（MSVC 需 `/Zc:preprocessor`）。
+- `docs/internal/18-roadmap.md` CI 行：删 `msvc-debug`，补 `engine-tests` / `consistency`
+  与子模块拉取口径。
+- `docs/usage/05-consume-as-library.md`：「17.5s 无 PCH」改为当前口径。
+
+**审查附带结论（未改代码）**：`compute_cpu_engine.hpp` 的 `m_per` 兜底
+（`rows % batch != 0` 时取 `m_per = rows`）与 `for b < mm_batch` 的写偏移组合在
+「rows 不可被 batch 整除」时会越界——该模式在 v1.16.0 既有代码里就存在（`eval_expr_impl`），
+本轮 P2 预计算只是照抄同一形态；内部调用方恒有 `rows = batch × 每块行数`，故不改，
+记为边界观察项。`src/chat_prompt_test.cpp` 的 Windows 引号助手只兜尾部反斜杠、
+不再转义内嵌 `"`（调用点已把回复里的 `"` 清洗成空格，测试专用，无实际风险）。
+

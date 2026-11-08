@@ -374,7 +374,7 @@ sequenceDiagram
 
 **环境要求：**
 - CMake ≥ 3.30
-- Clang (支持 C++26) 或 GCC 15+
+- GNU 驱动 Clang（支持 C++26；本仓构建无条件走 C++ 模块，GCC / MSVC 无法构建）
 - Vulkan SDK（可选，GPU 加速）
 
 **构建命令：**

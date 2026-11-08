@@ -24,7 +24,9 @@
 
 ## 1. 环境与首次构建
 
-需要 **CMake ≥ 3.30**、**Ninja**、一个支持 C++26 的编译器（CI 用 Clang；GCC 15 / MSVC 19.51 也验证过）。
+需要 **CMake ≥ 3.30**、**Ninja**、**GNU 驱动 Clang**（支持 C++26）：`src/` 构建无条件走
+C++ 模块（`--precompile` + `-fmodule-file`），GCC / cl.exe / clang-cl 无法构建本仓
+（口径见 `docs/development/01-cmake-integration.md` §8.2）。
 Vulkan SDK（含 `glslc`）可选：找到就自动启用 GPU 后端，找不到就是纯 CPU 构建。
 装了 [ccache](https://ccache.dev/) 会自动启用（详见 §5）。
 

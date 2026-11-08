@@ -259,18 +259,22 @@ src/ 全量 import 化。动机与实测结论见 `research/modules-import-nn/RE
 
 ## 9. 跨平台与编译器
 
-- **标准要求 C++26**（接口以 `target_compile_features` 传递）。编译器不限具体版本，
-  只要**支持 C++26** 即可（Clang / GCC / MSVC 均可；MSVC 走 `/std:c++latest`）。
+- **标准要求 C++26**（接口以 `target_compile_features` 传递）。
 - **CMake ≥ 3.30**。`CMakeLists.txt` 不指定编译器（由 CMake 探测或调用方
   `CXX=...` / `-DCMAKE_CXX_COMPILER` 决定），**标准库编译/链接两侧必须一致**。
-- **MSVC**：必须带 `/Zc:preprocessor`（已作为接口选项随门面传递）。`cl.exe` 默认的传统
-  预处理器会把 `NN_UNWRAP(x, msg)` 静默退化成逗号表达式（条件恒真、检查永不触发），
-  `NN_EXIT` 直接 `C3861`。
+- **本仓 `src/`（app / 工具 / 测试）构建只支持 GNU 驱动 Clang**：模块注册无条件，
+  `${CMAKE_CXX_COMPILER} --precompile` / `-fmodule-file` 只有 clang 提供，GCC / cl.exe /
+  clang-cl 在本仓构建直接失败（§8.2）。**头文件消费路径不受影响**：嵌入消费方
+  `NN_BUILD_APPS=OFF` 时不构建模块消费方 TU，其自身编译器只需支持 C++26
+  （Clang / GCC / MSVC 均可；MSVC 走 `/std:c++latest`）。
+- **MSVC**：消费方用 cl.exe 编译**自己的** TU 时，必须带 `/Zc:preprocessor`（已作为接口
+  选项随门面传递）。`cl.exe` 默认的传统预处理器会把 `NN_UNWRAP(x, msg)` 静默退化成
+  逗号表达式（条件恒真、检查永不触发），`NN_EXIT` 直接 `C3861`。
 - **Clang + libc++**：`-Werror` 下 libc++ 会对「记录类型但从未使用」的局部变量报
   `-Wunused-variable`（libstdc++ 不报）——属真实死变量，删掉即可。
 - **`-fno-exceptions` 不传递**：库头不使用异常，消费方按自己的异常策略编译即可。
-- 已验证四组「编译器 × 标准库」各自全新构建 + ctest：clang + libc++、
-  g++ + libstdc++（CPU-only）、clang-cl + MSVC STL、MSVC cl + MSVC STL。
+- 历史四组「编译器 × 标准库」构建 + ctest 的验证记录（clang + libc++、g++ + libstdc++
+  CPU-only、clang-cl + MSVC STL、MSVC cl + MSVC STL）见 `docs/history/history.md`。
 
 ---
 
