@@ -62,11 +62,11 @@
 | `include/` | **65 个 `.hpp` / 26311 行** | `Get-ChildItem include -Recurse -Filter *.hpp` + 逐文件 `Get-Content` 计数 |
 | `src/` | **108 个 `.cpp` / 37063 行** | 同上换 `src -Filter *.cpp` |
 | `shaders/` | **26 个 `.comp`，全部在 engine 子仓 `engine/engine/shaders/`**（主仓 `shaders/` 已不存在） | `Get-ChildItem engine -Recurse -Filter *.comp` |
-| `docs/` | **76 篇 `.md`**（含 `history/history.md` 与 `release-notes/`） | `Get-ChildItem docs -Recurse -Filter *.md` |
+| `docs/` | **80 篇 `.md`**（含 `history/history.md` 与 `release-notes/`） | `Get-ChildItem docs -Recurse -Filter *.md` |
 | 最大源文件 | engine 子仓：`expr_glsl_gen.hpp` **3308** 行、`compute_gpu_engine.hpp` **3028**、`compute_cpu_engine.hpp` **2923**、`compute_engine.hpp` **2401**、`expr_dsl.hpp` **1857**、`backend/compute_vk_backend.hpp` **908**；主仓：`gui.py` **2042**、`rl_policy.hpp` **955**。**`src/text_train.cpp` 已不在榜**——P1-1 模块化后 1830 → **469** 行（循环/恢复/断点拆到 `cli/text_train_*.hpp`） | 逐文件 `(Get-Content $f).Count` |
 | ctest | **81 个注册**（`build/dev-tests`，2026-11-08 实测）= 68 个测试目标（`list(APPEND NN_TEST_TARGETS` 计数）+ 13 个变体（`cnn_test_gpu`、`cnn_test_f16`、`cnn_test_f16_gpu`、`rapt_test_f16`、`rapt_test_f16_gpu`、`batchnorm_test_gpu`、`t1_58_test_gpu`、`bitnet_struct_test_gpu`、`write_epoch_test_gpu`、`ternary_gemm_test_gpu`、`int8_act_test_gpu`、`adam_quant_test_gpu`、`adam_int8_test_gpu`）；其中 11 条 `--gpu` 变体在无 Vulkan 构建下返回 **77=SKIP**（注册数不变） | `ctest --test-dir build/dev-tests -N` |
 | 引擎接口 | **59 个 virtual 方法**、Layer/Loss/Optimizer 直调 **38 个**；`L2-VIOLATIONS: 0`；宿主桥 40 处（仅披露，2026-11-08 实测） | `pwsh -File bench/doc_inventory.ps1` |
-| 版本 | release 最新 tag **`v1.16.0`**；`CMakeLists.txt` 的 `project(... VERSION 1.14.1)`（口径仍为 **git tag 是版本权威**；版本号·分支·发布治理见 `33`）；`release-notes/` 覆盖 **v1.5.0 → v1.14.0**（含 `v1.10.0-rc0` / `rc0.1` 两个预发布候选；`v1.15.0-rc0` / `v1.16.0` 尚无 note；历史补写记录见 release-note 索引） | `git tag --list 'v1.*' \| sort -V \| tail` + 读 `CMakeLists.txt` + `ls docs/release-notes/` |
+| 版本 | release 最新 tag **`v1.17.0`**；`CMakeLists.txt` 的 `project(... VERSION 1.17.0)`（口径仍为 **git tag 是版本权威**；版本号·分支·发布治理见 `33`）；`release-notes/` 覆盖 **v1.5.0 → v1.17.0**（含 `v1.10.0-rc0` / `rc0.1` / `v1.15.0-rc0` 三个预发布候选；补写记录见 release-note 索引） | `git tag --list 'v1.*' \| sort -V \| tail` + 读 `CMakeLists.txt` + `ls docs/release-notes/` |
 | CI | `.github/workflows/cmake-single-platform.yml`：clang++ / Ninja / Release / `NN_ENABLE_NATIVE=OFF`，Linux + Windows，`submodules: recursive` 拉取 engine 子模块；**开 `NN_ENABLE_TESTS` 并跑 ctest**（v3 起设备域检查默认生效，无需第二轮调试开关门禁）。另有 `engine-tests` job（子模块 CPU-only 构建 + ctest）与 `consistency` job（`check_env_vars.py` / `doc_audit.py`）；构建只支持 GNU 驱动 Clang（模块无条件，原 `msvc-debug` job 已下线，见 `docs/history/history.md`） | 读该 workflow |
 
 > 口径说明：表中行数均为**总行数**（实测刷新）。
