@@ -354,6 +354,10 @@ public:
 // 输入必须为该架构的代表性形状（MLP: (input_dim, batch)；GPT: (d_model, batch*seq)；
 // CNN: (C, H*W×batch)…——调用方按自己模型构造）。forward 走引擎已有绑定
 // （Layer::init(engine)），此函数只负责触发一次求值并落缓存。
+// 失败可回滚（#M7）：forward 的批作用域由 InferenceScope 无论成败收口，引擎
+// 回到非 batch 态；JIT 生成器加载失败也不固化"已尝试"标记
+// （compute_gpu_engine.hpp ensure_generator_）——修正 NN_KERNELGEN_PATH 等
+// 环境后可对同一模型再次 warmup。
 [[nodiscard]] inline Result<void> model_warmup(Model& model, const Tensor& input)
 {
     auto out = model.forward(input);
