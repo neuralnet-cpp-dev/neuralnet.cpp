@@ -5,7 +5,8 @@
 //       引擎句柄，end() 仍然安全（原实现持裸引用 = 析构 UAF）
 //   [2] ActivationOffloader 状态机：未 import 的导出不能被下一次 export 静默
 //       覆盖；discard() 是 forward 入口的作废通道
-//   [3] offload 精度门：slab 恒 f32，非 F32 激活导出必须 fail-fast
+//   [3] offload 精度协议：f32/f16 激活按自身精度存储并可原样导回（#P8）；
+//       bf16/f64/t1_58 仍 fail-fast
 //   [4] optimizer 先于 Model 析构（契约要求的顺序）下 step 正常
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -113,19 +114,37 @@ void test_offload_rejects_cpu_engine()
     CHECK(a.valid(), "失败路径不得改动激活张量");
 }
 
-void test_offload_rejects_non_f32()
+void test_offload_f16_roundtrip()
 {
-    auto engine = nn::create_cpu_engine();
-    nn::Tensor h = engine->create_tensor(2, 2, nn::Precision::F16);
-    CHECK(h.valid() && h.precision() == nn::Precision::F16, "创建 F16 激活张量");
+#ifdef NN_GPU_ENGINE
+    auto engine = nn::create_gpu_engine("");
+    if (!engine)
+    {
+        std::printf("[SKIP] offload f16 协议：本机无可用 Vulkan 设备\n");
+        return;
+    }
+    // #P8：slab 按激活自身精度存储 —— f32 4 B/元素、f16 2 B/元素，混排可用。
+    nn::Tensor a = engine->create_tensor(2, 3, nn::Precision::F32);
+    nn::Tensor h = engine->create_tensor(4, 1, nn::Precision::F16);
+    CHECK(a.valid() && h.valid(), "创建 f32/f16 激活张量");
 
     nn::ActivationOffloader off;
     off.set_enabled(true);
-    auto r = off.export_activations(*engine, {h});
-    CHECK(!r, "非 F32 激活导出必须 fail-fast");
-    if (!r) CHECK(r.error().message.find("f16") != std::string::npos, "错误信息带出实际精度");
-    CHECK(!off.offloaded(), "失败后状态保持 Idle");
-    CHECK(h.valid(), "失败路径不得改动激活张量");
+    auto r = off.export_activations(*engine, {a, h});
+    CHECK(r, "f32/f16 混合激活 export 成功");
+    CHECK(!a.valid() && !h.valid(), "export 后成员张量置空");
+    // 2*3 个 f32 = 24 B；4*1 个 f16 = 8 B（8 B 对齐后共 32 B）
+    CHECK(off.slab_bytes() >= 32, "slab 容量按各自精度记账");
+
+    auto im = off.import_activations(*engine);
+    CHECK(im, "import 成功");
+    CHECK(a.valid() && a.precision() == nn::Precision::F32 && a.rows() == 2 && a.cols() == 3,
+          "f32 激活形状/精度原样恢复");
+    CHECK(h.valid() && h.precision() == nn::Precision::F16 && h.rows() == 4 && h.cols() == 1,
+          "f16 激活形状/精度原样恢复（不再被抬成 f32）");
+#else
+    std::printf("[SKIP] offload f16 协议：构建未启用 Vulkan\n");
+#endif
 }
 
 void test_optimizer_before_model_order()
@@ -156,7 +175,7 @@ int main()
     test_expr_segment_holds_engine();
     test_offload_state_machine();
     test_offload_rejects_cpu_engine();
-    test_offload_rejects_non_f32();
+    test_offload_f16_roundtrip();
     test_optimizer_before_model_order();
 
     if (g_fail == 0) std::printf("lifetime_contract_test: ALL PASS\n");

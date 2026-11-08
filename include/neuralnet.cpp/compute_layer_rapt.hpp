@@ -74,6 +74,11 @@ private:
     std::size_t ones_BH_ = 0;
     std::size_t ones_seq_ = 0;
 
+    // #P7：decode 分母 q'·z 的设备侧「每头标量展开」索引（(H*dk, 1) F32，
+    // idx[h*dk+j] = h）。由 construct 期形状决定，init 期建一次；decode 热路径
+    // 用它把 (H,1) 的分母 gather 成 (H*dk,1)，不产生任何 PCIe 往返。
+    Tensor den_idx_;
+
     // RMSNorm 缓存（RLA-2：投影后 RMSNorm → RoPE → ReLU）
     Tensor Q_normed_cache_;   // (BH*dk, seq) — RMSNorm(Q) before RoPE
     Tensor K_normed_cache_;   // (BH*dk, seq) — RMSNorm(K) before RoPE
@@ -268,6 +273,17 @@ public:
         NN_TRY(r2, w_k_.init(engine));
         NN_TRY(r3, w_v_.init(engine));
         NN_TRY(r4, w_o_.init(engine));
+        // #P7：分母展开索引（一次上传，decode 热路径零宿主桥）
+        {
+            const std::size_t rows = num_heads_ * d_k_;
+            std::vector<Scalar> idx(rows);
+            for (std::size_t h = 0; h < num_heads_; ++h)
+                for (std::size_t j = 0; j < d_k_; ++j)
+                    idx[h * d_k_ + j] = static_cast<Scalar>(h);
+            auto t = detail::upload_span(engine, rows, 1, Precision::F32, std::span(idx));
+            NN_TRY_CHECK(t);
+            den_idx_ = std::move(*t);
+        }
         // pos_ 不在此 init（注入的是模型级对象，由模型自己 init；RoPE 无需 init）
         return {};
     }
@@ -806,23 +822,34 @@ public:
                                   B_state.rows(), Qp->cols(), p_.compute);
         NN_TRY_CHECK(num_r);
 
-        // den = q'·z：逐头标量点积（通过宿主桥在 CPU 上计算，17 §3 D11；
-        // ε 由下面的除法表达式统一添加，与 forward 的写法保持同构）
-        // forward_step 是逐 token 串行的，CPU round-trip 可接受。
-        NN_TRY(q_v, detail::download_vector(engine, *Qp));
-        NN_TRY(z_v, detail::download_vector(engine, z_state));
-        // 广播到 (H*dk, 1)：每头标量重复 dk 次
-        std::vector<Scalar> den_full(H * dk);
-        for (std::size_t h = 0; h < H; ++h)
+        // den = q'·z：设备侧逐头点积（#P7）。
+        // 旧写法经宿主桥（两次 download ⇒ wait_in_flight 抽干整条流水线 + 一次
+        // upload，每 token 每层一次）。新写法三步全在设备内：
+        //   prod   = q' ⊙ z                       (H*dk, 1) F32
+        //   den_h  = grouped_reduce_sum(prod)     (H, 1)    F32（R=dk 逐头求和）
+        //   den    = gather_rows(den_h, den_idx_) (H*dk, 1) 每头标量重复 dk 次
+        // 精度：旧路以 Scalar(f32) 读取（f16 升位是精确的）后才相乘，故这里先把
+        // 非 f32 的 q'/z **精确升**到 f32，乘积与求和都在 f32 完成。
+        // ε 仍由下面的除法表达式统一添加，与 forward 的写法保持同构。
+        Tensor q32, z32;
+        const Tensor* qsrc = &*Qp;
+        const Tensor* zsrc = &z_state;
+        if (Qp->precision() != Precision::F32)
         {
-            Scalar dot = 0;
-            for (std::size_t j = 0; j < dk; ++j)
-                dot += (*q_v)[h * dk + j] * (*z_v)[h * dk + j];
-            for (std::size_t j = 0; j < dk; ++j)
-                den_full[h * dk + j] = dot;
+            NN_TRY(qc, engine.cast(*Qp, Precision::F32));
+            q32 = std::move(*qc);
+            qsrc = &q32;
         }
-        auto den_t = detail::upload_span(engine, H * dk, 1, Precision::F32, std::span(den_full));
-        NN_TRY_CHECK(den_t);
+        if (z_state.precision() != Precision::F32)
+        {
+            NN_TRY(zc, engine.cast(z_state, Precision::F32));
+            z32 = std::move(*zc);
+            zsrc = &z32;
+        }
+        NN_TRY(prod_r, dsl::compute(engine, dsl::leaf(*qsrc) * dsl::leaf(*zsrc), H * dk, 1,
+                                    Precision::F32));
+        NN_TRY(den_h, engine.grouped_reduce_sum(*prod_r, H, dk, Precision::F32));
+        NN_TRY(den_t, engine.gather_rows(*den_h, den_idx_));
 
         // out = num / (den + ε)：与 forward 的除法（:491）**逐 token 同构**
         // （同结构 key；AOT 收集已删，P3——GPU 走 JIT 现编同源 GLSL）。

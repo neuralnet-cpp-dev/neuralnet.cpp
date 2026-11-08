@@ -824,7 +824,8 @@ private:
     Tensor slab_;                                   // 持久 host-visible 缓冲（跨 step 复用）
     std::vector<TensorRef> refs_;                   // 各激活成员引用（地址稳定）
     std::vector<std::pair<std::size_t, std::size_t>> shapes_;  // 各激活形状
-    std::vector<std::size_t> offsets_;              // 各激活在 slab 中的 float 偏移
+    std::vector<std::size_t> offsets_;              // 各激活在 slab 中的**字节**偏移
+    std::vector<Precision> precisions_;             // 各激活的存储精度（f32/f16，#P8）
 
 public:
     void set_enabled(bool enabled) noexcept
@@ -878,18 +879,25 @@ public:
         // slab → 缓冲区破坏/设备丢失。因此每次导出都按当前总量校验，
         // 不足则重建。
         std::size_t needed = 0;
+        offsets_.clear();
+        precisions_.clear();
         for (auto& ref : refs_)
         {
-            // 精度协议：slab 恒按 f32 记账/存储（offload_save 把 f16 抬成 f32，
-            // restore 出来是 f32 张量），restore 后成员激活的精度与 forward 时
-            // 不一致——该组合无测试、无精度协议，静默漂移不可接受，一律
-            // fail-fast（CLI 侧另有更早的配置期拒绝）。
-            if (ref.get().precision() != Precision::F32)
-                NN_FAIL("ActivationOffloader::export_activations: 仅支持 F32 激活（当前 " +
-                        std::string(precision_name(ref.get().precision())) +
-                        "）；offload slab 恒 f32，混合精度/三值精度请改用"
-                        " --checkpoint-every");
-            needed += ref.get().size();
+            // 精度协议（#P8）：slab 按激活**自身精度**存储（f32 = 4 B/元素、
+            // f16 = 2 B/元素），restore 用记录的精度重建张量 → 成员激活精度
+            // 与 forward 时一致，不再出现"f16 存成 f32、import 后变 f32"的漂移。
+            // 更宽的精度（bf16/f64/t1_58）Phase 1 既不建 Tensor 也不进 slab。
+            const Precision pr = ref.get().precision();
+            if (pr != Precision::F32 && pr != Precision::F16)
+                NN_FAIL("ActivationOffloader::export_activations: 仅支持 f32/f16 激活（当前 " +
+                        std::string(precision_name(pr)) +
+                        "）；bf16/f64/t1_58 请改用 --checkpoint-every");
+            // 每个条目按 8 B 对齐：VkBufferCopy 的 offset 需 4 B 对齐，且 f16 的
+            // 元素体积是 2 B（混排后奇数字节偏移会破坏对齐）。
+            needed = (needed + 7u) & ~std::size_t{7};
+            offsets_.push_back(needed);
+            precisions_.push_back(pr);
+            needed += ref.get().size() * ((pr == Precision::F16) ? 2u : 4u);
         }
         if (needed == 0)
         {
@@ -903,18 +911,16 @@ public:
             NN_FAIL("ActivationOffloader::export_activations: activation offload 仅支持"
                     " GPU 引擎（CPU 引擎的 offload 原语是 no-op，开启会破坏 backward；"
                     "请改用 --checkpoint-every）");
-        if (!slab_.valid() || slab_.size() < needed)
+        if (!slab_.valid() || slab_bytes() < needed)
         {
             NN_TRY(slab, engine.create_offload_buffer(needed));
             slab_ = std::move(*slab);
         }
-        std::size_t offset = 0;
-        for (auto& ref : refs_)
+        for (std::size_t i = 0; i < refs_.size(); ++i)
         {
-            NN_TRY(r, engine.offload_save(slab_, offset, ref.get()));
+            auto& ref = refs_[i];
+            NN_TRY(r, engine.offload_save(slab_, offsets_[i], ref.get()));
             shapes_.push_back({ref.get().rows(), ref.get().cols()});
-            offsets_.push_back(offset);
-            offset += ref.get().size();
             ref.get() = Tensor{};   // 释放 GPU 版（数据已在 host slab）
         }
         offloaded_ = true;
@@ -927,8 +933,8 @@ public:
         if (!offloaded_) return {};
         for (std::size_t i = 0; i < offsets_.size(); ++i)
         {
-            auto t =
-                engine.offload_restore(slab_, offsets_[i], shapes_[i].first, shapes_[i].second);
+            auto t = engine.offload_restore(slab_, offsets_[i], shapes_[i].first, shapes_[i].second,
+                                            precisions_[i]);
             NN_TRY_CHECK(t);
             refs_[i].get() = std::move(*t);
         }

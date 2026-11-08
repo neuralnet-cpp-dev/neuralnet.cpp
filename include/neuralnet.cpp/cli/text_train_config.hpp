@@ -150,7 +150,7 @@ inline void print_text_train_usage(const char* prog)  // inline：同 parse_text
     help.opt("--activation-offload",
              "把每块激活搬 host-visible，backward 拷回\n不重算，FLOPs 保持 1.0×，代价是 PCIe "
              "传输；可与\n--checkpoint-every 混合使用：checkpoint 块重算、其余块 offload；仅 GPU "
-             "有效；\n与 --f16 / --t1_58 / 四槽精度参数不兼容（slab 恒 f32，配置期拒绝）");
+             "有效；\n与 --t1_58 / bf16 / f64 精度不兼容（slab 只存 f32/f16，f16 激活按 2B 存）");
     help.note("GPU 训练每 step 末尾自动归还完全空闲的内存池底材 (L2 整块释放)。");
 
     help.section("Batch 录制粒度");
@@ -284,11 +284,12 @@ inline constexpr std::string_view kForbiddenResumeFlags[] = {
     return s;
 }
 
-// ── 精度 × activation offload 组合校验（D4，2026-10-20）────────────────
-// offload slab 恒按 f32 记账/存储：f16 激活经 offload_save 抬成 f32，
-// offload_restore 出来也是 f32 ⇒ backward 拿到的缓存精度与 forward 时不一致。
-// 该组合无测试/无精度协议，配置期显式拒绝（库内 ActivationOffloader 另有
-// 同口径 fail-fast，覆盖非 CLI 调用方）。需要省显存请用 --checkpoint-every。
+// ── 精度 × activation offload 组合校验（D4，2026-10-20；#P8 放宽到 f16）──
+// slab 现在按激活**自身精度**存储（f32 = 4 B/元素、f16 = 2 B/元素），restore 用
+// 同一精度重建张量 ⇒ f16 激活 export/import 后精度不再漂移，故 f16 组合放行
+// （宿主内存与 PCIe 流量各减半）。仍拒绝三值（t1_58）与 bf16/f64：Phase 1 不建
+// 这些精度的 Tensor。库内 ActivationOffloader 另有同口径 fail-fast，覆盖非 CLI
+// 调用方。需要省显存也可用 --checkpoint-every。
 //
 // **必须在两处校验**：① argparse 结束；② `--resume` 的 adopt_resume_state 之后
 // （adopt 会用断点状态段覆盖 cfg.precision，只看解析后的默认值会被绕开 ⇒ 变成
@@ -299,13 +300,14 @@ inline constexpr std::string_view kForbiddenResumeFlags[] = {
 precision_offload_combo_error(const TrainConfig& cfg)
 {
     if (!cfg.activation_offload || !cfg.gpu_enabled) return std::nullopt;
-    if (cfg.precision.param == nn::Precision::F32 && cfg.precision.compute == nn::Precision::F32 &&
-        cfg.precision.stable == nn::Precision::F32 && cfg.precision.optimizer == nn::Precision::F32)
+    const auto storable = [](nn::Precision p)
+    { return p == nn::Precision::F16 || p == nn::Precision::F32; };
+    if (storable(cfg.precision.param) && storable(cfg.precision.compute) &&
+        storable(cfg.precision.stable) && storable(cfg.precision.optimizer))
         return std::nullopt;
-    return std::string("--activation-offload 与混合精度/三值精度不兼容（--f16 / --t1_58 /"
-                       " 四槽精度参数）：\n"
-                       "  offload slab 恒 f32，f16 激活 restore 后会变成 f32（精度语义漂移）。\n"
-                       "  请改用 --checkpoint-every，或去掉 --activation-offload。\n");
+    return std::string("--activation-offload 仅支持 f16/f32 精度组合（offload slab 只存这两种）：\n"
+                       "  三值（--t1_58）与 bf16/f64 激活无法进 slab。\n"
+                       "  请改用 --checkpoint-every，或把精度改回 f16/f32。\n");
 }
 
 inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：模块化后消费方无文本包含，需可由 BMI 发射定义（P5）
