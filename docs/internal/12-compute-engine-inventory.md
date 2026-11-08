@@ -19,7 +19,7 @@
 > 历史演进与收敛记录（计算类原语全量迁 DSL、算子收敛与遗留物
 > 清理、接口数字 58→49 / 直调 35→23 的过程）已移入 `docs/history/history.md`；**M4
 > 后直调 23→21**：`from_matrix`/`to_matrix` 退出 L2（铁律 #12 / 17 §3 D11，层自算辅助
-> 数据改走 `detail::upload_span/download_span`，它们是自由函数、不计入 `engine.<op>(` 口径）。
+> 数据改走 `nn::upload_span/download_span`，它们是自由函数、不计入 `engine.<op>(` 口径）。
 > **IR-C（移除后已恢复）**：`begin_expr/end_expr` + `expr_graph.hpp` 现行，
 > P1/P2 已落地，`Adam::step`/`AdamW::step` 直调 `begin_expr`（直调 21→22）。移除期记录见
 > `docs/history/history.md`，定位修正与取舍见 `03-ir-optimization.md` §5.3。
@@ -92,7 +92,7 @@ scan_suffix_outer/outer_col——顺序状态机，DSL 无此语义）、`eval_e
 `unpack_i8`/`quantized_adamw_step`/`scale_inplace`/`col_reduce_max`——`BitLinear` 与
 int8/AdamW 量化路径的 op-level 原语，不进 DSL 注册表，见 `docs/internal/21` §4.12）。
 **`from_matrix`/`to_matrix` 自 M4 起退出本列**（铁律 #12：L2+ 禁用 Matrix 型 I/O
-动词），层自算辅助数据改走 `detail::upload_span/download_span/download_vector`
+动词），层自算辅助数据改走 `nn::upload_span/download_span/download_vector`
 （自由函数，不进 `engine.<op>(` 统计）。）
 
 **改写 Layer 直调点 / 扩展 DSL 时的现行规则**：

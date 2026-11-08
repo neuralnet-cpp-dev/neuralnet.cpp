@@ -228,7 +228,7 @@ nn::ComputeEngine& engine() const;          // 取绑定引擎；未绑定 → N
 
 所以：
 - 造张量 → `engine.create_tensor` / `engine.from_matrix` / `dsl::compute` / `engine.clone` …
-- 读张量 → `engine.to_matrix` / `engine.read` / `engine.get_index` / `detail::download_span`
+- 读张量 → `engine.to_matrix` / `engine.read` / `engine.get_index` / `nn::download_span`
 - 写张量 → `engine.write` / `engine.copy_from` / `engine.set_index` / `engine.cast_into` / 引擎原语
 - 改形状 → `engine.reshape`（**不是** `t.reshape()`，那个也已私有）
 
@@ -1411,11 +1411,11 @@ namespace nn::detail {
 // Layer 内构造正弦位置编码
 std::vector<float> enc(seq * d_model);
 // ... 填充 enc ...
-auto pos = nn::detail::upload_span(engine, seq, d_model, p_.param, std::span(enc));
+auto pos = nn::upload_span(engine, seq, d_model, p_.param, std::span(enc));
 if (!pos) return std::unexpected(pos.error());
 
 // 读取一个统计量做诊断
-auto v = nn::detail::download_vector(engine, *t);
+auto v = nn::download_vector(engine, *t);
 if (!v) return std::unexpected(v.error());
 ```
 
@@ -1523,7 +1523,7 @@ public:
 | 状态扫描 | `scan_prefix_outer` / `scan_suffix_outer` / `outer_col` | RAPT 前向/反向 |
 | fold 登记 | `eval_expr`（配合 `make_fold_*`） | 注意力 forward 单 fold kernel |
 
-> **`from_matrix` / `to_matrix` / `copy_from` 不在上表**（铁律 #12 禁用）。层内辅助数据用 `detail::upload_span` / `download_span`（§16）。
+> **`from_matrix` / `to_matrix` / `copy_from` 不在上表**（铁律 #12 禁用）。层内辅助数据用 `nn::upload_span` / `download_span`（§16）。
 >
 > 当前实测分布：Layer 共 211 次引擎直调、21 个 distinct 动词。`rearrange_3d`(50) + `transpose`(33) + `slice_rows`(22) + `create_tensor`(41) 占了其中大部分。
 
@@ -1544,7 +1544,7 @@ public:
 |---|---|---|
 | 逐元素拆成多次 `dsl::compute` | N 个 kernel、N-1 个全尺寸中间量 | 写成一条表达式 |
 | 手工 `clone` 造临时张量再 `add_inplace` | 多余分配 + 多余 dispatch | `compute_into` 原地 |
-| 在 Layer 里出现 `Matrix` / `to_matrix` | 违反铁律 #12；GPU 上引入 PCIe 往返 | `detail::upload_span` / `download_span` |
+| 在 Layer 里出现 `Matrix` / `to_matrix` | 违反铁律 #12；GPU 上引入 PCIe 往返 | `nn::upload_span` / `download_span` |
 | 手写 `cast` 适配 f16 | 全尺寸临时量，且与边界 cast 层重复 | 传对 `P` |
 | 循环 per-head / per-channel 调 dispatch | dispatch 次数随通道数线性增长 | `batched_matmul` / `grouped_reduce_*` |
 | 运行时标量写成 `ConstLeaf` | 值进 key → GPU 注册表查不到 shader | `dsl::rparam` |
@@ -1618,7 +1618,7 @@ public:
 | `submit_scalar_readback` / `poll_scalar_readback` / `scalar_readback_slots` | 异步标量回读 |
 | `supports_native_data_move` / `supports_native_f16_reduce` / `supports_expr_precision_variant` | 精度原生路径能力查询 |
 | `temp_stats()` / `dump_temp_stats()` / `reset_temp_stats()` | 边界 cast 临时量归因（需**探针构建** + `NN_PREC_TRACE=1`） |
-| `nn::detail::upload_span` / `download_span` / `download_vector` | L2 宿主桥 |
+| `nn::upload_span` / `download_span` / `download_vector` | L2 宿主桥 |
 
 ---
 
@@ -1696,7 +1696,7 @@ if (nn::dsl::env_flag("NN_PREC_TRACE"))
 | `dsl::row_reduce_min` / `col_reduce_min` | 不存在 |
 | `nn::Tensor` 的 `cpu_matrix()` / `from_matrix()` / `cpu()` / `reshape()` | **已私有**（铁律 #11）；经引擎访问 |
 | `Tensor::reshape` | 已私有；公共入口是 `engine.reshape(t, rows, cols)` |
-| `from_matrix` / `to_matrix` / `copy_from` 在 Layer / Loss / Optimizer / Model 中 | **铁律 #12 禁用**；用 `detail::upload_span` / `download_span` / `engine.read` / `engine.write` |
+| `from_matrix` / `to_matrix` / `copy_from` 在 Layer / Loss / Optimizer / Model 中 | **铁律 #12 禁用**；用 `nn::upload_span` / `download_span` / `engine.read` / `engine.write` |
 | 用 `char*`/裸指针接管张量存储 | 铁律 #2：禁止 new/delete/裸指针所有权 |
 | 在 `//` 注释里写反斜杠 | **铁律 #10**：GCC 行拼接会吞掉下一行 |
 
