@@ -460,7 +460,16 @@ std::string shell_quote(const std::string& s)
 #ifdef _WIN32
     // cmd 会剥掉"整条命令以引号开头"时的首尾引号；无空格路径直接裸写。
     if (s.find_first_of(" \t") == std::string::npos) return s;
-#endif
+    // MSVC CRT 的 argv 规则里 `\"` 是转义引号：引号内结尾的反斜杠必须翻倍，
+    // 否则 `"a \"` 会让引号保持打开，后续 `--turn` 被并进同一参数、命令行
+    // 里多出位置参数 → CLI 误报"--turn 与 --prompt 互斥"
+    // （实测助手回复以反斜杠结尾时三轮用例失败）。
+    std::string out = "\"";
+    out += s;
+    for (std::size_t i = s.size(); i > 0 && s[i - 1] == '\\'; --i) out += '\\';
+    out += "\"";
+    return out;
+#else
     std::string out = "\"";
     for (const char c : s)
     {
@@ -469,8 +478,8 @@ std::string shell_quote(const std::string& s)
     }
     out += "\"";
     return out;
+#endif
 }
-
 // 造一个可推理的 tiny GPT（词表 = 训练出的小 BPE）+ 词表文件；
 // 返回 false = 环境不具备（建模型失败等），调用方据此跳过。
 bool make_cli_fixture(const std::filesystem::path& dir, CliFixture& fx)
