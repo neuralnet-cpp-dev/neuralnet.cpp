@@ -146,7 +146,11 @@ public:
         }
         b_ = engine.create_tensor(out_features_, 1, Precision::F32, InitSpec::zero());
         if (!b_.valid()) NN_FAIL("BitLinear: 偏置初始化失败");
-        // 梯度缓冲**不在此分配**（F2）：惰性 + 只训练时分配，见 ensure_grad_()。
+        // L4：训练态（有 latent）在 init 期就把梯度缓冲分进**持久池**，与
+        // latent/bias 同池；留到 backward 的 batch 内首次触发会落进瞬态池，
+        // 却全程存活，把池底钉块。部署态（packed_only_）不分配，等
+        // import_param 恢复可训练时补建（见 ensure_grad_）。
+        if (!packed_only_) ensure_grad_();
         // 量化缓冲：**打包容器**（2 bit/权重，F3）是默认也是唯一形态 ——
         // 能力判断不下沉到层（引擎不支持时由 matmul_q/trit_pack 自行 fail-fast）。
         // ensure_quant_buffer_ 对 packed_only_ 早退（部署态缓冲由 import 提供）。
@@ -274,6 +278,7 @@ public:
                 packed_only_ = false;
                 use_packed_ = true;
                 ensure_quant_buffer_();
+                ensure_grad_();   // L4：恢复可训练时补建梯度缓冲（载入期，持久池）
             }
             quant_valid_ = false;
             NN_TRY_CHECK(import_into_(latent_w_, entry));
@@ -475,7 +480,7 @@ public:
         if (packed_only_)
             NN_FAIL("BitLinear(packed-only)：部署态只读（没有 latent 可更新）—— "
                     "本文件是推理部署文件，请用训练文件恢复训练");
-        ensure_grad_();   // 训练路径：首次反向才建梯度缓冲（F2）
+        ensure_grad_();   // L4：init 已预分配；此处仅兜底（正常训练不会触发分配）
         if (!tau_.valid() || !input_cache_.valid())
             NN_FAIL("bitlinear backward: 必须先 forward（τ/输入缓存未建立）");
         if (act_quant_ && !act_scale_.valid())
@@ -577,12 +582,14 @@ private:
         }
     }
 
-    // ── 梯度缓冲：惰性分配（F2）────────────────────────────────────────────
+    // ── 梯度缓冲：init 期预分配（L4），惰性分支仅兜底载入路径 ──────────────
     // 三值层的梯度**恒 f32**（STE 落点 + 优化器状态，见 §4.3.2），即 4 B/权重
     // —— 在推理足迹（latent 4 + wq 2 + grad 4 = 10 B/权重）里占 40%；2B 参数
     // 规模下是 8 GB 级死显存。梯度的唯一消费者是 `param_gradients()`（优化器
     // 构造/诊断）与 `backward()`，都在训练路径上；TensorRef 是成员引用，故
     // "先给引用、后建存储"对优化器透明。
+    // L4：训练态在 init_impl 就调用本函数（持久池）；这里保留的惰性分支只
+    // 兜底"init 时无 latent、之后才恢复可训练"的载入路径与参数视图调用。
     void ensure_grad_()
     {
         if (grad_w_.valid()) return;
