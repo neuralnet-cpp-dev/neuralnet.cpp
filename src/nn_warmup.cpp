@@ -24,6 +24,8 @@
 #include <string>
 #include <vector>
 
+#include <neuralnet.cpp/core_env.hpp>   // RV-09：环境变量读取唯一入口
+
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -61,9 +63,9 @@ std::string exe_dir(const char* argv0)
 
 bool env_cache_configured()
 {
-    const char* p = std::getenv("NN_KERNEL_CACHE_PATH");
-    const char* d = std::getenv("NN_KERNEL_CACHE_DIR");
-    return (p != nullptr && p[0] != '\0') || (d != nullptr && d[0] != '\0');
+    // 行为开关（RV-09：读取收敛到 core_env.hpp）。
+    return !::nn::detail::env_string_raw("NN_KERNEL_CACHE_PATH").empty() ||
+           !::nn::detail::env_string_raw("NN_KERNEL_CACHE_DIR").empty();
 }
 }  // namespace
 

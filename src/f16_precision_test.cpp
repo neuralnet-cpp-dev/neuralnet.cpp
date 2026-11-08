@@ -18,6 +18,7 @@
 
 #define NN_TEST_COUNTER g_failures
 #include "test_common.hpp"
+#include <neuralnet.cpp/core_env.hpp>   // RV-09：环境变量读取唯一入口
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -57,21 +58,6 @@ int g_failures = 0;
     } while (0)
 
 const char* g_label = "?";
-
-// 环境变量开关（MSVC 下 getenv 被标 deprecated/-Werror → 走 _dupenv_s）
-bool env_flag(const char* name)
-{
-#ifdef _MSC_VER
-    char* buf = nullptr;
-    std::size_t len = 0;
-    const bool on = (_dupenv_s(&buf, &len, name) == 0 && buf != nullptr && buf[0] != '\0');
-    std::free(buf);
-    return on;
-#else
-    const char* v = std::getenv(name);
-    return v != nullptr && v[0] != '\0';
-#endif
-}
 
 nn::Matrix make_rand(std::size_t rows, std::size_t cols, unsigned seed, float lo = -1.0f,
                      float hi = 1.0f)
@@ -659,7 +645,7 @@ void test_f16_model_e2e(nn::ComputeEngine& raw, nn::ComputeEngine& eng)
 
     // profile_f16：param + compute f16（CLI --f16 语义）
     // NN_F16_DEBUG=1 → 逐 step loss + 逐阶段非有限值扫描（定位 CPU f16 发散用）
-    const bool dbg = env_flag("NN_F16_DEBUG");
+    const bool dbg = ::nn::detail::env_flag_raw("NN_F16_DEBUG");
     const auto r16 = train_tiny_gpt(eng, nn::profile_f16(), STEPS, LR, dbg);
     CHECK(r16.ok, "profile_f16 训练完成");
     if (!r16.ok) return;
@@ -898,7 +884,7 @@ int main()
         nn::ComputeEngine& cpu = *cpu_owner;
         nn::ComputeEngine& adapter = cpu; // P-1：原 PrecisionEngine 已下沉
         run_suite("cpu", cpu, adapter, /*allow_arbitrary_expr=*/true);
-        if (env_flag("NN_F16_DEBUG"))
+        if (::nn::detail::env_flag_raw("NN_F16_DEBUG"))
         {
             std::printf("── NN_F16_DEBUG: CPU profile 组合矩阵（逐阶段扫描）──\n");
             run_profile_matrix(adapter, /*verbose=*/true);

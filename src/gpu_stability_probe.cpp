@@ -27,6 +27,7 @@
 // ────────────────────────────────────────────────────────────────────────
 
 #include <nn_error_macros.hpp>
+#include <neuralnet.cpp/core_env.hpp>   // RV-09：环境变量读取唯一入口
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
@@ -467,21 +468,10 @@ int main(int argc, char** argv)
     }
     if (gpu)
     {
-        // MSVC CRT 弃用 getenv（-Werror）：按平台用 _dupenv_s / getenv。
-        const char* env = nullptr;
-#if defined(_MSC_VER)
-        char* buf = nullptr;
-        std::size_t len = 0;
-        _dupenv_s(&buf, &len, "NN_VULKAN_DEVICE");
-        env = buf;
-#else
-        env = std::getenv("NN_VULKAN_DEVICE");
-#endif
+        // 行为开关（RV-09：读取收敛到 core_env.hpp）。
+        const std::string env = ::nn::detail::env_string_raw("NN_VULKAN_DEVICE");
         std::printf("CONFIG device=%s (NN_VULKAN_DEVICE=%s) steps=%zu\n", device_desc.c_str(),
-                    env ? env : "<unset>", steps);
-#if defined(_MSC_VER)
-        std::free(buf);
-#endif
+                    env.empty() ? "<unset>" : env.c_str(), steps);
     }
     else
     {

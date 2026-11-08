@@ -1639,6 +1639,7 @@ public:
 | `NN_F16_DEBUG=1`（**需探针构建**） | f16 中间量数值扫描（`nn_dbg_scan`）、`accumulate` 巨值打印、`compute_into` 预绑定失败原因 |
 | `NN_MEM_STATS=1`（**需探针构建**） | 训练中内存采样（配合 `pool_stats()`） |
 | `NN_VULKAN_DEVICE` | 强制指定 Vulkan 计算设备（索引 `"2"` 或名称子串 `"NVIDIA"`）。优先级：显式 API > 本变量 > 自动打分 |
+| `NN_NO_EARLY_REAP=1` | 析构/帧末**不**提前把张量内存还池（内存 A/B 对照用；脚本 `bench/run_mem_ab.ps1`）。初始化期读一次，任何构建都有效 |
 
 **临时量归因**：
 

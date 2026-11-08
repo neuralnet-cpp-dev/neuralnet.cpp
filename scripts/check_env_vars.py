@@ -44,6 +44,11 @@ MACRO_OR_CMAKE = {
     'NN_LIB_BINARY_DIR', 'NN_APP_TARGETS', 'NN_TEST_TARGETS',
     'NN_SPV_FN_', 'NN_SPV_FN_MISSING', 'NN_SPV_GETTER', 'NN_SPV_GETTER_LIST',
     'NN_X_SPV_EMBEDDED', 'NN_POOL_', 'NN_VULKAN_', 'NN_PROBE_FOLD_',
+    # CMake 变量 / configure 选项（文档中出现但不是环境变量）
+    'NN_ABST_INC', 'NN_ALL_MODULES', 'NN_COMMON_COMPILE_OPTIONS',
+    'NN_EXECUTABLE_TARGETS', 'NN_MODULES_ENABLED', 'NN_PCH_CANDIDATES',
+    'NN_PCH_COMPAT_OPTIONS', 'NN_SCAN_JOBS', 'NN_SCAN_NO_ANCHOR',
+    'NN_DETAIL_', 'NN_TEST_COUNTER',
 }
 
 # 历史文档（归档性质，不参与"死变量"判定——它们记载的变量可能已被正当删除）
@@ -68,7 +73,7 @@ def code_env_vars():
             continue
         for root, _dirs, files in os.walk(base):
             for fn in files:
-                if not (fn.endswith('.hpp') or fn.endswith('.cpp')):
+                if not fn.endswith(('.hpp', '.cpp', '.inc')):
                     continue
                 with open(os.path.join(root, fn), encoding='utf-8', errors='replace') as f:
                     text = f.read()
@@ -104,9 +109,17 @@ def doc_env_vars():
     return {v for v in found if v not in PLATFORM_VARS}
 
 
-# 已知死变量（文档中的 token 是历史 A/B 记录、已标注删除，不算 FAIL）
+# 已知死变量（文档中的 token 是历史 A/B 记录、已标注删除，或由独立仓读取，不算 FAIL）
 KNOWN_DEAD = {
     'NN_MM_NO_KSPLIT', 'NN_POOL_BLOCK_MB', 'NN_POOL_LADDER_MAX_MB',
+    # 36 号台账留证：C1/C2 已消灭，全仓 grep 清零（台账本身保留历史记录）
+    'NN_NO_GRAPH', 'NN_IRC_NO_PLAN_CACHE',
+    # 已删除的 drain 静态缓存逃生阀（仅历史记载）
+    'NN_COPY_FROM_DRAIN',
+    # scan_exprs 收集链已删除/迁出主仓（docs 记载的是历史诊断手段）
+    'NN_SCAN_DUMP_SOURCES',
+    # kernelgen 独立仓（libnn-kernelgen）读取，主仓 CODE_DIRS 覆盖不到
+    'NN_SCAN_NO_DISPATCH',
 }
 
 
