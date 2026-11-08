@@ -224,7 +224,7 @@ load_state`（含 Adam 的 `t`）；读写 API = `CheckpointState` / `peek_train
 | offload | `create_offload_buffer/offload_save/offload_restore`（activation offload） |
 
 > 引擎的 virtual 方法计数**以审计输出为准**：`bench/doc_inventory.ps1` 的 `virtual methods`
-> 行为 **57 declarations / 57 unique**（Layer 直调 38）。逐元素/广播等计算类原语一律经表达式
+> 行为 **59 declarations / 59 unique**（Layer 直调 38）。逐元素/广播等计算类原语一律经表达式
 > DSL 求值，不经 Layer 直调（`dsl::row_reduce_max` 是 DSL 叶子，不是引擎算子）。表达式键规则见 §7。
 
 ### 4.4 理解优先级（建议学习顺序）
@@ -423,7 +423,7 @@ auto report = NN_UNWRAP(session.train_step(
 | `internal/04-memory-optimization.md` | 显存优化：L1 激活重计算（梯度检查点）/ L2 内存池整块归还（均已实施）；L3 远期 |
 | `contributors/pitfalls.md` | **踩坑警示录，改代码前读** |
 | `contributors/cpp-standards.md` | C++ 编码规范全文 |
-| `internal/12-compute-engine-inventory.md` | **引擎接口盘点（复现：`bench/doc_inventory.ps1`）：57 个 virtual 方法、Layer 直调 38 个（基础设施/数据搬运/状态扫描/fold 执行/IR-C 录制段开合/三值打包/张量形变/精度落盘/RL 行带适配）、两套 CPU 求值机制（DSL 模板 + IR 解释器）；计数以脚本实测为准（快照数字随接口演进会漂移）；演进记录见 `docs/history/history.md`** |
+| `internal/12-compute-engine-inventory.md` | **引擎接口盘点（复现：`bench/doc_inventory.ps1`）：59 个 virtual 方法、Layer 直调 38 个（基础设施/数据搬运/状态扫描/fold 执行/IR-C 录制段开合/三值量化打包/张量形变/精度落盘/RL 行带适配）、两套 CPU 求值机制（DSL 模板 + IR 解释器）；计数以脚本实测为准（快照数字随接口演进会漂移）；演进记录见 `docs/history/history.md`** |
 | `internal/14-f16-stable-gpu-loss-frozen.md` | **故障报告（2026-09-26；2026-10-13 ✅ 已修/根因订正）：GPU `stable=f16` 训练 loss 打印冻结（权重不冻结）——真因 = CE 的 (1,1) loss 归约按 `stable=f16` 落盘溢出，非回读链；触发矩阵、测试覆盖缺口、证据与复现** |
 | `internal/17-unified-tensor-engine.md` | **统一 Tensor/ComputeEngine/MemoryPool 底层架构总纲（2026-09-30 裁定；M1-M6 全部已实施 2026-09-30，仅 M7 未立项）：访问不变量（Tensor 存储私有、一切经引擎，已立为铁律 #11）、InitSpec 声明式初始化、批量 read/write、Matrix 降级为宿主 I/O 载体（L2+ 禁用 = 铁律 #12）、内存池契约统一、`import` 跨设备拉取、Layer 删每调用 engine 形参（M6 段 C，Loss/DSL/辅助对象保留形参见 §8）；吸收原 15 未实施的 P2-P6（改期 M1-M7）。立项前先读本文件 + §5 分期 + §8** |
 | `internal/18-roadmap.md` | **未来方向路线图 + 未完成项裁定台账（2026-10-01，13 号清单的承接者）：RL 主线 ✅（2026-10-23）+ P0-P4 分期（P4 = 持续优化方向，2026-10-14 立项）、13 号逐条裁定（做/条件触发/不做）、触发式立项条件、非目标、门禁与验收口径。查"某件事该不该做、做到什么算完成、避免重复立项"时读本文；**执行排序不在本文**（见 `internal/27-execution-plan.md`）** |
