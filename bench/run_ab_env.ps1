@@ -10,9 +10,9 @@
 #       @{name='base';   env=@{}},
 #       @{name='ladder16'; env=@{NN_POOL_LADDER_MAX_MB='16'}},
 #       @{name='blk4';   env=@{NN_POOL_BLOCK_MB='4'}} )
-# ⚠ 默认 -Exe 指向 mem_probe.exe，它是**探针目标**：需先配置
-#   `cmake -B build -G Ninja -DNN_ENABLE_PROBES=ON`（默认构建不创建它，
-#   见 AGENTS §2 探针统一编译门）。
+# ⚠ mem_probe 已随引擎 .so 化迁往新仓库 `compute.neuralnet.cpp`（本仓不再创建该目标）。
+#   默认 -Exe 只在**新仓库**根目录下有效；在本仓使用时请显式 -Exe 指向新仓库的
+#   build\mem_probe.exe，并在那边配置 `-DNN_ENABLE_PROBES=ON`（见 AGENTS §2 探针编译门）。
 param(
     [int]$Rounds = 3,
     [string]$Exe = ".\build\mem_probe.exe",

@@ -1,8 +1,9 @@
 # run_mem_variants.ps1 — 顺序跑 mem_probe 各变体，用同一把尺子（nvidia-smi 200ms）采样峰值
 # 用法: .\bench\run_mem_variants.ps1
 # 说明：一次只跑一个 GPU 任务（顺序执行），避免并行导致计时/显存互相污染。
-# ⚠ mem_probe 是**探针目标**：需先 `cmake -B build -G Ninja -DNN_ENABLE_PROBES=ON`
-#   （默认构建不创建它，见 AGENTS §2 探针统一编译门）。
+# ⚠ mem_probe 已随引擎 .so 化迁往新仓库 `compute.neuralnet.cpp`（本仓不再创建该目标）。
+#   脚本里的相对路径只在**新仓库**根目录下有效；在本仓使用需先把 -Exe 改指到新仓库的
+#   build\mem_probe.exe，并在那边配置 `-DNN_ENABLE_PROBES=ON`（见 AGENTS §2 探针编译门）。
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot

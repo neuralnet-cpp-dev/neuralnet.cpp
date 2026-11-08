@@ -513,7 +513,7 @@ f16x2 打包属于性能项（R4.2），不影响“零转换”的定义；**B-
 
 | 能力 | 状态 | 证据 / 边界 |
 |---|---|---|
-| 四字段 profile 可构造 | ✅ | `profile_all_f16()`；`mem_probe --f16-all` |
+| 四字段 profile 可构造 | ✅ | `profile_all_f16()`；新仓库 `mem_probe --f16-all` |
 | `optimizer=f16` 可训练 | ✅ **可训练性** | F5 的 Adam 状态缩放 `S=4096`；tiny GPT 20 步与 GPU 500 步记录见 [`24`](24-f16-training-defects.md) §4.6 |
 | `stable=f16` 的 CE 标量 | 🟡 **当前是 F32 补丁** | CE 的 `(1,1)` loss 归约输出恒 F32（[`24`](24-f16-training-defects.md) §3.1）；这与“真 f16”冲突，R2 必须改成 f16 安全归约 |
 | 一键 CLI 预设 | ❌ | `text_train` / `mnist_train` 没有 `--f16-all`，只能用 `--f16 --precision-stable f16 --precision-optimizer f16` 拼 |
@@ -543,7 +543,7 @@ f16x2 打包属于性能项（R4.2），不影响“零转换”的定义；**B-
   `--f16` / `--t1_58` / `--f16-all` 的互斥或覆盖顺序必须显式定义并报错/提示；GUI 两个训练页的
   “精度预设”下拉增加对应项；帮助、`gui_cli_audit.py`、`doc_inventory` 同步。
 - **验收**：`--help` 可见；解析结果四槽全 F16；`bench/gui_cli_audit.py` 退出码 0；CLI 负例覆盖
-  与 `--f16` 并用的冲突；`mem_probe --f16-all` 与 CLI 预设逐字段一致。
+  与 `--f16` 并用的冲突；新仓库 `mem_probe --f16-all` 与 CLI 预设逐字段一致。
 - **边界**：`--f16` 仍是默认推荐的安全配方；`--f16-all` 在 R5 通过前保持“实验/显式选择”定位。
 
 #### R2 — 真 f16 数值与转换收口
