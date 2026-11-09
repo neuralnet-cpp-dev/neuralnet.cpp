@@ -352,19 +352,18 @@ add_library(nn_core INTERFACE)
 # 主仓库已删除与抽象层重复的接口/值类型头（algebra_* / compute_engine /
 # compute_tensor / core_* / expr_spec 等），同名头一律解析到抽象层 —— 与
 # libnn-cpu.so / libnn-gpu.so（LGPL）按同一份头编译，跨界 ABI 一致。
-# engine/engine/include（LGPL 实现目录）放**最后**，只保留引擎实现头
-# （expr_dsl / expr_fold / expr_registry / ternary_pack / int8_pack / kernel_cache /
-# kernelgen_api / nn_api 等），不再保存层/模型/优化器头副本（2026-11 去重，
-# scripts/check_header_sync.py 随之下线）；消费侧头（层/模型/训练/数据集/
-# 分词器/优化器）单一真源在主仓库 include/，引擎测试也已改为引用该目录。
+# 纯接口头（expr_dsl / expr_fold / expr_registry / ternary_pack / int8_pack /
+# kernel_cache）单一真源同样在抽象层 —— 消费方**只 include 抽象层头 + 主仓
+# include/**，不再依赖 engine/engine/include（LGPL 实现目录，只留引擎实现头
+# compute_cpu/gpu_engine / expr_emitter / expr_glsl_gen / backend/*，不进本列表）。
+# 消费侧头（层/模型/训练/数据集/分词器/优化器）单一真源在主仓库 include/，
+# 引擎测试也已改为引用该目录。
 # model_keyvalue_record 为 engine kernel_cache 与主仓共用的 MIT 值类型，
 # 单一真源在抽象层（engine/abstraction/include/neuralnet.cpp/）。
 target_include_directories(nn_core INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/engine/include/neuralnet.cpp>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/engine/include>)
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(nn_core INTERFACE Threads::Threads)
 if(NN_STACKTRACE_LIB)
     target_link_libraries(nn_core INTERFACE ${NN_STACKTRACE_LIB})
@@ -527,7 +526,7 @@ set(NN_MOD_TOKENIZER_HEADERS
     ${NN_ABST_INC}/model_keyvalue_record.hpp)
 
 # ── P4 新域闭包（35 号）：跨域头改动触发对应 BMI 重编；宁多勿少 ──────────
-# 由头包含图解析生成（expr 22 / engine 37 / layer 22 / loss 10 / opt 12 /
+# 由头包含图解析生成（expr 22 / engine 25 / layer 22 / loss 10 / opt 12 /
 # model 31 / train 48 / domain 27 / cli 74）。
 set(NN_MOD_EXPR_HEADERS
     engine/abstraction/include/neuralnet.cpp/algebra_matrix.hpp
@@ -541,15 +540,15 @@ set(NN_MOD_EXPR_HEADERS
     engine/abstraction/include/neuralnet.cpp/core_errors.hpp
     engine/abstraction/include/neuralnet.cpp/core_parallel.hpp
     engine/abstraction/include/neuralnet.cpp/core_threadpool.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_dsl.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_fold.hpp
     engine/abstraction/include/neuralnet.cpp/expr_graph.hpp
     engine/abstraction/include/neuralnet.cpp/expr_op_table.hpp
     engine/abstraction/include/neuralnet.cpp/expr_opt.hpp
+    engine/abstraction/include/neuralnet.cpp/expr_registry.hpp
     engine/abstraction/include/neuralnet.cpp/expr_spec.hpp
     engine/abstraction/include/neuralnet.cpp/precision.hpp
     engine/abstraction/include/nn_error_macros.hpp
-    engine/engine/include/neuralnet.cpp/expr_dsl.hpp
-    engine/engine/include/neuralnet.cpp/expr_fold.hpp
-    engine/engine/include/neuralnet.cpp/expr_registry.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
     include/neuralnet.cpp/tensor_schema.hpp
 )
@@ -573,23 +572,11 @@ set(NN_MOD_ENGINE_HEADERS
     engine/abstraction/include/neuralnet.cpp/expr_op_table.hpp
     engine/abstraction/include/neuralnet.cpp/expr_opt.hpp
     engine/abstraction/include/neuralnet.cpp/expr_spec.hpp
+    engine/abstraction/include/neuralnet.cpp/int8_pack.hpp
+    engine/abstraction/include/neuralnet.cpp/kernel_cache.hpp
     engine/abstraction/include/neuralnet.cpp/precision.hpp
+    engine/abstraction/include/neuralnet.cpp/ternary_pack.hpp
     engine/abstraction/include/nn_error_macros.hpp
-    engine/engine/include/neuralnet.cpp/backend/compute_gpu_tensor_impl.hpp
-    engine/engine/include/neuralnet.cpp/backend/compute_memory_pool.hpp
-    engine/engine/include/neuralnet.cpp/backend/compute_staging_ring.hpp
-    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend.hpp
-    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend_destroy.inc
-    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend_frame.inc
-    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend_ops.inc
-    engine/engine/include/neuralnet.cpp/backend/compute_vk_backend_pipelines.inc
-    engine/engine/include/neuralnet.cpp/backend/compute_vk_device.hpp
-    engine/engine/include/neuralnet.cpp/backend/compute_vk_pipeline_catalog.hpp
-    engine/engine/include/neuralnet.cpp/backend/compute_vk_pipeline_specs.hpp
-    engine/engine/include/neuralnet.cpp/int8_pack.hpp
-    engine/engine/include/neuralnet.cpp/kernel_cache.hpp
-    engine/engine/include/neuralnet.cpp/kernelgen_api.h
-    engine/engine/include/neuralnet.cpp/ternary_pack.hpp
     ${NN_ABST_INC}/model_keyvalue_record.hpp
 )
 set(NN_MOD_LAYER_HEADERS
@@ -894,9 +881,7 @@ function(nn_add_module modname source)
     list(APPEND _flags
         -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp"
         -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include"
-        -I "${NN_LIB_SOURCE_DIR}/include"
-        -I "${NN_LIB_SOURCE_DIR}/engine/engine/include/neuralnet.cpp"
-        -I "${NN_LIB_SOURCE_DIR}/engine/engine/include")
+        -I "${NN_LIB_SOURCE_DIR}/include")
     set(_file_deps "")
     foreach(d IN LISTS NNM_DEPS)
         list(APPEND _flags "-fmodule-file=nn.${d}=${NN_LIB_BINARY_DIR}/modules/nn.${d}.pcm")

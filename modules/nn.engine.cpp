@@ -7,12 +7,10 @@
 module;
 #include <neuralnet.cpp/compute_engine.hpp>
 #include <neuralnet.cpp/algebra_matrix.hpp>
-#include <neuralnet.cpp/backend/compute_vk_backend.hpp>
 #include <neuralnet.cpp/ternary_pack.hpp>
 #include <neuralnet.cpp/int8_pack.hpp>
 #include <neuralnet.cpp/core_profile.hpp>
 #include <neuralnet.cpp/kernel_cache.hpp>
-#include <neuralnet.cpp/kernelgen_api.h>
 export module nn.engine;
 export import nn.core;
 export namespace nn {
