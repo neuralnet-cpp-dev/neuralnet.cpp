@@ -1167,9 +1167,12 @@ int run_matmul_multiconsumer(ComputeEngine& cpu, ComputeEngine& gpu)
 //    A 是根节点（输入未再舍入）→ 与 ① 同按逐位断言。
 //  ③ ①② 两参考互差 >1e-6（至少一个元素）：判别力自检——若两参考全等，
 //    本用例无法区分"融合"与"降级" → FAIL 提醒换算子。
-// ①③ 仅在录制确实捕获节点（gA.virtual_tag()!=0）时执行；录制视图跨 DSO
-// 未接入是既有前置缺陷（tag=0 → 打 [SKIP] 不记失败）。此时执行侧的
-// f16 多输出正确性由**直调 eval_expr_multi_into**（NVI 边界 cast 全链）覆盖。
+// ①③ 在录制确实捕获节点（gA.virtual_tag()!=0）时执行；tag==0 = 录制空转，
+// 直接 FAIL（回归锁，方案 A 转正）。锁语义 = 消费方形态三连：begin 成功 →
+// 录制入图（tag≠0，record_graph_node_ 才会盖 tag ⇒ 图 nodes>0）→ end_expr
+// 成功（融合执行）。平台诚实标注：方案 A 后录制状态读写全部归引擎 TU，
+// Windows/DLL 与 Linux/.so 同一行为；修复前 Windows（PE 模块 TLS 独立）恒
+// tag=0 触发本断言，Linux（ELF 弱 TLS 归并）则不触发——断言不因平台误报。
 int run_f16_diamond(ComputeEngine& cpu, ComputeEngine& gpu)
 {
     (void)cpu;
@@ -1262,8 +1265,8 @@ int run_f16_diamond(ComputeEngine& cpu, ComputeEngine& gpu)
     }
 
     // ── 录制是否真的捕获了节点：record_graph_node_ 会把 virtual_tag 盖到返回的
-    //    占位张量上；tag==0 = 本次求值走了直求值（录制视图跨 DSO 未接入的
-    //    既有前置缺陷，f32 分量同样受影响，非 P10-④ 引入——见交付报告）。
+    //    占位张量上；tag==0 = 本次求值走了直求值 = 录制空转（方案 A 修复前的
+    //    跨 DSO 视图缺陷，Windows/DLL 形态）——现为 FAIL 断言（回归锁转正）。
     const bool recorded = (gA->virtual_tag() != 0);
     if (recorded)
     {
@@ -1293,9 +1296,13 @@ int run_f16_diamond(ComputeEngine& cpu, ComputeEngine& gpu)
     }
     else
     {
-        std::cout << "[SKIP] P10-④ 端到端融合锁（①/③）：录制段未捕获节点（tag=0）——"
-                     "跨 DSO 录制视图为既有前置缺陷（f32 分量同样受影响，非本改动引入），"
-                     "复合 kernel 数值锁待其修复后生效；执行侧由直调 multi_into 覆盖\n";
+        // 回归锁（方案 A）：begin 成功但 tag==0 = NVI 录制检查未接入
+        // （跨 DSO 视图缺陷在消费方形态的实证）——不得静默降级为 SKIP。
+        std::cout << "[FAIL] P10-④ 录制空转：begin_expr 成功但 "
+                     "gA.virtual_tag()=="
+                  << gA->virtual_tag() << "（期望≠0；nodes=0/tag=0 = "
+                     "跨 DSO 录制视图缺陷）\n";
+        ++fail;
     }
     // ② 融合前后对拍（f16 半 ULP 传播量级）；A 为根节点 → 逐位
     cmp(*gA, *uA, "vs 未融合 f16 [extras A，根节点]", 1e-6f);
