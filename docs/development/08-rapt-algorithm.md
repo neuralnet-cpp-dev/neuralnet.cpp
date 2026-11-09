@@ -173,7 +173,7 @@ CPU 实现**逐位一致**（门禁 `scan_bitwise_test`）。**dk ≤ 32 走窄�
      分母项 `gK += suffix(scale·q)`：causal 走 `outer_col(Qp, e_0, scale, has_scale=true)` + 后缀扫描；
      双向走 `row_reduce_sum(dB)` → 单条 `row_broadcast + rparam(0)` 表达式广播 → `scan_suffix_outer(causal=false)`；
   4. `select(Qp > 0, gQ, 0)` 反传过 ReLU → RoPE 反向 → RMSNorm 反向 → 各投影 `w_*.backward`。
-- **forward_step（推理逐 token，KV cache）**：`Q/K/V → RMSNorm → RoPE → ReLU` → **先更新状态**（`dsl::matmul(V, Kp, transB, batch=H)` 求 `v·k'ᵀ` → `dsl::compute_into` 累加进 `B_state`；`dsl::compute_into` 累加 `z_state += k'`）→ `num = B·q'`（`dsl::matmul(batch=H)`）→ `den = q·z + ε`（逐头点积，CPU round-trip 可接受）→ `out = num/den`（与 forward 的除法表达式同构）。
+- **forward_step（推理逐 token，KV cache）**：`Q/K/V → RMSNorm → RoPE → ReLU` → **先更新状态**（`dsl::matmul(V, Kp, transB, batch=H)` 求 `v·k'ᵀ` → `dsl::compute_into` 累加进 `B_state`；`dsl::compute_into` 累加 `z_state += k'`）→ `num = B·q'`（`dsl::matmul(batch=H)`）→ `den = q·z`（逐头点积全程设备侧：`q'⊙z` → `grouped_reduce_sum` → `gather_rows`，f32 完成、无宿主往返）→ `out = num/(den+1e-4)`（与 forward 的除法表达式同构）。
 
 ### 4.3 改这段代码前必读的坑
 
