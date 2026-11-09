@@ -347,13 +347,14 @@ void test_bitlinear_cache(nn::ComputeEngine& eng, const char* tag)
 
 } // namespace
 
-// ── [8] F2：惰性梯度缓冲（推理路径不为梯度付存储）──────────────────────────
+// ── [8] F2：梯度缓冲分配时机（Linear 惰性 / BitLinear 训练态预分配 + 部署态不分配）
 namespace
 {
 void test_lazy_grads(nn::ComputeEngine& eng, const char* tag)
 {
     constexpr std::size_t IN = 6, OUT = 5, B = 2;
-    std::printf("[8] 惰性梯度：init/forward 后未分配，param_gradients/backward 才分配（%s）\n",
+    std::printf("[8] 梯度分配：Linear 惰性、BitLinear 训练态 init 预分配（#L4）/"
+                "部署态不分配（%s）\n",
                 tag);
 
     // Linear（f16 配置：梯度 = 权重等体积）
@@ -377,13 +378,27 @@ void test_lazy_grads(nn::ComputeEngine& eng, const char* tag)
             for (std::size_t k = 0; k < IN; ++k)
                 W.set_value(o, k, 0.2f * static_cast<float>((o + k) % 5) - 0.4f);
         nn::BitLinear bl = make_bitlinear(eng, IN, OUT, W);
-        CHECK(!bl.grad_buffers_allocated(), "BitLinear init 后梯度缓冲未分配");
+        // #L4：训练态（有 latent）init 期即预分配进持久池——留到 backward 才分
+        // 会落瞬态池钉住池底；旧"惰性"断言随该修复改为预分配语义。
+        CHECK(bl.grad_buffers_allocated(), "BitLinear init 后梯度缓冲已预分配（#L4）");
         auto y = bl.forward(filled(eng, IN, B, 0.5f));
         CHECK(y.has_value(), "BitLinear forward 成功");
-        CHECK(!bl.grad_buffers_allocated(), "只 forward（推理）后梯度缓冲仍未分配");
+        CHECK(bl.grad_buffers_allocated(), "只 forward 后保持已分配（init 预分配不回退）");
         auto br = bl.backward(filled(eng, OUT, B, 1.0f));
         CHECK(br.has_value(), "backward 成功");
         CHECK(bl.grad_buffers_allocated(), "backward 后梯度缓冲已分配（训练路径）");
+    }
+
+    // 部署态（inference_only → packed_only）：不付 latent/梯度足迹（F2 本意 +
+    // 免 latent 构建）；init 不依赖权重载入，仅验分配状态。
+    {
+        nn::BitLinear dep(IN, OUT, /*inference_only=*/true);
+        nn::PrecisionProfile prof;
+        prof.param = nn::Precision::T1_58;
+        dep.set_precision_profile(prof);
+        auto dr = dep.init(eng);
+        CHECK(dr.has_value(), "BitLinear 部署态 init 成功");
+        CHECK(!dep.grad_buffers_allocated(), "部署态 init 后梯度缓冲未分配（免 latent）");
     }
 }
 
