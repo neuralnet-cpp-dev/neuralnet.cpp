@@ -225,7 +225,7 @@ engine.to_matrix(const Tensor& t, P)          // 重载；P ≠ t.precision() �
 ### 6.6 内存约定
 
 - `b_block` 64KB 栈预算（`BLOCK_SIZE² × sizeof(Scalar)`）按 P 重核：f16 同块元素数可 ×2，或保持块数不变（工程选择，§16）。
-- activation offload slab 的偏移单位现注释为 "float 单位" → **统一改为"元素单位"**（P 决定每元素字节数）。
+- activation offload slab 的偏移单位 = **字节**（`offload_save` / `offload_restore` 的 `byte_offset`）：每个激活按**自身精度**占 `size() * (F16 ? 2 : 4)` 字节，条目间 8 B 对齐；同一 slab 可混排 f32/f16（见 `docs/usage/03` §7.1）。
 
 ---
 
@@ -575,7 +575,7 @@ compute/stable/optimizer 与 `--f16` 逐字段相同；字面"四槽全 f16 + �
 1. **CPU 侧 f16 全模型训练发散（已修复）**（双根因与验证见 §12.12）；`f16_precision_test` 对应的容忍分支已改为硬失败。
 2. 边界 cast 的 transient 膨胀（见上）：**未命中变体的算子**仍走该路径，剩余归因与下一步见 §12.8 / §12.11。
 3. RAPT / CNN 的 f16 接线已完成（P2-3）；剩余覆盖问题不是“未传 P”，而是 RAPT f16 的已知 NaN（[`../internal/18-roadmap.md`](../internal/18-roadmap.md) §3.1 C11）与长跑质量验证。
-4. `--activation-offload` 下 f16 激活写入 slab 前被抬为 f32（正确，但该份激活不再减半）。
+4. `--activation-offload` 下 f16 激活按**自身精度**进 slab（2 B/元素，享折半收益）；`offload_restore` 必须显式传 `Precision::F16` 重建，否则同一段字节会被按 f32 解释。
 
 ---
 

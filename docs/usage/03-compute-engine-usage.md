@@ -581,31 +581,47 @@ if (auto r = engine.cast_into(*src_like, *dst_like); !r) return std::unexpected(
 
 ```cpp
 [[nodiscard]] Result<Tensor> create_offload_buffer(std::size_t bytes);
-// GPU：持久 host-visible slab（跨 step 复用）；CPU：返回 1×1 占位张量
+// GPU：持久 host-visible slab（跨 step 复用，容量单位 = 字节）；CPU：返回 1×1 占位张量
 
-[[nodiscard]] Result<void> offload_save(const Tensor& buffer, std::size_t offset,
-                                       const Tensor& src);
-// 把 src 复制到 buffer 的 offset（float 单位）处
-// 边界 cast 入口：f16 激活在写入 slab 前抬到 f32（slab 恒 f32 存）
+[[nodiscard]] Result<void> offload_save(const Tensor& buffer, std::size_t byte_offset,
+                                        const Tensor& src);
+// 把 src 按其**自身精度**复制到 buffer 的 byte_offset（字节单位）处；
+// f32 = 4 B/元素、f16 = 2 B/元素（#P8；不再把 f16 抬成 f32 写入）
 
-[[nodiscard]] Result<Tensor> offload_restore(const Tensor& buffer, std::size_t offset,
-                                            std::size_t rows, std::size_t cols);
-// 从 buffer 的 offset 处复制 rows×cols 到新张量
+[[nodiscard]] Result<Tensor> offload_restore(const Tensor& buffer, std::size_t byte_offset,
+                                             std::size_t rows, std::size_t cols,
+                                             Precision P = Precision::F32);
+// 从 byte_offset 处复制 rows×cols 到新张量，输出精度由 P 指定（F32/F16）
 ```
 
-- `set_offload_enabled()` **不存在**。开关在 Layer 侧：`GPTModel` / `RAPTModel` 的 `set_activation_offload(bool)`，底层由 `ActivationOffloader`（`compute_layer_base.hpp`）调用这三个引擎入口。
-- **slab 容量必须按"本次导出的激活总量"校验**（批大小/序列长度变化、`--resume`、最后一个不满 batch 都会改变总量）；容量不足会越界写 → 缓冲区破坏 / 设备丢失。`ActivationOffloader` 已按此实现（每次导出重算 `needed`，不足则重建）。
-- `restore` 出来是 f32（slab 恒 f32 存）；f16 激活按 f32 存、不享 f16 折半收益。
+- 引擎接口**没有**全局 `set_offload_enabled()`：入口开关在 Layer/Model 侧——`GPTModel` / `RAPTModel` 的 `set_activation_offload(bool)`（块级为 `set_offload_enabled`，底层 `ActivationOffloader::set_enabled`），由它调用上述三个引擎入口。
+- **slab 容量按字节校验，且必须覆盖"本次导出的激活总量"**（批大小/序列长度变化、`--resume`、最后一个不满 batch 都会改变总量）；容量不足会越界写 → 缓冲区破坏 / 设备丢失。`ActivationOffloader` 已按此实现（每次导出重算 `needed`，不足则重建）。
+- **偏移是字节、不是元素**：每个条目占 `size() * (F16 ? 2 : 4)` 字节；`ActivationOffloader` 还在条目间做 8 B 对齐（`VkBufferCopy` 要求 4 B 对齐，f16 混排时避免奇数字节偏移）。同一 slab 可混排 f32/f16。
+- `offload_restore` 的 `P` 必须与保存时一致（f16 激活必须显式传 `Precision::F16`；默认 `F32` 会把同一段字节按 f32 解释 → 错值）。
 
 ```cpp
-auto slab = engine.create_offload_buffer(needed_floats * sizeof(float));
+// acts 中可混排 f32/f16：每项按自身精度记账
+std::size_t needed = 0;
+for (auto& act : acts) {
+    needed = (needed + 7u) & ~std::size_t{7};              // 8 B 对齐
+    needed += act.size() * ((act.precision() == nn::Precision::F16) ? 2u : 4u);
+}
+auto slab = engine.create_offload_buffer(needed);
 if (!slab) return std::unexpected(slab.error());
 std::size_t offset = 0;
-if (auto r = engine.offload_save(*slab, offset, act); !r) return std::unexpected(r.error());
-offset += act.size();
+for (auto& act : acts) {
+    offset = (offset + 7u) & ~std::size_t{7};
+    if (auto r = engine.offload_save(*slab, offset, act); !r) return std::unexpected(r.error());
+    offset += act.size() * ((act.precision() == nn::Precision::F16) ? 2u : 4u);  // 字节
+}
 // ... backward 前 ...
-auto back = engine.offload_restore(*slab, 0, act.rows(), act.cols());
-if (!back) return std::unexpected(back.error());
+std::size_t off = 0;
+for (auto& act : acts) {
+    off = (off + 7u) & ~std::size_t{7};
+    auto back = engine.offload_restore(*slab, off, act.rows(), act.cols(), act.precision());
+    if (!back) return std::unexpected(back.error());
+    off += act.size() * ((act.precision() == nn::Precision::F16) ? 2u : 4u);
+}
 ```
 
 ### 7.2 内存统计
