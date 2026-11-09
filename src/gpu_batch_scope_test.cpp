@@ -10,7 +10,7 @@
 //   [5] #M7：model_warmup 首次 forward 失败后状态可回滚（生成器加载失败不被
 //       "已尝试"latch 固化 → 二次调用仍报错而非静默成功/空指针崩溃；修正
 //       NN_KERNELGEN_PATH 后二次 warmup 真正可用）
-// 无 Vulkan 构建 / 无 GPU 设备 → 返回 77 = ctest SKIP。
+// 无 Vulkan 构建 / 无 GPU 设备 / 找不到 nn-kernelgen 库 → 返回 77 = ctest SKIP。
 // ─────────────────────────────────────────────────────────────────────────
 
 #include <nn_error_macros.hpp>
@@ -217,6 +217,9 @@ int main(int argc, char** argv)
     }
 
     // [5] #M7：model_warmup 失败可回滚、二次可用
+    // kernelgen 缺失时"修正后可成功"分支无法验证 → 末尾以 77 = ctest SKIP
+    // 收口（环境不满足记 Skipped 而非假绿 PASS；CMakeLists 已配 SKIP_RETURN_CODE 77）。
+    bool kernelgen_missing = false;
     {
         // 清掉 [2]~[4] 已落盘的 kernel（同进程内共享 .nnk 文件），保证下面
         // 独立引擎必定 JIT miss —— 否则 Conv 的 "matmul+行广播" 结构与 Linear
@@ -261,6 +264,7 @@ int main(int argc, char** argv)
                 }
                 else
                 {
+                    kernelgen_missing = true;
                     std::cout << "[SKIP] 未定位 nn-kernelgen 库，跳过\"修正后可成功\"分支\n";
                 }
                 set_env_("NN_KERNELGEN_PATH", saved);
@@ -268,8 +272,20 @@ int main(int argc, char** argv)
         }
     }
 
-    std::cout << (g_fail == 0 ? "\n全部通过 ✅\n" : "\n存在失败 ❌\n");
-    return g_fail == 0 ? 0 : 1;
+    if (g_fail != 0)
+    {
+        std::cout << "\n存在失败 ❌\n";
+        return 1;
+    }
+    if (kernelgen_missing)
+    {
+        // 环境不满足（找不到生成器）：[5] 第三段未真正验证 → 依仓库约定
+        // 退出码 77，ctest 记 Skipped（不是 PASS、也不是 FAILED）。
+        std::cout << "\n[SKIP] kernelgen 缺失，本用例记 Skipped\n";
+        return 77;
+    }
+    std::cout << "\n全部通过 ✅\n";
+    return 0;
 #else
     std::cout << "[SKIP] 纯 CPU 构建（无 Vulkan）\n";
     return 77;

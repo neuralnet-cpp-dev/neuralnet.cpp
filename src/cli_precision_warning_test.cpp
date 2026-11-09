@@ -8,6 +8,9 @@
 // [1][2] 直接单测头文件函数 `nn::cli::dangerous_precision_warning`（廉价、确定、进默认门禁）。
 // [3] 以子进程跑真实 CLI（text_train / mnist_train），把 stderr 重定向到文件后校验：
 //     危险组合的 stderr 含警告且退出码与无告警组合一致；合法组合的 stderr 不含警告。
+//     ★ 触发集也走 CLI 参数端到端（不只靠 [1][2] 的直接构造 profile）：
+//       `--precision-stable f16` 单独出现不触发；`--precision-optimizer f16`
+//       单独触发且告警含字段、不含"数值性冻结"（那是四槽全 f16 的形态）。
 //     二进制缺失（纯库 / NN_BUILD_APPS=OFF 构建）→ 打印 [skip] 返回 77（ctest 记 Skipped）。
 // 退出码：0 = 通过，1 = 失败，77 = 跳过。
 // ─────────────────────────────────────────────────────────────────────────
@@ -180,6 +183,8 @@ void test_cli_stderr(const std::string& exe, const std::string& label,
     const std::string err_f16 = "nn_precwarn_f16.err";
     const std::string err_opt = "nn_precwarn_opt.err";
     const std::string err_all = "nn_precwarn_all.err";
+    const std::string err_stable = "nn_precwarn_stable.err";
+    const std::string err_optonly = "nn_precwarn_optonly.err";
 
     const int rc_plain = run_capture_stderr(quote_exe(exe) + " " + dataset_arg, err_plain);
     const int rc_f16 = run_capture_stderr(quote_exe(exe) + " --f16 " + dataset_arg, err_f16);
@@ -189,6 +194,12 @@ void test_cli_stderr(const std::string& exe, const std::string& label,
     const int rc_all = run_capture_stderr(
         quote_exe(exe) + " --f16 --precision-stable f16 --precision-optimizer f16 " + dataset_arg,
         err_all);
+    // 触发集端到端（经真实 CLI 参数解析 → profile 构造 → 告警判定，不直接构造 profile）：
+    // stable=f16 单独出现不得触发；optimizer=f16 单独触发且告警形态 = 非全 f16。
+    const int rc_stable = run_capture_stderr(
+        quote_exe(exe) + " --precision-stable f16 " + dataset_arg, err_stable);
+    const int rc_optonly = run_capture_stderr(
+        quote_exe(exe) + " --precision-optimizer f16 " + dataset_arg, err_optonly);
 
     if (rc_plain == -1)
     {
@@ -200,6 +211,8 @@ void test_cli_stderr(const std::string& exe, const std::string& label,
     const std::string out_f16 = read_file(err_f16);
     const std::string out_opt = read_file(err_opt);
     const std::string out_all = read_file(err_all);
+    const std::string out_stable = read_file(err_stable);
+    const std::string out_optonly = read_file(err_optonly);
 
     CHECK(out_plain.find("[精度警告]") == std::string::npos,
           (label + "：无精度选项不应打印告警").c_str());
@@ -210,15 +223,27 @@ void test_cli_stderr(const std::string& exe, const std::string& label,
           (label + "：optimizer=f16 应在 stderr 打印含字段的告警").c_str());
     CHECK(out_all.find("数值性冻结") != std::string::npos,
           (label + "：全 f16 应打印含'数值性冻结'的告警").c_str());
+    // 触发集的 CLI 端到端（与 [1][2] 直接构造 profile 的规则同口径）
+    CHECK(out_stable.find("[精度警告]") == std::string::npos,
+          (label + "：--precision-stable f16 单独出现不应打印告警（触发集=optimizer=f16）")
+              .c_str());
+    CHECK(out_optonly.find("[精度警告]") != std::string::npos &&
+              out_optonly.find("optimizer=f16") != std::string::npos &&
+              out_optonly.find("数值性冻结") == std::string::npos,
+          (label + "：--precision-optimizer f16 单独应打印含字段告警，且非全 f16 冻结形态")
+              .c_str());
 
     // 行为：警告不改退出码 —— 危险组合与无告警组合在同一（数据集缺失）失败点上退出码一致。
-    CHECK(rc_f16 == rc_plain && rc_opt == rc_plain && rc_all == rc_plain,
+    CHECK(rc_f16 == rc_plain && rc_opt == rc_plain && rc_all == rc_plain &&
+              rc_stable == rc_plain && rc_optonly == rc_plain,
           (label + "：告警不得改变退出码（危险组合与普通组合应一致）").c_str());
 
     std::remove(err_plain.c_str());
     std::remove(err_f16.c_str());
     std::remove(err_opt.c_str());
     std::remove(err_all.c_str());
+    std::remove(err_stable.c_str());
+    std::remove(err_optonly.c_str());
 }
 } // namespace
 

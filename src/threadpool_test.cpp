@@ -5,7 +5,7 @@
 //   3. parallel_for_each_indexed：worker 索引 ∈ [0, n_threads]（调用者 = size()）
 //   4. parallel_for_blocks / parallel_for_samples：全覆盖 + 0/1 样本回落
 //   5. 并行 transform / transform_reduce 结果与串行参考一致
-//   6. 重复调用稳定性（同一池上数千次空并行区，防 latch/cv 死锁回归）
+//   6. 重复调用稳定性（同一池上数万次小并行区 + 回调计数断言，防 latch/cv 死锁回归）
 // 退出码：0 = 通过，1 = 失败。
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -29,13 +29,28 @@ void test_construction()
     std::printf("构造/析构:\n");
     {
         nn::ThreadPool pool(4);
-        CHECK(true, "指定线程数构造不崩溃");
+        CHECK(pool.size() == 4, "指定 4 线程构造 → size()==4");
+        // 构造出的线程真实可用：并行区 4 样本恰好各执行一次
+        std::atomic<int> done{0};
+        pool.parallel_for_samples(4, [&](std::size_t) { done.fetch_add(1); });
+        CHECK(done.load() == 4, "指定线程池并行区 4 样本全覆盖");
     }
     {
         nn::ThreadPool pool(0);
-        CHECK(true, "0 线程回落 1 不崩溃");
+        CHECK(pool.size() == 1, "0 线程回落 1 → size()==1");
     }
-    CHECK(true, "析构（线程 join）正常");
+    // 析构（持锁置 stop_ + notify + join）无残留：随后新建的池仍能走完整
+    // 并行路径（latch/cv/队列）并全覆盖 —— 上一轮 join 若吞线程/死锁，
+    // 本段会失败或挂住。
+    {
+        nn::ThreadPool pool(2);
+        std::vector<int> hits(4096, 0);
+        pool.parallel_for_each(hits.begin(), hits.end(), [](int& v) { ++v; });
+        bool full = true;
+        for (int v : hits)
+            if (v != 1) full = false;
+        CHECK(full, "析构后新池并行区全覆盖（join 无残留）");
+    }
 }
 
 void test_parallel_for_each_full_coverage()
@@ -54,7 +69,11 @@ void test_parallel_for_each_full_coverage()
     // 空区间与单元素
     std::vector<int> empty;
     pool.parallel_for_each(empty.begin(), empty.end(), [](int& v) { ++v; });
-    CHECK(true, "空区间不崩溃");
+    // 空区不入队任务；随后立刻走一条真正的并行路径（≥2 分块 → latch/cv），
+    // 断言状态机未被空区破坏（空区返回后池仍全覆盖）
+    std::atomic<int> after{0};
+    pool.parallel_for_samples(3, [&](std::size_t) { after.fetch_add(1); });
+    CHECK(after.load() == 3, "空区间后并行区仍全覆盖（latch/cv 未被空区破坏）");
     std::vector<int> one{0};
     pool.parallel_for_each(one.begin(), one.end(), [](int& v) { ++v; });
     CHECK(one[0] == 1, "单元素被访问");
@@ -176,18 +195,19 @@ void test_transform_and_reduce()
     CHECK(dot >= 0, "二元 transform_reduce 返回有限值（不崩）");
 }
 
-void test_repeated_empty_regions()
+void test_repeated_small_regions()
 {
     // 历史回归：latch 归零 + notify 不持 queue_mutex_ 会丢唤醒 → 必死锁。
-    // 空并行区压测（持锁 notify 修复后应稳定通过）。
-    std::printf("重复空并行区压测（latch/cv 回归）:\n");
+    // 小并行区压测（持锁 notify 修复后应稳定通过）；回调计数断言全部执行。
+    std::printf("重复小并行区压测（latch/cv 回归）:\n");
     nn::ThreadPool pool(4);
+    std::atomic<int> calls{0};
     for (int iter = 0; iter < 10000; ++iter)
     {
-        pool.parallel_for_samples(2, [](std::size_t) {});   // 多块 → 走 latch 路径
-        pool.parallel_for_samples(3, [](std::size_t) {});
+        pool.parallel_for_samples(2, [&](std::size_t) { calls.fetch_add(1); });  // 多块 → latch 路径
+        pool.parallel_for_samples(3, [&](std::size_t) { calls.fetch_add(1); });
     }
-    CHECK(true, "2×10000 次并行区无死锁");
+    CHECK(calls.load() == 50000, "2×10000 次并行区共 50000 次回调全部执行（无死锁/无丢失）");
 }
 
 }  // namespace
@@ -200,7 +220,7 @@ int main()
     test_parallel_for_each_indexed();
     test_parallel_for_blocks_and_samples();
     test_transform_and_reduce();
-    test_repeated_empty_regions();
+    test_repeated_small_regions();
     std::printf("\nthreadpool_test: %d failure(s)\n", g_fail);
     return g_fail != 0 ? 1 : 0;
 }
