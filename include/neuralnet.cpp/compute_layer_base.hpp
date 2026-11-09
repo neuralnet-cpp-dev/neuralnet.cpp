@@ -915,6 +915,15 @@ public:
         {
             NN_TRY(slab, engine.create_offload_buffer(needed));
             slab_ = std::move(*slab);
+            // 契约 tripwire（#G1，仅 slab 重建时执行一次）：引擎必须分配出
+            // ≥ 请求字节的容量（f32 视图 + 向上取整，与 slab_bytes() 同一常量）。
+            // 失配 = 引擎侧分配公式违背容量口径，立刻在这里报出根因——否则要
+            // 等 offload_save 的 M2 越界校验以"写越界"形态暴露，易误归因为
+            // 偏移记账算错。
+            if (slab_bytes() < needed)
+                NN_FAIL("ActivationOffloader::export_activations: offload slab 容量不足（slab_bytes="
+                        + std::to_string(slab_bytes()) + " < needed=" + std::to_string(needed)
+                        + "）——引擎分配口径与 ComputeEngine::kOffloadSlabElemBytes 失配");
         }
         for (std::size_t i = 0; i < refs_.size(); ++i)
         {
@@ -942,9 +951,19 @@ public:
         return {};
     }
 
-    // 实际 slab 字节数（诊断用；未创建时 0）
+    // 实际 slab 字节数（诊断/容量判断用；未创建时 0）。
+    //
+    // 容量契约（#G1）：依赖引擎不变量——offload slab 恒为 f32 视图、按
+    // kOffloadSlabElemBytes 向上取整分配（见 ComputeEngine::create_offload_buffer
+    // 的容量口径注释），故容量字节数 = slab.size() × kOffloadSlabElemBytes。
+    // 两侧引用同一常量（不是各自的 sizeof(float)）：改视图精度/取整方式时
+    // 只改这一处，宿主估算与引擎分配/M2 校验同步移动。
+    // 若两侧口径失配：本函数会算错容量——高估时 export 的 `slab_bytes() >= needed`
+    // 放行越界写；此时由引擎侧 M2 校验兜底（offload_save/restore 逐一校验
+    // byte_offset+size 不越出 slab 容量，越界返回错误而非 GPU 越写），
+    // 错误经 export_activations 的 NN_TRY 上抛，不产生静默的显存破坏。
     [[nodiscard]] std::size_t slab_bytes() const noexcept
-    { return slab_.valid() ? slab_.size() * sizeof(float) : 0; }
+    { return slab_.valid() ? slab_.size() * ComputeEngine::kOffloadSlabElemBytes : 0; }
 };
 
 [[nodiscard]] inline Result<Tensor> clone_tensor(ComputeEngine& engine, const Tensor& src)
