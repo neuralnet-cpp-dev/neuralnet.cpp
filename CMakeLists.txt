@@ -1547,6 +1547,17 @@ if(NN_ENABLE_TESTS)
         set_target_properties(${TARGET} PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/test)
     endforeach()
+
+    # 测试运行环境：测试 exe 在 <根>/test、引擎 DLL 在 <根>/engine（子目录默认
+    # 输出），Windows 下 loader 按 exe 目录/PATH 搜索，两者不同目录 —— 无 PATH
+    # 注入时缺 nn-cpu.dll/nn-gpu.dll：直跑得 0xC0000135，ctest 下则弹"系统错误"
+    # 对话框把子进程挂死（测试 Timeout/卡住，报错框不进任何日志流）。
+    # 统一给本文件注册的全部测试 prepend 引擎目录，ctest 不再依赖调用方 shell
+    # 的 PATH（genex 在 generate 期解析，engine 子目录在下方才 add 不影响）。
+    get_property(_nn_tests DIRECTORY PROPERTY TESTS)
+    set_tests_properties(${_nn_tests} PROPERTIES
+                         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:nn_cpu>")
+    unset(_nn_tests)
 endif()
 
 # ══════════════════════════════════════════════════════════════════════════
