@@ -44,10 +44,11 @@ int g_fail = 0;
 
 // ── 参考实现：pre_tokenize 的独立朴素实现（标记切分 + 纯文本 sregex_iterator）─
 // 正则切分路径独立于被测的手写状态机（pre_match_len），作为逐字节对拍的基准。
-// markers 用 string_view（而非库侧的 std::string）：刻意打破与
-// domain_tokenizer_bpe.hpp 构造的同形——clang 24 在「多模块 import × 同 TU 两个
-// identical static local 构造」组合下产出错误代码（-O0/-O3 均复现，纯代码与 gcc
-// 全过），见 docs/internal/36 号台账 C6。语义不变（longest-match 对拍保留）。
+// markers 用运行期 vector<string_view>，与库侧 domain_tokenizer_bpe.hpp 的
+// constexpr std::array<std::string_view,14> 构造保持异型——clang 在「多模块
+// import × 同 TU 两个 identical static local 构造」组合下产出错误代码
+// （-O0/-O3 均复现，纯代码与 gcc 全过），两侧异型是规避条件，见
+// docs/internal/36 号台账 C6。语义不变（longest-match 对拍保留）。
 std::vector<std::string> old_pre_tokenize(std::string_view text)
 {
     static const std::vector<std::string_view> markers = []

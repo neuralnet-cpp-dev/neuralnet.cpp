@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <cstddef>
@@ -358,16 +359,20 @@ public:
     [[nodiscard]] static std::vector<std::string> pre_tokenize(std::string_view text)
     {
         // 保留特殊标记（按长度降序，最长匹配优先，如 <|tool_result|> 优先于 <|tool|>）
-        static const std::vector<std::string> markers = []
+        // 表是 constexpr 编译期常量且**不加 static**：函数内 static 局部量在「三个模块
+        // GMF 文本包含同一头 → 消费方 TU 同时加载」时被 clang 发射成两份全局（一份带
+        // 初值、一份恒零），标记循环恰绑定恒零副本——标记匹配整体失效（llvm#239625
+        // 同族错代码，台账 36 号 C6 语境）。非静态 constexpr 无全局实体，逐处折叠常量。
+        constexpr std::array<std::string_view, 14> markers = []
         {
-            std::vector<std::string> m = {
+            std::array<std::string_view, 14> m = {
                 "<|system|>",      "<|end_of_system|>", "<|user|>",
                 "<|end_of_user|>", "<|assistant|>",     "<|end_of_assistant|>",
                 "<|end_of_turn|>", "<|sep|>",           "<|tool|>",
                 "<|tool_result|>", "<|image|>",         "<|audio|>",
                 "<|video|>",       "<|file|>"};
             std::sort(m.begin(), m.end(),
-                      [](const auto& a, const auto& b) { return a.size() > b.size(); });
+                      [](std::string_view a, std::string_view b) { return a.size() > b.size(); });
             return m;
         }();
 
