@@ -180,7 +180,7 @@ CpuEngine + CPU 原语   GpuEngine + Vulkan backend + shader + kernelgen
   - `libnn-cpu.so` = 真实 `nn::CpuEngine`（header-only 实现编进 .so）+ 导出工厂 `nn::create_cpu_engine()` / `nn::last_error()`
   - `libnn-gpu.so` = 真实 `nn::GpuEngine` + Vulkan backend + 原语 shader + AOT 融合注册表（`scan_exprs` 构建期生成 fused_registry，158 结构）；工厂 `nn::create_gpu_engine(device)`（空 = 自动选卡 / `NN_VULKAN_DEVICE`）
   - `libnn-kernelgen.so` = 运行期 JIT 生成器（GPU 引擎 miss 时 dlopen，`nnk_generate_spirv`）
-- **抽象层**（MIT，同仓库 `abstraction/`）：`compute_engine.hpp` 完整 ComputeEngine 接口面 + **真实 Tensor 值类型跨界**（GpuBuffer PIMPL：Vulkan 句柄藏在引擎侧 Impl，布局与 `NN_HAS_VULKAN` 无关）+ ExprSpec/expr_graph/expr_opt 等 DSL 支持头 + `create_cpu_engine`/`create_gpu_engine`/`last_error` 工厂声明。**无句柄映射、无序列化、无 dlopen**——虚方法分派直接落 .so 内实现（两侧同编译器/旗标，ABI 一致）。
+- **抽象层**（MIT，同仓库 `abstraction/`）：`compute_engine.hpp` 完整 ComputeEngine 接口面 + **真实 Tensor 值类型跨界**（GpuBuffer PIMPL：Vulkan 句柄藏在引擎侧 Impl，布局与 `NN_HAS_VULKAN` 无关）+ ExprSpec/expr_graph/expr_opt 等 DSL 支持头 + 纯接口头（`expr_dsl`/`expr_fold`/`expr_registry`/`ternary_pack`/`int8_pack`/`kernel_cache`，与其余抽象头同目录单一真源）+ `create_cpu_engine`/`create_gpu_engine`/`last_error` 工厂声明。**无句柄映射、无序列化、无 dlopen**——虚方法分派直接落 .so 内实现（两侧同编译器/旗标，ABI 一致）。
 - **主仓库**（MIT）：`add_subdirectory(engine)` 集成 submodule，cli/model/layer 全改链双 .so；`include/neuralnet.cpp/` 删除与抽象层重复的 21 个接口/值类型头 + 13 个引擎实现头（`compute_cpu/gpu_engine.hpp`、`backend/*`、`expr_emitter/glsl_gen`），保留层/模型/DSL 头（消费方 TU 编译，引擎原语虚调用走 .so）。`cli_engine_factory` 用工厂 + `NN_GPU_ENGINE` 宏分流链接面。
 - **测试**：引擎级测试迁入新仓库 `tests/`（消费方形态：只 include 抽象层接口 + 工厂 + 链 .so），主仓库保留 77 个 ctest（层/模型/CLI 侧，全部改工厂创建）。
 

@@ -26,7 +26,7 @@ error: module file '.../nn.tokenizer.pcm' cannot be loaded due to a configuratio
 | 2 | `${CMAKE_CXX_FLAGS}`（调用方/工具链：NDK `--target=`、`-stdlib=` 等；L7 注明由调用方指定） | 有（CMake 自动拼） | **完全没拼** | 工具链/stdlib 不一致 |
 | 3 | `${CMAKE_CXX_FLAGS_<CONFIG>}`（Release `-DNDEBUG`、Debug `-g`） | 有 | 无 | `assert()` 双语义 → ODR 风险 |
 | 4 | `-DNN_GPU_ENGINE=1`（GPU 构建时 L1192 挂 `nn_core` INTERFACE） | 有 | 无（模块注册 L615 早于 `add_subdirectory(engine)` L1178） | 宏语义分叉 |
-| 5 | `-I` 目录 | `nn_core` 5 个（L345-L350，含 `engine/engine/include`×2） | 只有 3 个 | 头解析路径不一致 |
+| 5 | `-I` 目录 | `nn_core` 3 个（abstraction×2 + `include`） | 3 个（同左） | 头解析路径一致 |
 | 6 | `-flto=thin`（L145） | 有 | 无 | 不触发本次报错（`--precompile` 无 codegen），但应同源 |
 
 已确认**一致**的：`-std=c++26`（`CMAKE_CXX_EXTENSIONS OFF` + `cxx_std_26`）、`-fno-exceptions`、`-fexperimental-library`、`-Wno-pass-failed`、`-Wall/-Wextra/-Wpedantic/-Werror`、优化档（`${DEBUG/RELEASE_FLAGS}` 含 `-march=native`）、`-DNN_ENABLE_PROBES`。`NN_USE_MODULES` 宏**刻意不加**给 BMI（任何头都不读它，已全仓 grep 证实；模块单元源码永远走 `#include` 分支）。
