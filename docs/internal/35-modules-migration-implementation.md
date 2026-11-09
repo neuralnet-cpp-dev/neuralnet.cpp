@@ -178,7 +178,7 @@ error: module file '.../nn.tokenizer.pcm' cannot be loaded due to a configuratio
 4. `src/expr_fuse_shapes.hpp:7` 注释与 `NN_TEST_COUNTER` 无关、与 dry-run 相关逻辑（实施时按其实际内容处置，保持 import 化一致）。
 
 **接入预热**（D5）：
-5. 运行期：在 GPU 训练/推理入口（`text_train`、`mnist_train`、`text_infer`、`mnist_infer`，及确认有 GPU engine 创建的其他 app）engine 创建后调用 `model_warmup()`；失败按 `NN_EXIT(..., 1, "预热失败")`；CLI 加 `--no-warmup` 逃生阀（cli 头按现有 flag 模式新增）。
+5. 运行期：在 GPU 训练/推理入口（`text_train`、`mnist_train`、`text_infer`、`mnist_infer`，及确认有 GPU engine 创建的其他 app）engine 创建后调用 `model_warmup()`；失败经 `Result` 返回，调用方 `NN_TRY_MSG(..., "预热失败", ...)` 上抛（`9672023`）；CLI 加 `--no-warmup` 逃生阀（cli 头按现有 flag 模式新增）。
 6. 构建期：新增 `nn_warmup` 可执行目标（`nn_add_executable` + `nn_use_modules`），内容：常用 layer × 代表性 shape 序列过一遍 GPU forward，写 `kernels.nnk` 至 `NN_KERNEL_CACHE_DIR`（输出到 build 目录并在发布脚本中随产物分发）。它同时充当入口②的“编译目标预热”（用户方案 A），并为 `fold/reduce/into/multi` 提供显式覆盖面（见下）。
 7. ~~`NN_STRICT_CLOSED_WORLD`（D6）~~：**已删除**（2026-11-08，用户裁定不保留旧行为兼容）；运行期 JIT 为唯一 miss 路径。
 
