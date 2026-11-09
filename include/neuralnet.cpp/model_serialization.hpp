@@ -722,13 +722,13 @@ struct ParamBlob
     return {};
 }
 
-} // namespace detail
-
 // ── ParamEntry ⇄ ParamBlob（宿主字节编解码；base-3 只在这里出现）─────────
-[[nodiscard]] inline Result<detail::ParamBlob>
+// 宿主字节编解码是 save/load 的内部桥接，不是对外契约（公开入口 = save_model /
+// load_model / peek_*），故与 write_param_blob 等同处 detail。
+[[nodiscard]] inline Result<ParamBlob>
 param_entry_to_blob(ComputeEngine& engine, const ParamEntry& e, ModelRole role)
 {
-    detail::ParamBlob b;
+    ParamBlob b;
     b.rows = e.rows;
     b.cols = e.cols;
     switch (e.kind)
@@ -801,7 +801,7 @@ param_entry_to_blob(ComputeEngine& engine, const ParamEntry& e, ModelRole role)
 }
 
 [[nodiscard]] inline Result<ParamEntry>
-param_blob_to_entry(ComputeEngine& engine, const detail::ParamBlob& b,
+param_blob_to_entry(ComputeEngine& engine, const ParamBlob& b,
                     WeightLoadIntent intent = WeightLoadIntent::Inference)
 {
     ParamEntry e;
@@ -901,6 +901,8 @@ param_blob_to_entry(ComputeEngine& engine, const detail::ParamBlob& b,
                 "）");
     }
 }
+
+} // namespace detail
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  公开 API
@@ -1022,7 +1024,7 @@ struct CheckpointState
         e.rows = t.rows();
         e.cols = t.cols();
         e.payload = t;
-        NN_TRY(b, param_entry_to_blob(engine, e, role));
+        NN_TRY(b, detail::param_entry_to_blob(engine, e, role));
         NN_TRY(w, detail::write_param_blob(os, *b));
     }
 
@@ -1034,7 +1036,7 @@ struct CheckpointState
         for (std::size_t i = 0; i < n; ++i)
         {
             NN_TRY(e, L.export_param(i, role));
-            NN_TRY(b, param_entry_to_blob(engine, *e, role));
+            NN_TRY(b, detail::param_entry_to_blob(engine, *e, role));
             NN_TRY(w, detail::write_param_blob(os, *b));
         }
     }
@@ -1049,7 +1051,7 @@ struct CheckpointState
         e.rows = e_tensor.get().rows();
         e.cols = e_tensor.get().cols();
         e.payload = e_tensor;
-        NN_TRY(b, param_entry_to_blob(engine, e, role));
+        NN_TRY(b, detail::param_entry_to_blob(engine, e, role));
         NN_TRY(w, detail::write_param_blob(os, *b));
     }
 
@@ -1153,7 +1155,7 @@ struct LoadedTrainState
         if (b->kind != ParamKind::Dense)
             NN_FAIL(std::string("优化器状态条目必须是 Dense 形态，实际 kind=") +
                     param_kind_name(b->kind));
-        NN_TRY(e, param_blob_to_entry(engine, *b));
+        NN_TRY(e, detail::param_blob_to_entry(engine, *b));
         out.optimizer_blob_precisions.push_back(b->precision);
         out.optimizer_blobs.push_back(std::move(e->payload));
     }
@@ -1223,7 +1225,7 @@ load_model(const std::string& filename, Model& model, uint32_t* version_out = nu
             for (std::size_t i = 0; i < n; ++i)
             {
                 NN_TRY(b, detail::read_param_blob(ifs));
-                NN_TRY(e, param_blob_to_entry(engine, *b, intent));
+                NN_TRY(e, detail::param_blob_to_entry(engine, *b, intent));
                 NN_TRY(r, L.import_param(i, *e));
             }
         }
@@ -1235,7 +1237,7 @@ load_model(const std::string& filename, Model& model, uint32_t* version_out = nu
             if (b->kind != ParamKind::Dense)
                 NN_FAIL(std::string("非可学习状态必须是 Dense 条目，实际 kind=") +
                         param_kind_name(b->kind));
-            NN_TRY(e, param_blob_to_entry(engine, *b));
+            NN_TRY(e, detail::param_blob_to_entry(engine, *b));
             auto m = engine.to_matrix(e->payload, Precision::F32);
             NN_TRY_CHECK(m);
             NN_TRY(cf, engine.copy_from(e_tensor, *m));

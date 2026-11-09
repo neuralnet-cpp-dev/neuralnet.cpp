@@ -44,6 +44,7 @@ export namespace nn {
     using nn::download_span;
     using nn::download_vector;
     using nn::kInitSeed;
+    using nn::KvReadAt;
     using nn::kvrec_memory_source;
     using nn::last_error;
     using nn::upload_span;

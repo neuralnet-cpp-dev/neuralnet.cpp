@@ -10,6 +10,7 @@ export module nn.kvrecord;
 export import nn.core;
 export namespace nn {
     using nn::KeyValueRecord;
+    using nn::KvReadAt;
     using nn::kvrec_memory_source;
     namespace detail {
         using nn::detail::append_u32;
