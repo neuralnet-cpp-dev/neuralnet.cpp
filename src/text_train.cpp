@@ -410,11 +410,14 @@ namespace
     //    全零 token-id 窗口；值不参与 JIT 键，形状即结构）→ .nnk 缓存。──────
     {
         const std::size_t micro = cfg.batch_size / cfg.accum_steps;
-        nn::Tensor warm_x =
-            engine->create_tensor(cfg.seq_len, micro > 0 ? micro : 1, nn::Precision::F32,
-                                  nn::InitSpec::zero());
+        // 走 try_create_tensor（Result 版）：本文件失败一律经 Result 上抛，
+        // 不用 NN_UNWRAP 版在 OOM/形状拒绝时 fail_abort 终止（#E3）。
+        NN_TRY_MSG(warm_x_r, "创建预热输入张量失败",
+                   engine->try_create_tensor(cfg.seq_len, micro > 0 ? micro : 1,
+                                             nn::Precision::F32, nn::InitSpec::zero()));
         NN_TRY_MSG(warmup_r, "预热失败",
-                   nn::cli::jit_warmup(trainer.session().model(), *engine, warm_x, cfg.jit_warmup));
+                   nn::cli::jit_warmup(trainer.session().model(), *engine, *warm_x_r,
+                                       cfg.jit_warmup));
     }
 
     // ── 训练循环（库层 TextTrainer；CLI 只装诊断/断点 hooks）──────────────
