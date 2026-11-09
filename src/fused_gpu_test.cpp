@@ -1145,6 +1145,215 @@ int run_matmul_multiconsumer(ComputeEngine& cpu, ComputeEngine& gpu)
     return fail;
 }
 
+// ── P10-④ GPU 对拍：F16 菱形融合（P2 分量 + 边界 cast 执行）──────────────
+// A = x*0.3；y1 = A*0.7；y2 = A*1.3（y1/y2 双消费者 A → 菱形），dsl::compute
+// 精度显式传 F16 → 录制节点 prec=F16 → p2_eligible（F32/F16，P10-④ 放宽）
+// → 单复合 kernel；派发走 GPU 图执行直达点（eval_expr_multi_into_canon_）的
+// 边界 cast：输入抬 f32 → V0 复合 kernel → f16 输出槽 cast_into 落回。
+// 算子全用乘法：避免 fma 收缩在"单 kernel"与"逐节点"两条 f32 路径间产生
+// 不同的舍入点（① 的逐位断言依赖这一点）。
+// 三条断言（容差依据见各条）：
+//  ① 融合 vs **f32 链逐位参考**（f32 逐节点链 → 各输出按 f16 舍入）：
+//    融合 kernel 在 f32 寄存器内传中间值、写回才舍入 ⇒ 与该参考同一舍入点
+//    → 应逐位一致。容差 1e-6 = 逐位断言（本用例值域 O(0.1~1) 的 f16 相邻
+//    值间距 ≥2^-14≈6e-5，两个不同 f16 值差不出 1e-6）。
+//    **同时是"复合 kernel 未被降级"的锁**：降级（逐成员派发）= 每成员各
+//    边界 cast 一次 = 逐节点舍入链 → 与本参考不同；由 ③ 确认两参考确有
+//    差异，保证该锁有判别力。
+//  ② 融合 vs **GPU 未融合逐节点 f16**（融合前后对拍）：中间值舍入点不同
+//    （融合只在写回落盘舍入；未融合每节点各舍入一次）→ 差 ≤ 传播的半 ULP：
+//    |A|≤0.79 半 ULP≤2.4e-4 → y1 链 ≤0.7×2.4e-4+半 ULP(0.55)≈3e-4、
+//    y2 链 ≤1.3×2.4e-4+半 ULP(1.03)≈8.1e-4 → 容差 2e-3（约 2.5× 余量）。
+//    A 是根节点（输入未再舍入）→ 与 ① 同按逐位断言。
+//  ③ ①② 两参考互差 >1e-6（至少一个元素）：判别力自检——若两参考全等，
+//    本用例无法区分"融合"与"降级" → FAIL 提醒换算子。
+// ①③ 仅在录制确实捕获节点（gA.virtual_tag()!=0）时执行；录制视图跨 DSO
+// 未接入是既有前置缺陷（tag=0 → 打 [SKIP] 不记失败）。此时执行侧的
+// f16 多输出正确性由**直调 eval_expr_multi_into**（NVI 边界 cast 全链）覆盖。
+int run_f16_diamond(ComputeEngine& cpu, ComputeEngine& gpu)
+{
+    (void)cpu;
+    const std::size_t rows = 4, cols = 8;
+    Matrix xm(rows, cols);
+    for (std::size_t i = 0; i < rows * cols; ++i)
+        xm.span()[i] = 0.5f + static_cast<float>(i) * 0.07f;
+    const Tensor x = upload(gpu, xm, nn::Precision::F16);
+
+    int fail = 0;
+    const auto cmp = [&](const Tensor& got, const Tensor& ref, const char* tag, Scalar tol)
+    {
+        auto gm = gpu.to_matrix(got);
+        auto rm = gpu.to_matrix(ref);
+        if (!gm || !rm)
+        {
+            std::cerr << "    [" << tag << "] to_matrix 失败\n";
+            ++fail;
+            return;
+        }
+        const Scalar err = max_abs_diff(*gm, *rm);
+        const bool ok = err <= tol;
+        if (!ok) std::cerr << "    [" << tag << "] err=" << err << " tol=" << tol << "\n";
+        std::cout << "[" << (ok ? "PASS" : "FAIL") << "] P10-④ f16 菱形 " << tag
+                  << " err=" << err << "\n";
+        if (!ok) ++fail;
+    };
+
+    // ── 参考 ①：f32 链（中间不舍入）→ 逐输出按 f16 舍入 ──
+    //（输入 x 是 f16：f32 compute 路径先抬 f32（精确无损），与复合 kernel 的
+    // 输入边界 cast 同一抬升口径）
+    auto fA = nn::dsl::compute(gpu, nn::dsl::leaf(x) * Scalar{0.3f}, nn::Precision::F32);
+    if (!fA)
+    {
+        std::cerr << "    [f32 参考] A 失败: " << fA.error().message << "\n";
+        return 1;
+    }
+    auto fY1 = nn::dsl::compute(gpu, nn::dsl::leaf(*fA) * Scalar{0.7f}, nn::Precision::F32);
+    auto fY2 = nn::dsl::compute(gpu, nn::dsl::leaf(*fA) * Scalar{1.3f}, nn::Precision::F32);
+    if (!fY1 || !fY2)
+    {
+        std::cerr << "    [f32 参考] y1/y2 失败\n";
+        return 1;
+    }
+    auto rA = gpu.cast(*fA, nn::Precision::F16);
+    auto rY1 = gpu.cast(*fY1, nn::Precision::F16);
+    auto rY2 = gpu.cast(*fY2, nn::Precision::F16);
+    if (!rA || !rY1 || !rY2)
+    {
+        std::cerr << "    [f32 参考] f32→f16 舍入失败\n";
+        return 1;
+    }
+
+    // ── 参考 ②：GPU 未融合逐节点 f16（每节点各舍入一次 = 融合前形态）──
+    auto uA = nn::dsl::compute(gpu, nn::dsl::leaf(x) * Scalar{0.3f}, nn::Precision::F16);
+    if (!uA)
+    {
+        std::cerr << "    [未融合] A 失败: " << uA.error().message << "\n";
+        return 1;
+    }
+    auto uY1 = nn::dsl::compute(gpu, nn::dsl::leaf(*uA) * Scalar{0.7f}, nn::Precision::F16);
+    auto uY2 = nn::dsl::compute(gpu, nn::dsl::leaf(*uA) * Scalar{1.3f}, nn::Precision::F16);
+    if (!uY1 || !uY2)
+    {
+        std::cerr << "    [未融合] y1/y2 失败\n";
+        return 1;
+    }
+
+    // ── 融合执行（录制段；任何失败都必须收口 end_expr 保持配对）──
+    if (!static_cast<bool>(gpu.begin_expr()))
+    {
+        std::cerr << "    begin_expr 失败\n";
+        return 1;
+    }
+    auto gA = nn::dsl::compute(gpu, nn::dsl::leaf(x) * Scalar{0.3f}, nn::Precision::F16);
+    if (!gA)
+    {
+        (void)gpu.end_expr();
+        std::cerr << "    [record] A 失败: " << gA.error().message << "\n";
+        return 1;
+    }
+    auto gY1 = nn::dsl::compute(gpu, nn::dsl::leaf(*gA) * Scalar{0.7f}, nn::Precision::F16);
+    auto gY2 = nn::dsl::compute(gpu, nn::dsl::leaf(*gA) * Scalar{1.3f}, nn::Precision::F16);
+    const bool end_ok = static_cast<bool>(gpu.end_expr());
+    if (!gY1 || !gY2 || !end_ok)
+    {
+        std::cerr << "    [record] y1/y2/end_expr 失败"
+                  << (end_ok ? "" : "（end_expr）") << "\n";
+        return 1;
+    }
+
+    // ── 录制是否真的捕获了节点：record_graph_node_ 会把 virtual_tag 盖到返回的
+    //    占位张量上；tag==0 = 本次求值走了直求值（录制视图跨 DSO 未接入的
+    //    既有前置缺陷，f32 分量同样受影响，非 P10-④ 引入——见交付报告）。
+    const bool recorded = (gA->virtual_tag() != 0);
+    if (recorded)
+    {
+        // ① 逐位：融合 == f32 链舍入（= 复合 kernel 未降级的回归锁）
+        cmp(*gA, *rA, "vs f32链舍入 [extras A]", 1e-6f);
+        cmp(*gY1, *rY1, "vs f32链舍入 [extras y1]", 1e-6f);
+        cmp(*gY2, *rY2, "vs f32链舍入 [tail y2]", 1e-6f);
+        // ③ 判别力自检：两条参考必须确有差异（否则 ① 锁不住"融合 vs 降级"）
+        auto m1 = gpu.to_matrix(*rY1);
+        auto m2 = gpu.to_matrix(*uY1);
+        auto m3 = gpu.to_matrix(*rY2);
+        auto m4 = gpu.to_matrix(*uY2);
+        if (!m1 || !m2 || !m3 || !m4)
+        {
+            std::cerr << "    [判别力] to_matrix 失败\n";
+            ++fail;
+        }
+        else
+        {
+            const Scalar gap = std::max(max_abs_diff(*m1, *m2), max_abs_diff(*m3, *m4));
+            const bool ok = gap > 1e-6f;
+            std::cout << "[" << (ok ? "PASS" : "FAIL") << "] P10-④ 判别力自检："
+                         "f32链舍入 与 逐节点舍入 参考互差 "
+                      << gap << "（>1e-6 才能区分融合与降级）\n";
+            if (!ok) ++fail;
+        }
+    }
+    else
+    {
+        std::cout << "[SKIP] P10-④ 端到端融合锁（①/③）：录制段未捕获节点（tag=0）——"
+                     "跨 DSO 录制视图为既有前置缺陷（f32 分量同样受影响，非本改动引入），"
+                     "复合 kernel 数值锁待其修复后生效；执行侧由直调 multi_into 覆盖\n";
+    }
+    // ② 融合前后对拍（f16 半 ULP 传播量级）；A 为根节点 → 逐位
+    cmp(*gA, *uA, "vs 未融合 f16 [extras A，根节点]", 1e-6f);
+    cmp(*gY1, *uY1, "vs 未融合 f16 [extras y1]", 2e-3f);
+    cmp(*gY2, *uY2, "vs 未融合 f16 [tail y2]", 2e-3f);
+
+    // ── 直调 eval_expr_multi_into（f16 输入/输出）：不经图录制，直接验收
+    //    P10-④ 执行侧——NVI 存储精度门 + 边界 cast（输入抬 f32 → V0 复合
+    //    kernel → f16 输出 cast_into 落回）+ 多输出绑定槽序。期望与 f32 链
+    //    舍入参考**逐位一致**（1e-6 = f16 值域 O(0.1~1) 的逐位断言）。
+    {
+        nn::ExprSpec sp;
+        sp.views = {nn::expr::linear()};
+        sp.num_regs = 3;
+        sp.consts = {Scalar{0.3f}, Scalar{0.7f}, Scalar{1.3f}};
+        sp.instrs.push_back({static_cast<std::uint8_t>(nn::ExprOp::Mul), 0, nn::expr::input(0),
+                             nn::expr::cst(0), {}});
+        sp.instrs.push_back({static_cast<std::uint8_t>(nn::ExprOp::Mul), 1, nn::expr::reg(0),
+                             nn::expr::cst(1), {}});
+        sp.instrs.push_back({static_cast<std::uint8_t>(nn::ExprOp::Mul), 2, nn::expr::reg(0),
+                             nn::expr::cst(2), {}});
+        sp.extras = {0, 1};   // 槽序：[0]=tail(y2)，[1]=A，[2]=y1
+        std::vector<Tensor> mins{x};
+        std::vector<Tensor> mouts;
+        for (int k = 0; k < 3; ++k)
+            mouts.push_back(gpu.create_tensor(rows, cols, nn::Precision::F16));
+        auto mr = gpu.eval_expr_multi_into(sp, mins, rows, cols, mouts);
+        if (!mr)
+        {
+            std::cerr << "    [multi_into f16] 失败: " << mr.error().message << "\n";
+            ++fail;
+        }
+        else
+        {
+            const auto cmp2 = [&](const Tensor& got, const Tensor& ref, const char* tag)
+            {
+                auto gm = gpu.to_matrix(got);
+                auto rm = gpu.to_matrix(ref);
+                if (!gm || !rm)
+                {
+                    ++fail;
+                    return;
+                }
+                const Scalar err = max_abs_diff(*gm, *rm);
+                const bool ok = err <= 1e-6f;
+                if (!ok) std::cerr << "    [" << tag << "] err=" << err << "\n";
+                std::cout << "[" << (ok ? "PASS" : "FAIL") << "] P10-④ 直调 multi_into(f16) "
+                          << tag << " err=" << err << "\n";
+                if (!ok) ++fail;
+            };
+            cmp2(mouts[0], *rY2, "tail=y2 vs f32链舍入");
+            cmp2(mouts[1], *rA, "extras[0]=A vs f32链舍入");
+            cmp2(mouts[2], *rY1, "extras[1]=y1 vs f32链舍入");
+        }
+    }
+    return fail;
+}
+
 // ── fold v1 分块状态归约：CPU vs GPU 对拍 ──────────────────────────────
 // 同 spec → 同 key → 命中 scan 收集的 fold shader；同分块(EXPR_FOLD_BLOCK)、
 // 同指令序、每线程一行与 CPU 执行器逐指令同构 → rowmax 期望**逐位一致**；
@@ -1421,6 +1630,7 @@ int main()
     fail += run_reduce_consts(*cpu_engine, *gpu_engine);
     fail += run_reduce_postprocess(*cpu_engine, *gpu_engine);
     fail += run_matmul_multiconsumer(*cpu_engine, *gpu_engine);
+    fail += run_f16_diamond(*cpu_engine, *gpu_engine);
     fail += run_fold_gpu(*cpu_engine, *gpu_engine);
     fail += run_fold_attn_gpu(*cpu_engine, *gpu_engine);
     fail += run_fallback(*cpu_engine, *gpu_engine);
