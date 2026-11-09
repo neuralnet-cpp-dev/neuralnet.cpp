@@ -206,8 +206,9 @@ load_state`（含 Adam 的 `t`）；读写 API = `CheckpointState` / `peek_train
 `text_infer` / `mnist_infer` 用 `peek_any_model_spec` + `load_any_model` + `peek_model_role`。
 **`Layer::sub_layers()` 已删除**（层树枚举没有消费者）；参数下标转发走**受保护的**
 `param_children()`（仅供参数协议，不是对外结构契约）。
-⑤ **梯度惰性分配**：`Linear` / `BitLinear` 的梯度只在 `param_gradients()` /
-`backward()` 首次触及时建（`grad_buffers_allocated()` 可见）；新增层若也用
+⑤ **梯度分配**：`Linear` 仍惰性（首次 `param_gradients()` / `backward()` 触及时建）；
+`BitLinear` 训练态在 `init_impl` 即 `ensure_grad_()` **预分配**，惰性路径只兜底
+反序列化载入；两者都以 `grad_buffers_allocated()` 可见。新增层若也用
 `ensure_grad_()` 模式，注意**返回 void 的函数里用 `NN_UNWRAP` 而不是 `NN_FAIL`**
 （后者是 `return std::unexpected` 语义，`-Wreturn-mismatch` 直接编译失败）。
 

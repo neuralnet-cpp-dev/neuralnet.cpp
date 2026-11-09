@@ -655,10 +655,10 @@ BitLinear 只在 `latent_w_.write_epoch()` 变化时重算 τ/wq，`quantize_cal
 的 dX 变成一趟 GEMM，顺带省掉 `dy_scaled` 中间量与一次 dispatch）。
 `supports_ternary_gemm()` 是能力位；未接的后端/设备自动退回 f16 稠密缓冲。
 
-**⑤ 惰性梯度缓冲（F2）**：梯度只在 `param_gradients()` / `backward()` 首次触及时分配
-（`TensorRef` 是成员引用 → 对优化器透明），`grad_buffers_allocated()` 是可见信号。
-推理路径因此不再为梯度付存储：三值层推理足迹 10 B/权重 → 6 B/权重（grad 那 4 B 是
-40%）。
+**⑤ 梯度缓冲（F2/L4）**：`BitLinear` 训练态在 `init_impl` 即 `ensure_grad_()`
+**预分配**梯度（惰性路径只兜底反序列化载入）；`TensorRef` 是成员引用 → 对优化器透明，
+`grad_buffers_allocated()` 是可见信号。推理路径不建梯度：三值层推理足迹
+10 B/权重 → 6 B/权重（grad 那 4 B 是 40%）。`Linear` 仍为惰性分配。
 
 **⑥ 按 regime 选址（关键实测结论）**：打包 GEMM 在**宽 batch 下输给**分块 f16 GEMM
 （本 shader 按输出元素重复解码）：102/40HX 实测 60 步 d256/L4 训练，**强制打包 4.0 s
