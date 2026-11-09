@@ -17,6 +17,8 @@
 //       同结构重复 add 只留一条；tri_skip（只翻该字段）与掩码 body 差异均进 key
 //    8. 锚点代表值契约：注意力 fold 自登记（P4-4 ①）只登记一组代表形状，故
 //       同一组合跨形状 key 必须相同；10 个组合（掩码 × 偏置 × {MHA,GQA}）互不相同
+//    9. 行并行门控：越过 65536 门控的并行结果与逐行串行逐位一致（#T1）
+//   10. tri_skip 开/关逐位对拍 + 上三角毒化（整块与元素级，证明死区不被读，#T3）
 //  纯 CPU；输出 (rows,1)（eval_expr 的 cols 参数 = 1 调用约定）。
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -700,6 +702,231 @@ int test_expr_fold()
         check_gate_parallel(sden, 64, "softmax_denom");
         check_gate_boundary(rowsum, "rowsum");
         check_gate_boundary(sden, "softmax_denom");
+    }
+
+    // ── 10) tri_skip 开/关逐位对拍 + 上三角毒化（#T3）───────────────────
+    // a) 同一 Causal spec 仅翻 `fold->tri_skip`：开启时 mm 段走"下三角块任务
+    //    表"、body 把 valid 钳到 qt+1，关闭时全量算完再由掩码置 -inf/0。两者
+    //    必须**逐位**一致——任务表只删不读的块，任何被读元素的计算路径不得变。
+    // b) 毒化：把断言行**不可能读到**的区域填 NaN，输出必须与干净输入逐位相同
+    //    （NaN 一旦被读就必进输出，fabs 比较会因 NaN 恒假而失效，故用逐位相等
+    //    + isfinite 双检）。分两级：
+    //      · 整块：seq=192 > 2×BLOCK_SIZE(64)，行块 [0,64) 的 mm 任务表
+    //        j_end=64 → K 的 j≥64 列、V_t 的 j≥64 行对这些行是死区；
+    //      · 元素：合成 fold（batch=rows ⇒ m_per=1 ⇒ qt≡0），仅 j=0 可见，
+    //        K 的 j≥1 列全为死区——直接验证块内 valid 钳位（非仅整块跳过）。
+    {
+        struct TSh
+        {
+            std::uint32_t bh, seq, dk;
+        };
+        // ── a) 开关对拍 ──
+        for (const TSh sh : {TSh{1, 5, 4}, TSh{2, 64, 5}, TSh{2, 133, 4}, TSh{1, 192, 8},
+                             TSh{3, 65, 3}})
+        {
+            const std::size_t rows_out = static_cast<std::size_t>(sh.bh) * sh.seq;
+            nn::Matrix mQ(static_cast<std::size_t>(sh.bh) * sh.dk, sh.seq);
+            nn::Matrix mK(static_cast<std::size_t>(sh.bh) * sh.dk, sh.seq);
+            nn::Matrix mVt(rows_out, sh.dk);
+            for (auto& v : mQ.span()) v = dist(rng);
+            for (auto& v : mK.span()) v = dist(rng);
+            for (auto& v : mVt.span()) v = dist(rng);
+            nn::Tensor Q = upload(engine, mQ);
+            nn::Tensor K = upload(engine, mK);
+            nn::Tensor Vt = upload(engine, mVt);
+            const std::array<nn::Tensor, 3> ins{Q, K, Vt};
+
+            const nn::ExprSpec on =
+                nn::expr::make_fold_attn_o(sh.seq, sh.dk, sh.bh,
+                                           nn::expr::AttnMaskKind::Causal, false);
+            nn::ExprSpec off = on;
+            off.fold->tri_skip = false;
+            auto o_on = engine.eval_expr(on, ins, rows_out, sh.dk);
+            auto o_off = engine.eval_expr(off, ins, rows_out, sh.dk);
+            const std::string tag = "tri_skip 对拍 bh=" + std::to_string(sh.bh) +
+                                    " seq=" + std::to_string(sh.seq) +
+                                    " dk=" + std::to_string(sh.dk);
+            if (!o_on || !o_off)
+            {
+                check(false, tag + " eval: " +
+                                 (!o_on ? o_on.error().message : o_off.error().message));
+                continue;
+            }
+            const auto am_on = download(engine, *o_on);
+            const auto am_off = download(engine, *o_off);
+            const auto ao = am_on.span();
+            const auto bo = am_off.span();
+            bool same = true, finite = true;
+            std::size_t first_bad = ao.size();
+            for (std::size_t i = 0; i < ao.size(); ++i)
+            {
+                if (!std::isfinite(ao[i]) || !std::isfinite(bo[i])) finite = false;
+                // 逐位（float 的 == 对同值恒真；NaN 不等于自身 → 会判不等）
+                if (ao[i] != bo[i] && first_bad == ao.size()) first_bad = i;
+                if (ao[i] != bo[i]) same = false;
+            }
+            check(same && finite, tag + " 开关逐位一致（tri_skip on == off）" +
+                                      (same ? "" : "：idx " + std::to_string(first_bad)) +
+                                      (finite ? "" : "：输出非有限"));
+        }
+
+        // ── b-1) 整块毒化（真实注意力形状）──
+        {
+            constexpr std::uint32_t bh = 2, seq = 192, dk = 8;
+            const std::size_t rows_out = static_cast<std::size_t>(bh) * seq;
+            nn::Matrix mQ(static_cast<std::size_t>(bh) * dk, seq);
+            nn::Matrix mK(static_cast<std::size_t>(bh) * dk, seq);
+            nn::Matrix mVt(rows_out, dk);
+            for (auto& v : mQ.span()) v = dist(rng);
+            for (auto& v : mK.span()) v = dist(rng);
+            for (auto& v : mVt.span()) v = dist(rng);
+            nn::Matrix mKp = mK;
+            nn::Matrix mVp = mVt;
+            // 每个 batch 的行块内，键位 j ≥ 64 对上三角 query i<64 全不可见
+            for (std::size_t r = 0; r < mK.rows(); ++r)
+                for (std::size_t j = 64; j < mK.cols(); ++j)
+                    mKp.span()[r * seq + j] = std::numeric_limits<Scalar>::quiet_NaN();
+            for (std::size_t j = 64; j < seq; ++j)
+                for (std::uint32_t b = 0; b < bh; ++b)
+                    for (std::size_t d = 0; d < dk; ++d)
+                        mVp.span()[(static_cast<std::size_t>(b) * seq + j) * dk + d] =
+                            std::numeric_limits<Scalar>::quiet_NaN();
+
+            const nn::ExprSpec spec =
+                nn::expr::make_fold_attn_o(seq, dk, bh, nn::expr::AttnMaskKind::Causal, false);
+            nn::Tensor Q = upload(engine, mQ);
+            nn::Tensor K = upload(engine, mK);
+            nn::Tensor Kp = upload(engine, mKp);
+            nn::Tensor Vt = upload(engine, mVt);
+            nn::Tensor Vp = upload(engine, mVp);
+            const std::array<nn::Tensor, 3> clean_ins{Q, K, Vt};
+            const std::array<nn::Tensor, 3> pois_ins{Q, Kp, Vp};
+            auto clean = engine.eval_expr(spec, clean_ins, rows_out, dk);
+            auto pois = engine.eval_expr(spec, pois_ins, rows_out, dk);
+            check(clean.has_value() && pois.has_value(),
+                  "tri_skip 毒化（整块）eval" +
+                      (clean && pois ? "" : ": " + (!clean ? clean.error().message
+                                                           : pois.error().message)));
+            if (clean && pois)
+            {
+                const auto am = download(engine, *clean);
+                const auto bm = download(engine, *pois);
+                const auto a = am.span();
+                const auto b = bm.span();
+                bool same = true, finite = true;
+                std::size_t first_bad = rows_out;
+                for (std::uint32_t bb = 0; bb < bh; ++bb)
+                    for (std::uint32_t i = 0; i < 64; ++i)
+                    {
+                        const std::size_t oi = static_cast<std::size_t>(bb) * seq + i;
+                        for (std::size_t d = 0; d < dk; ++d)
+                        {
+                            const Scalar x = a[oi * dk + d], y = b[oi * dk + d];
+                            if (!std::isfinite(y)) finite = false;
+                            if (x != y)
+                            {
+                                same = false;
+                                if (first_bad == rows_out) first_bad = oi;
+                            }
+                        }
+                    }
+                check(same && finite,
+                      "tri_skip 毒化（整块）：K[j≥64]/V_t[j≥64]=NaN 时前 64 行输出不变" +
+                          (same ? "" : "：首行 " + std::to_string(first_bad)) +
+                          (finite ? "" : "：输出被 NaN 污染（上三角被读取）"));
+            }
+        }
+
+        // ── b-2) 元素级毒化（m_per=1：仅 j=0 可见）──
+        {
+            constexpr std::uint32_t keys = 192, dk = 4, rows_p = 6;
+            // A: trans0 → (batch*m_per, inner) = (rows_p, dk)
+            // B: trans0 → (batch*inner, K)      = (rows_p*dk, keys)
+            nn::Matrix mA(rows_p, dk), mB(static_cast<std::size_t>(rows_p) * dk, keys);
+            for (auto& v : mA.span()) v = dist(rng);
+            for (auto& v : mB.span()) v = dist(rng);
+            nn::Matrix mBp = mB;
+            // j≥1 全毒化：m_per=1 ⇒ qt≡0 ⇒ 只有 j=0 可被 body 读到
+            for (std::size_t r = 0; r < mB.rows(); ++r)
+                for (std::uint32_t j = 1; j < keys; ++j)
+                    mBp.span()[r * keys + j] = std::numeric_limits<Scalar>::quiet_NaN();
+
+            // fold：out[r] = Σ_{可见 j} C[r][j]，C = A·B（batch=rows → m_per=1）
+            nn::ExprSpec spec;
+            nn::FoldSpec f;
+            f.k = keys;
+            f.num_state = 1;
+            f.inits = {Scalar{0}};
+            f.matmul = nn::MatmulSpec{0, 1, 0, 0, dk, rows_p};
+            f.tri_skip = true;
+            {
+                nn::ExprInstr b0; // r1 = Matmul + c0（元素类）
+                b0.op = static_cast<std::uint8_t>(nn::ExprOp::Add);
+                b0.dst = 1;
+                b0.a = nn::expr::matmul_op();
+                b0.b = nn::expr::cst(0);
+                nn::ExprInstr b1; // r2 = RowSum(r1)（块归约）
+                b1.op = static_cast<std::uint8_t>(nn::ExprOp::RowSum);
+                b1.dst = 2;
+                b1.a = nn::expr::reg(1);
+                nn::ExprInstr b2; // state0 += Reduce(r2)
+                b2.op = static_cast<std::uint8_t>(nn::ExprOp::Add);
+                b2.dst = 0;
+                b2.a = nn::expr::reg(0);
+                b2.b = nn::expr::reduce(2);
+                f.body = {b0, b1, b2};
+            }
+            {
+                nn::ExprInstr fin; // 状态自复制 → 输出
+                fin.op = static_cast<std::uint8_t>(nn::ExprOp::Add);
+                fin.dst = 0;
+                fin.a = nn::expr::reg(0);
+                fin.b = nn::expr::cst(0);
+                f.finalize = {fin};
+            }
+            spec.fold = std::move(f);
+            spec.consts = {Scalar{0}};
+            spec.num_regs = 3;
+            spec.views = {nn::expr::linear(), nn::expr::linear()};
+            check(nn::validate_expr_spec(spec, 2).has_value(),
+                  "tri_skip 元素级探针 spec validate");
+
+            nn::Tensor A = upload(engine, mA);
+            nn::Tensor B = upload(engine, mB);
+            nn::Tensor Bp = upload(engine, mBp);
+            const std::array<nn::Tensor, 2> clean_ins{A, B};
+            const std::array<nn::Tensor, 2> pois_ins{A, Bp};
+            auto clean = engine.eval_expr(spec, clean_ins, rows_p, 1);
+            auto pois = engine.eval_expr(spec, pois_ins, rows_p, 1);
+            check(clean.has_value() && pois.has_value(),
+                  "tri_skip 毒化（元素级）eval" +
+                      (clean && pois ? "" : ": " + (!clean ? clean.error().message
+                                                           : pois.error().message)));
+            if (clean && pois)
+            {
+                const auto am = download(engine, *clean);
+                const auto bm = download(engine, *pois);
+                const auto a = am.span();
+                const auto b = bm.span();
+                const auto av = mA.span();
+                const auto bv = mB.span();
+                bool same = true, finite = true, ref_ok = true;
+                for (std::uint32_t r = 0; r < rows_p; ++r)
+                {
+                    Scalar ref = 0;
+                    for (std::uint32_t d = 0; d < dk; ++d)
+                        ref += av[r * dk + d] * bv[(static_cast<std::size_t>(r) * dk + d) * keys];
+                    if (!std::isfinite(b[r])) finite = false;
+                    if (a[r] != b[r]) same = false;
+                    if (std::fabs(a[r] - ref) > Scalar{1e-4}) ref_ok = false;
+                }
+                check(same && finite,
+                      std::string("tri_skip 毒化（元素级）：K[j≥1]=NaN 时输出不变"
+                                  "（valid 钳位不读死区）") +
+                          (finite ? "" : "：输出被 NaN 污染"));
+                check(ref_ok, "tri_skip 元素级探针输出 == Σ_d A[r][d]·B[d][0]（确在读 j=0）");
+            }
+        }
     }
 
     return fail;
