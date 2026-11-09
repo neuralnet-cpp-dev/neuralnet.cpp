@@ -875,6 +875,276 @@ int run_reduce_consts(nn::ComputeEngine& cpu, nn::ComputeEngine& gpu)
     return ok ? 0 : 1;
 }
 
+// ── 归约 + 逐元素后处理（P10-② 直派形态）：sqrt(col_sum(x²)/C + ε) ────────
+// CPU 早已支持该形态（eval_expr 按指令下标反向切片）；GPU 曾静默错值
+// （ce_fusion_test 记录 err≈1.9，实测于 2026-09-19），但列归约分支其后
+// （2026-09-25/27「列内组织」+ emit_col_merge、10-04 4 路累加器）整体重写——
+// 本用例以主机独立参考对拍两轴形态（列 → (1,cols)、行 → (rows,1)），
+// 复核现行生成器是否已补齐该形态（rows/cols 取非整除尾以覆盖钳制分支）。
+int run_reduce_postprocess(ComputeEngine& cpu, ComputeEngine& gpu)
+{
+    int fail = 0;
+
+    // ── 列归约 + 后处理 → (1, cols)：sqrt(sum_rows(x²)/C + ε) ──
+    {
+        const std::size_t rows = 11, cols = 5;
+        Matrix xm(rows, cols);
+        std::mt19937 rng(7);
+        std::uniform_real_distribution<Scalar> dist(-1.5f, 1.5f);
+        for (auto& v : xm.span()) v = dist(rng);
+        const Scalar inv_c = Scalar{1} / static_cast<Scalar>(rows);
+        const Scalar eps = Scalar{1e-5f};
+        Matrix ref(1, cols);
+        for (std::size_t c = 0; c < cols; ++c)
+        {
+            Scalar s = 0;
+            for (std::size_t r = 0; r < rows; ++r)
+            {
+                const Scalar v = xm.span()[r * cols + c];
+                s += v * v;
+            }
+            ref.span()[c] = std::sqrt(s * inv_c + eps);
+        }
+        const auto run = [&](ComputeEngine& e, const char* tag, Matrix& out) -> bool
+        {
+            auto x = e.from_matrix(xm);
+            if (!x)
+            {
+                std::cerr << "    [" << tag << "] 上传失败\n";
+                return false;
+            }
+            auto r = nn::dsl::compute_reduce(
+                e,
+                nn::dsl::sqrt(nn::dsl::col_reduce_sum(nn::dsl::leaf(*x) * nn::dsl::leaf(*x)) *
+                                  nn::dsl::rparam(inv_c) +
+                              nn::dsl::rparam(eps)),
+                rows, cols);
+            if (!r)
+            {
+                std::cerr << "    [" << tag << "] compute_reduce 失败: " << r.error().message
+                          << "\n";
+                return false;
+            }
+            auto m = e.to_matrix(*r);
+            if (!m)
+            {
+                std::cerr << "    [" << tag << "] to_matrix 失败\n";
+                return false;
+            }
+            out = *m;
+            return true;
+        };
+        Matrix mc, mg;
+        const bool okc = run(cpu, "CPU", mc);
+        const bool okg = run(gpu, "GPU", mg);
+        Scalar d_cpu = 1e30f, d_gpu = 1e30f;
+        if (okc) d_cpu = max_abs_diff(mc, ref);
+        if (okg) d_gpu = max_abs_diff(mg, ref);
+        const bool ok = okc && okg && d_cpu <= 1e-5f && d_gpu <= 1e-5f && mg.rows() == 1 &&
+                        mg.cols() == cols;
+        if (!ok) std::cerr << "    col(11x5): cpu_err=" << d_cpu << " gpu_err=" << d_gpu << "\n";
+        std::cout << "[" << (ok ? "PASS" : "FAIL") << "] 归约+后处理 col sqrt(sum(x²)/C+ε)"
+                  << " (11x5) cpu_err=" << d_cpu << " gpu_err=" << d_gpu << "\n";
+        if (!ok) ++fail;
+    }
+
+    // ── 行归约 + 后处理 → (rows, 1)：row_sum(x)*scale + bias ──
+    {
+        const std::size_t rows = 9, cols = 37;
+        Matrix xm(rows, cols);
+        std::mt19937 rng(11);
+        std::uniform_real_distribution<Scalar> dist(-2.0f, 2.0f);
+        for (auto& v : xm.span()) v = dist(rng);
+        const Scalar scale = Scalar{0.25f};
+        const Scalar bias = Scalar{-0.5f};
+        Matrix ref(rows, 1);
+        for (std::size_t r = 0; r < rows; ++r)
+        {
+            Scalar s = 0;
+            for (std::size_t c = 0; c < cols; ++c) s += xm.span()[r * cols + c];
+            ref.span()[r] = s * scale + bias;
+        }
+        const auto run = [&](ComputeEngine& e, const char* tag, Matrix& out) -> bool
+        {
+            auto x = e.from_matrix(xm);
+            if (!x)
+            {
+                std::cerr << "    [" << tag << "] 上传失败\n";
+                return false;
+            }
+            auto r = nn::dsl::compute_reduce(
+                e, nn::dsl::row_reduce_sum(nn::dsl::leaf(*x)) * nn::dsl::rparam(scale) +
+                       nn::dsl::rparam(bias),
+                rows, cols);
+            if (!r)
+            {
+                std::cerr << "    [" << tag << "] compute_reduce 失败: " << r.error().message
+                          << "\n";
+                return false;
+            }
+            auto m = e.to_matrix(*r);
+            if (!m)
+            {
+                std::cerr << "    [" << tag << "] to_matrix 失败\n";
+                return false;
+            }
+            out = *m;
+            return true;
+        };
+        Matrix mc, mg;
+        const bool okc = run(cpu, "CPU", mc);
+        const bool okg = run(gpu, "GPU", mg);
+        Scalar d_cpu = 1e30f, d_gpu = 1e30f;
+        if (okc) d_cpu = max_abs_diff(mc, ref);
+        if (okg) d_gpu = max_abs_diff(mg, ref);
+        const bool ok = okc && okg && d_cpu <= 1e-5f && d_gpu <= 1e-5f && mg.rows() == rows &&
+                        mg.cols() == 1;
+        if (!ok) std::cerr << "    row(9x37): cpu_err=" << d_cpu << " gpu_err=" << d_gpu << "\n";
+        std::cout << "[" << (ok ? "PASS" : "FAIL") << "] 归约+后处理 row sum(x)*s+b"
+                  << " (9x37) cpu_err=" << d_cpu << " gpu_err=" << d_gpu << "\n";
+        if (!ok) ++fail;
+    }
+    return fail;
+}
+
+// ── P10-① GPU 对拍：多消费者 matmul 头的分量 kernel（extras 写穿）────────
+// 录制图：mm = matmul(A,B)+bias；y1 = mm+bias2；y2 = mm+bias3（双消费者）。
+// 融合预期 = 单 kernel（members=mm,y1,y2；extras=[mm.out, y1.out] 写穿）。
+// 对拍基准 = **GPU 未融合**逐条 dispatch（同 generate_glsl_matmul、同 K 累加
+// 应逐位一致；1e-6 容差兜底并打印实测 err）。
+int run_matmul_multiconsumer(ComputeEngine& cpu, ComputeEngine& gpu)
+{
+    (void)cpu;
+    const std::size_t M = 5, K = 7, N = 6;   // 非整除尾（覆盖 rr/cc 守卫路径）
+    Matrix Am(M, K), Bm(K, N), b1(M, N), b2(M, N), b3(M, N);
+    std::mt19937 rng(41);
+    std::uniform_real_distribution<Scalar> dist(-1.0f, 1.0f);
+    for (auto& v : Am.span()) v = dist(rng);
+    for (auto& v : Bm.span()) v = dist(rng);
+    for (auto& v : b1.span()) v = dist(rng);
+    for (auto& v : b2.span()) v = dist(rng);
+    for (auto& v : b3.span()) v = dist(rng);
+    const Tensor A = upload(gpu, Am);
+    const Tensor B = upload(gpu, Bm);
+    const Tensor b1t = upload(gpu, b1);
+    const Tensor b2t = upload(gpu, b2);
+    const Tensor b3t = upload(gpu, b3);
+
+    // GPU 未融合参考（逐条 dispatch）
+    auto u0 = nn::dsl::compute(gpu, nn::dsl::matmul(A, B, false, false) + nn::dsl::leaf(b1t),
+                               M, N);
+    if (!u0)
+    {
+        std::cerr << "    [GPU-unfused] mm 失败: " << u0.error().message << "\n";
+        return 1;
+    }
+    auto u1 = nn::dsl::compute(gpu, nn::dsl::leaf(*u0) + nn::dsl::leaf(b2t), M, N);
+    auto u2 = nn::dsl::compute(gpu, nn::dsl::leaf(*u0) + nn::dsl::leaf(b3t), M, N);
+    if (!u1 || !u2)
+    {
+        std::cerr << "    [GPU-unfused] 消费节点失败\n";
+        return 1;
+    }
+
+    // 录制（融合执行）；任何失败都必须收口 end_expr（保持录制段配对）
+    int fail = 0;
+    if (!static_cast<bool>(gpu.begin_expr()))
+    {
+        std::cerr << "    begin_expr 失败\n";
+        return 1;
+    }
+    auto g0 = nn::dsl::compute(gpu, nn::dsl::matmul(A, B, false, false) + nn::dsl::leaf(b1t),
+                               M, N);
+    if (!g0)
+    {
+        (void)gpu.end_expr();
+        std::cerr << "    [record] mm 失败: " << g0.error().message << "\n";
+        return 1;
+    }
+    auto g1 = nn::dsl::compute(gpu, nn::dsl::leaf(*g0) + nn::dsl::leaf(b2t), M, N);
+    auto g2 = nn::dsl::compute(gpu, nn::dsl::leaf(*g0) + nn::dsl::leaf(b3t), M, N);
+    const bool end_ok = static_cast<bool>(gpu.end_expr());
+    if (!g1 || !g2 || !end_ok)
+    {
+        std::cerr << "    [record] 消费节点/end_expr 失败"
+                  << (end_ok ? "" : "（end_expr）") << "\n";
+        return 1;
+    }
+    // 三输出对拍（g0 = extras 写穿的 matmul 头输出 —— 本用例的核心断言）
+    const auto cmp = [&](const Tensor& got, const Tensor& ref, const char* tag)
+    {
+        auto gm = gpu.to_matrix(got);
+        auto rm = gpu.to_matrix(ref);
+        if (!gm || !rm)
+        {
+            std::cerr << "    [" << tag << "] to_matrix 失败\n";
+            ++fail;
+            return;
+        }
+        const Scalar err = max_abs_diff(*gm, *rm);
+        const bool ok = err <= 1e-6f;
+        if (!ok) std::cerr << "    [" << tag << "] err=" << err << "\n";
+        std::cout << "[" << (ok ? "PASS" : "FAIL") << "] P10-① 多消费者 matmul 头融合 vs "
+                  << "GPU 未融合 " << tag << " err=" << err << "\n";
+        if (!ok) ++fail;
+    };
+    cmp(*g0, *u0, "mm 头（extras 写穿）");
+    cmp(*g1, *u1, "y1（extras 写穿）");
+    cmp(*g2, *u2, "y2（tail 主输出）");
+
+    // ── 直调 eval_expr_multi_into（matmul+extras spec）：不经融合（融合被
+    //    expr_spec.hpp:1099 契约守卫挡住 = #P10-① 止损点），直接验收执行侧
+    //    三件套：generate_glsl_matmul 的 extras 发射 + 派发 mm 形态参数 +
+    //    绑定布局（bex 在主输出之后）。r0 = mm+b1（extras[0]）、r1 = r0+r0。
+    {
+        nn::ExprSpec sp;
+        sp.views = {nn::expr::linear(), nn::expr::linear(), nn::expr::linear()};
+        sp.num_regs = 2;
+        sp.matmul = nn::MatmulSpec{0, 1, 0, 0, static_cast<std::uint32_t>(K), 1};
+        sp.instrs.push_back({static_cast<std::uint8_t>(nn::ExprOp::Add),
+                             0,
+                             nn::expr::matmul_op(),
+                             nn::expr::input(2),
+                             {}});
+        sp.instrs.push_back(
+            {static_cast<std::uint8_t>(nn::ExprOp::Add), 1, nn::expr::reg(0), nn::expr::reg(0), {}});
+        sp.extras = {0};
+        // 参考：tail = u0+u0（未融合 GPU）
+        auto u0d = nn::dsl::compute(gpu, nn::dsl::leaf(*u0) + nn::dsl::leaf(*u0), M, N);
+        std::vector<Tensor> mins{A, B, b1t};
+        std::vector<Tensor> mouts{gpu.create_tensor(M, N), gpu.create_tensor(M, N)};
+        auto mr = gpu.eval_expr_multi_into(sp, mins, M, N, mouts);
+        if (!mr || !u0d)
+        {
+            std::cerr << "    [multi_into matmul+extras] 失败: "
+                      << (mr ? u0d.error().message : mr.error().message) << "\n";
+            ++fail;
+        }
+        else
+        {
+            const auto cmp2 = [&](const Tensor& got, const Tensor& ref, const char* tag)
+            {
+                auto gm = gpu.to_matrix(got);
+                auto rm = gpu.to_matrix(ref);
+                if (!gm || !rm)
+                {
+                    ++fail;
+                    return;
+                }
+                const Scalar err = max_abs_diff(*gm, *rm);
+                const bool ok = err <= 1e-6f;
+                if (!ok) std::cerr << "    [" << tag << "] err=" << err << "\n";
+                std::cout << "[" << (ok ? "PASS" : "FAIL") << "] P10-① 直调 multi_into"
+                          << "(matmul+extras) " << tag << " err=" << err << "\n";
+                if (!ok) ++fail;
+            };
+            cmp2(mouts[0], *u0d, "tail=r0+r0");
+            cmp2(mouts[1], *u0, "extras[0]=mm+b1");
+        }
+    }
+    return fail;
+}
+
 // ── fold v1 分块状态归约：CPU vs GPU 对拍 ──────────────────────────────
 // 同 spec → 同 key → 命中 scan 收集的 fold shader；同分块(EXPR_FOLD_BLOCK)、
 // 同指令序、每线程一行与 CPU 执行器逐指令同构 → rowmax 期望**逐位一致**；
@@ -1149,6 +1419,8 @@ int main()
     fail += run_norm<nn::RMSNorm>("rmsnorm", *cpu_engine, *gpu_engine);
     fail += run_norm<nn::LayerNorm>("layernorm", *cpu_engine, *gpu_engine);
     fail += run_reduce_consts(*cpu_engine, *gpu_engine);
+    fail += run_reduce_postprocess(*cpu_engine, *gpu_engine);
+    fail += run_matmul_multiconsumer(*cpu_engine, *gpu_engine);
     fail += run_fold_gpu(*cpu_engine, *gpu_engine);
     fail += run_fold_attn_gpu(*cpu_engine, *gpu_engine);
     fail += run_fallback(*cpu_engine, *gpu_engine);

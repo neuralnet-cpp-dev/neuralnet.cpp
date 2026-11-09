@@ -6,7 +6,7 @@
 //      col_reduce_sum(exp(logits - cb(col_max)))，对照手写参考
 //    - loss_vec / grad：RowGather + Row 操作数组合（不物化全 softmax），
 //      含 mask / 越界标签处理
-//    - 归约 + 后处理（reduce(...) * k + c）：CPU 正确求值、GPU 必须硬报错
+//    - 归约 + 后处理（reduce(...) * k + c）：CPU/GPU 均正确值对拍（P10-②d）
 //    - CrossEntropyLoss::forward_sparse 端到端（loss + grad vs 参考）
 //  CPU 引擎 vs 手写参考；GPU（Vulkan）融合 shader vs CPU 参考。
 //
@@ -209,9 +209,8 @@ int run_case(nn::ComputeEngine& eng, const char* tag)
     //   切片——寄存器分配器按 liveness 复用寄存器号，若按**寄存器号**传播
     //   所需指令，后处理指令的 dst 与归约前的 Mul 同号时会把归约前的定义
     //   误判为输出链的一部分（Linear 访问）→ 此类表达式被错误拒绝。
-    // GPU：归约融合 shader 不支持"归约后仍有逐元素后处理"的形态（只会静默
-    //   错值），故必须**硬报错**而非返回错值；本用例断言这一点，防止退化
-    //   为静默错误。
+    // GPU：生成器自 2026-09-25 重写后支持"归约后逐元素后处理"（P10-②d，
+    //   40HX 实测逐位级正确）——与 CPU 同口径值对拍，不再断言硬报错。
     {
         char nm[128];
         std::snprintf(nm, sizeof(nm), "%s IR 归约+后处理 (reduce*k+c)", tag);
@@ -232,15 +231,10 @@ int run_case(nn::ComputeEngine& eng, const char* tag)
                     nn::dsl::rparam(inv_c) +
                 nn::dsl::rparam(eps)),
             C, N);
-        if (eng.device() == nn::Device::CPU) { check(nm, std::move(r), ref); }
-        else
-        {
-            // GPU：必须显式拒绝（"静默错值"是更坏的失败模式）
-            const bool rejected = !r;
-            std::printf("[%s] %s（GPU 应硬报错而非给出错值）%s%s\n", rejected ? "PASS" : "FAIL", nm,
-                        rejected ? "  错误: " : "", rejected ? r.error().message.c_str() : "");
-            if (!rejected) ++fail;
-        }
+        // GPU 生成器自 2026-09-25 重写后已支持归约后处理（P10-②d 实测
+        // 40HX 对拍 col 5.96e-08 / row 2.38e-07）——旧"必须硬报错"断言
+        // 已过期，与 CPU 同一值对拍口径（check_matrix 容差 1e-4）。
+        check(nm, std::move(r), ref);
     }
 
     // ── 目标传递（dsl::compute_into）：CPU + GPU 两引擎的原地语义 ──
