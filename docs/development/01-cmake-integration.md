@@ -91,7 +91,7 @@ target_link_libraries(my_app PRIVATE neuralnet::nn)
 |---|---|---|---|
 | `NN_ENABLE_GPU` | `AUTO` / `ON` / `OFF` | `AUTO` | `AUTO` = 探测到 Vulkan + glslc 就启用 GPU；`ON` = 强制要求，缺依赖则**配置期失败**（不静默降级）；`OFF` = 完全跳过（不探测、不生成 shader → 纯 CPU 最快路径） |
 | `NN_BUILD_APPS` | `ON` / `OFF` | **嵌入时 OFF**（顶层工程 ON） | 是否构建本仓 app / 基准可执行文件。嵌入时默认 OFF —— 消费方只拿库目标 |
-| `NN_ENABLE_TESTS` | `ON` / `OFF` | `OFF` | 是否构建并注册本仓测试目标（`list(APPEND NN_TEST_TARGETS ...)` 收集） |
+| `NN_ENABLE_TESTS` | `ON` / `OFF` | `OFF` | 是否构建并注册本仓测试目标（`nn_add_test_target(...)` 收集进 `NN_TEST_TARGETS`） |
 | `NN_ENABLE_NATIVE` | `ON` / `OFF` | `ON` | `-march=native`（只作用于本仓目标，不影响消费方编译选项）。分发 / CI 用 `OFF` 生成可移植基线 |
 | `NN_ENABLE_PROBES` | `ON` / `OFF` | `OFF` | **探针编译门**：打开才编译库内热路径探针并创建本仓探针目标（`f16_cpu_probe` / `gpu_stability_probe`；GPU 显存分项探针 `mem_probe` 已随引擎 .so 化迁往新仓库 `compute.neuralnet.cpp`）。会改变库头语义 → **不可与默认构建的对象 / 缓存混用** |
 | `NN_COMPILER_LAUNCHER` | path | 自动探测 ccache / sccache | 编译器缓存启动器；显式传空串 = 禁用。**模块消费方一律绕开**（ccache 4.13 不支持标准 C++ modules，见「C++ 模块」小节） |

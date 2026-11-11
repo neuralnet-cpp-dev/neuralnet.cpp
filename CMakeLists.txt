@@ -105,6 +105,18 @@ if(PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYP
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+# ── 构建类型判定（configure 期单一真源）────────────────────────────────────
+# NN_IS_DEBUG 供所有"按构建类型分派"的旗标组装复用（BMI 优化档选择、
+# CRT 镜像的 /MDd、msvcrtd 等），避免各处散写 CMAKE_BUILD_TYPE 字符串比较。
+# ⚠ 多配置生成器（CMAKE_CONFIGURATION_TYPES）无 CMAKE_BUILD_TYPE → 恒为
+#   FALSE（按非 Debug 处理）——与既有 BMI 口径一致：BMI 自定义命令是
+#   configure 期产物，本来就只服务单配置生成器（Ninja/Make）。
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(NN_IS_DEBUG TRUE)
+else()
+    set(NN_IS_DEBUG FALSE)
+endif()
+
 # ── 公共编译标志 ─────────────────────────────────────────────────────────
 # 项目规范：禁止异常、开启严格警告。按编译器选择对应标志：
 # - Clang/GCC：-fno-exceptions -Wall -Wextra -Wpedantic -Werror
@@ -470,6 +482,21 @@ function(nn_add_executable name)
     endif()
 endfunction()
 
+# ── 测试目标便捷函数：nn_add_test_target(<名字>) ─────────────────────────────
+# 约定：源文件 = src/<名字>.cpp（与目标同名；#define main 聚合体 wrapper 同样
+# 遵循）。一步完成两件事：nn_add_executable（链 nn_core + 全域模块 + 登记
+# NN_EXECUTABLE_TARGETS）+ NN_TEST_TARGETS 收集（供输出目录统一设置与
+# NN_ENABLE_TESTS 门的 ctest 注册使用）。**新增测试 = 一行**。
+# ⚠ NN_EXECUTABLE_TARGETS / NN_TEST_TARGETS 是目录级名单：函数体内的
+#   append 只写本地作用域，必须逐级 PARENT_SCOPE 上抛（与 nn_add_executable
+#   自身的写回同一机制），漏一层 = 目标没进名单（链接/注册静默缺失）。
+function(nn_add_test_target name)
+    nn_add_executable(${name} src/${name}.cpp)
+    set(NN_EXECUTABLE_TARGETS ${NN_EXECUTABLE_TARGETS} PARENT_SCOPE)
+    list(APPEND NN_TEST_TARGETS ${name})
+    set(NN_TEST_TARGETS ${NN_TEST_TARGETS} PARENT_SCOPE)
+endfunction()
+
 # ══════════════════════════════════════════════════════════════════════════
 #  C++ 模块：粒度导入路径（P4 后 13 域：core/kvrecord/dataset/tokenizer +
 #  expr/engine/layer/loss/opt/model/train/domain/cli）
@@ -833,31 +860,82 @@ set(NN_MOD_CLI_HEADERS
     include/neuralnet.cpp/training_session.hpp
 )
 
-# ── 模块注册：nn_add_module(<短名> <模块源> DEPS <依赖短名...> HEADERS <闭包头...>) ──
-# 短名 = "core" / "kvrecord" / "dataset" / "tokenizer"；C++ 模块全名 = nn.<短名>。
-# 产出：
-#   · <build>/modules/nn.<短名>.pcm —— BMI（自定义命令，DEPENDS 头闭包 + 依赖 BMI）
-#   · nn_mod_<短名>（INTERFACE）—— 消费方 target_link_libraries 即得
-#     -fmodule-file=nn.<短名>=<bmi>（依赖域的标志经 INTERFACE 传递）
-#   · nn_<短名>_bmi（custom target）—— BMI 产物聚合，nn_use_modules 挂到消费方
-function(nn_add_module modname source)
-    cmake_parse_arguments(NNM "" "" "DEPS;HEADERS" ${ARGN})
-    set(_cpp "nn.${modname}")
-    set(_bmi "${NN_LIB_BINARY_DIR}/modules/${_cpp}.${NN_BMI_EXT}")
-    # ── BMI 编译标志 = 目标编译命令**镜像**（P0/D1，docs/internal/35 §0.2）──
-    # 目录级 add_compile_options 不作用于自定义命令，须在此显式重放消费方
-    # 命令行的每一段；任何缺项都会让 PCM 加载报 configuration mismatch：
-    #   ① 调用方/工具链全局 flags（NDK --target=、-stdlib= 等）
-    #   ② 构建类型 flags（CMAKE_CXX_FLAGS_<CONFIG>：Release -O3 -DNDEBUG / Debug -g）
-    #   ③ 公共选项单一真源（-fno-exceptions/-W*/-flto=thin/-fexperimental-library…）
-    #   ④ 优化档（DEBUG/RELEASE_FLAGS，与消费方目录级 genex 同值）+ 方言标准
-    #   ⑤ Threads::Threads 的 INTERFACE_COMPILE_OPTIONS 原样镜像（消费方经
-    #      nn_core 拿到的就是这份；NDK 等环境为 -pthread，glibc≥2.34 为空——
-    #      判据直接取目标属性，与消费方严格同源）
-    #   ⑥ 探针门 + GPU 引擎宏（nn_gpu 在 add_subdirectory(engine) 才创建，
-    #      晚于模块注册 → 用生成期求值的 TARGET_EXISTS 规避顺序问题）
-    #   ⑦ include 路径 = nn_core 的 5 条，顺序亦一致
-    # 刻意不加任何模块消费宏（宏开关已随 P1 删除；任何头都不读它，见 D2 注）。
+# ── 模块构建辅助函数（BMI 路径 / 引用旗标 / CRT 镜像 / 旗标总装）────────────
+# nn_bmi_path / nn_module_ref / nn_bmi_crt_flags / nn_bmi_compile_flags。
+# 把 nn_add_module 里按编译器×配置分派的旗标组装拆出来单独成函数：
+# 路径与引用旗标只允许从这里构造（多处字面量 = 漂移风险），CRT 镜像是
+# 最容易漏项的分支（漏一项 = 链接期/导入期才炸），总装函数持有完整清单。
+
+# BMI 产物绝对路径 = nn.<mod>.${NN_BMI_EXT} 的唯一构造点：自定义命令的
+# OUTPUT/DEPS、引用旗标、消费方 INTERFACE、nn_use_modules 的 OBJECT_DEPENDS
+# 全部经此取值。
+function(nn_bmi_path out_var mod)
+    set(${out_var} "${NN_LIB_BINARY_DIR}/modules/nn.${mod}.${NN_BMI_EXT}"
+        PARENT_SCOPE)
+endfunction()
+
+# 引用单个模块 BMI 的命令行旗标（BMI 自定义命令的 DEPS 段与 clang 消费方
+# INTERFACE 共用同一形态）。MSVC 消费方不走此函数的形态——它经 rsp 见
+# nn_add_module 的 MSVC 分支注释——但 BMI 命令行内仍需逐模块 /reference。
+function(nn_module_ref out_var mod)
+    nn_bmi_path(_bmi ${mod})
+    if(MSVC)
+        set(${out_var} "/reference nn.${mod}=${_bmi}" PARENT_SCOPE)
+    else()
+        set(${out_var} "-fmodule-file=nn.${mod}=${_bmi}" PARENT_SCOPE)
+    endif()
+endfunction()
+
+# CRT 镜像旗标：自定义命令不继承目录级 add_compile_definitions 与 CMake
+# 运行库机制，须按编译器显式重放，且必须与消费方**逐项同值**——
+#   · cl：-MD[d]/-MT[d]（IFC 记录 RuntimeLibrary，缺失 = 导入不一致）+
+#     _CRT_SECURE_NO_WARNINGS（WIN32 目录级 add_compile_definitions 的重放）。
+#   · Windows + clang（GNU 驱动）：-D_DLL -D_MT + --dependent-lib=msvcrt[d]。
+#     缺失的后果按配置分野：Release = 链接期 RuntimeLibrary mismatch
+#     （40HX 实测）；Debug = 消费方 _DEBUG 决定 IDL=2 而 PCM 记 0 → 同一
+#     obj 内 /failifmismatch 链接失败（c11-debug 树实测，2026-11-11）。
+function(nn_bmi_crt_flags out_var)
+    set(_flags "")
+    if(MSVC)
+        list(APPEND _flags -D_CRT_SECURE_NO_WARNINGS)
+        if(CMAKE_MSVC_RUNTIME_LIBRARY MATCHES "Static")
+            if(NN_IS_DEBUG)
+                list(APPEND _flags "-MTd")
+            else()
+                list(APPEND _flags "-MT")
+            endif()
+        elseif(NN_IS_DEBUG)
+            list(APPEND _flags "-MDd")
+        else()
+            list(APPEND _flags "-MD")
+        endif()
+    elseif(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        list(APPEND _flags -D_DLL -D_MT)
+        if(NN_IS_DEBUG)
+            list(APPEND _flags -D_DEBUG -Xclang --dependent-lib=msvcrtd)
+        else()
+            list(APPEND _flags -Xclang --dependent-lib=msvcrt)
+        endif()
+    endif()
+    set(${out_var} "${_flags}" PARENT_SCOPE)
+endfunction()
+
+# ── BMI 编译旗标总装：镜像消费方编译命令行的每一段 ─────────────────────────
+# 目录级 add_compile_options 不作用于自定义命令，须在此显式重放消费方
+# 命令行的每一段；任何缺项都会让 PCM 加载报 configuration mismatch：
+#   ① 调用方/工具链全局 flags（NDK --target=、-stdlib= 等）
+#   ② 构建类型 flags（CMAKE_CXX_FLAGS_<CONFIG>：Release -O3 -DNDEBUG / Debug -g）
+#   ③ 公共选项单一真源（-fno-exceptions/-W*/-flto=thin/-fexperimental-library…）
+#   ④ 优化档（DEBUG/RELEASE_FLAGS，与消费方目录级 genex 同值）+ 方言标准
+#   ⑤ CRT 镜像（nn_bmi_crt_flags，按编译器×配置分派）
+#   ⑥ Threads::Threads 的 INTERFACE_COMPILE_OPTIONS 原样镜像（消费方经
+#      nn_core 拿到的就是这份；NDK 等环境为 -pthread，glibc≥2.34 为空——
+#      判据直接取目标属性，与消费方严格同源）
+#   ⑦ 探针门 + GPU 引擎宏（nn_gpu 在 add_subdirectory(engine) 才创建，
+#      晚于模块注册 → 用生成期求值的 TARGET_EXISTS 规避顺序问题）
+#   ⑧ include 路径 = nn_core 的 5 条，顺序亦一致
+# 刻意不加任何模块消费宏（宏开关已随 P1 删除；任何头都不读它，见 D2 注）。
+function(nn_bmi_compile_flags out_var)
     set(_flags "")
     separate_arguments(_user_flags UNIX_COMMAND "${CMAKE_CXX_FLAGS}")
     list(APPEND _flags ${_user_flags})
@@ -871,51 +949,21 @@ function(nn_add_module modname source)
         unset(_cfg_type)
     endif()
     list(APPEND _flags ${NN_COMMON_COMPILE_OPTIONS})
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        set(_opt ${DEBUG_FLAGS})
+    if(NN_IS_DEBUG)
+        list(APPEND _flags ${DEBUG_FLAGS})
     else()
-        set(_opt ${RELEASE_FLAGS})
+        list(APPEND _flags ${RELEASE_FLAGS})
     endif()
     if(MSVC)
         # cl 不认 clang 形 -std=c++23（D9002）；方言用与消费方同值的
         # -std:c++latest（cl 接受 -std: 别名；消费方另有一份目录级
         # /std:c++latest，同值重复无害，IFC 记录的是解析后的方言值）。
-        list(APPEND _flags ${_opt} "-std:c++latest")
-        # ── MSVC 特有镜像段：自定义命令不继承目录级 add_compile_options /
-        # add_compile_definitions 与 CMake 运行库机制，须显式重放 ──
-        #   · -MD/-MDd（或 /MT[d]）：IFC 记录 RuntimeLibrary——与 clang BMI
-        #     镜像 -D_DLL -D_MT --dependent-lib 同因，缺失即消费方导入不一致
-        #   · _CRT_SECURE_NO_WARNINGS：WIN32 目录级 add_compile_definitions
-        list(APPEND _flags -D_CRT_SECURE_NO_WARNINGS)
-        if(CMAKE_MSVC_RUNTIME_LIBRARY MATCHES "Static")
-            if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-                list(APPEND _flags "-MTd")
-            else()
-                list(APPEND _flags "-MT")
-            endif()
-        elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
-            list(APPEND _flags "-MDd")
-        else()
-            list(APPEND _flags "-MD")
-        endif()
+        list(APPEND _flags "-std:c++latest")
     else()
-        list(APPEND _flags ${_opt} "-std=c++${CMAKE_CXX_STANDARD}")
+        list(APPEND _flags "-std=c++${CMAKE_CXX_STANDARD}")
     endif()
-    if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        # Windows + clang（GNU 驱动）：CMake 给消费方编译加 -D_DLL -D_MT
-        # -Xclang --dependent-lib=msvcrt（Release；Debug 是 msvcrtd），BMI
-        # 自定义命令必须**逐项同值**——否则 pcm 记录的 RuntimeLibrary /
-        # _ITERATOR_DEBUG_LEVEL（经 _DEBUG 决定）与消费方冲突：Release 下
-        # 表现为 lld-link RuntimeLibrary mismatch（40HX 实测），Debug 下表现为
-        # 同一 obj 内 IDL=2（消费方 _DEBUG）vs IDL=0（PCM 无 _DEBUG）的
-        # /failifmismatch 链接失败（c11-debug 树实测，2026-11-11）。
-        list(APPEND _flags -D_DLL -D_MT)
-        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-            list(APPEND _flags -D_DEBUG -Xclang --dependent-lib=msvcrtd)
-        else()
-            list(APPEND _flags -Xclang --dependent-lib=msvcrt)
-        endif()
-    endif()
+    nn_bmi_crt_flags(_crt_flags)
+    list(APPEND _flags ${_crt_flags})
     get_target_property(_thread_opts Threads::Threads INTERFACE_COMPILE_OPTIONS)
     if(_thread_opts)
         list(APPEND _flags ${_thread_opts})
@@ -928,14 +976,29 @@ function(nn_add_module modname source)
         -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp"
         -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include"
         -I "${NN_LIB_SOURCE_DIR}/include")
+    set(${out_var} "${_flags}" PARENT_SCOPE)
+endfunction()
+
+# ── 模块注册：nn_add_module(<短名> <模块源> DEPS <依赖短名...> HEADERS <闭包头...>) ──
+# 短名 = "core" / "kvrecord" / "dataset" / "tokenizer"；C++ 模块全名 = nn.<短名>。
+# 产出：
+#   · <build>/modules/nn.<短名>.${NN_BMI_EXT} —— BMI（自定义命令，DEPENDS
+#     头闭包 + 依赖 BMI）；路径统一走 nn_bmi_path
+#   · nn_mod_<短名>（INTERFACE）—— 消费方 target_link_libraries 即得
+#     引用旗标（依赖域的标志经 INTERFACE 传递）
+#   · nn_<短名>_bmi（custom target）—— BMI 产物聚合，nn_use_modules 挂到消费方
+# 旗标组装（镜像消费方命令行的完整清单）在 nn_bmi_compile_flags。
+function(nn_add_module modname source)
+    cmake_parse_arguments(NNM "" "" "DEPS;HEADERS" ${ARGN})
+    set(_cpp "nn.${modname}")
+    nn_bmi_path(_bmi ${modname})
+    nn_bmi_compile_flags(_flags)
     set(_file_deps "")
     foreach(d IN LISTS NNM_DEPS)
-        if(MSVC)
-            list(APPEND _flags "/reference nn.${d}=${NN_LIB_BINARY_DIR}/modules/nn.${d}.${NN_BMI_EXT}")
-        else()
-            list(APPEND _flags "-fmodule-file=nn.${d}=${NN_LIB_BINARY_DIR}/modules/nn.${d}.${NN_BMI_EXT}")
-        endif()
-        list(APPEND _file_deps "${NN_LIB_BINARY_DIR}/modules/nn.${d}.${NN_BMI_EXT}")
+        nn_module_ref(_ref ${d})
+        list(APPEND _flags ${_ref})
+        nn_bmi_path(_dep_bmi ${d})
+        list(APPEND _file_deps "${_dep_bmi}")
     endforeach()
     foreach(h IN LISTS NNM_HEADERS)
         list(APPEND _file_deps "${NN_LIB_SOURCE_DIR}/${h}")
@@ -986,7 +1049,8 @@ function(nn_add_module modname source)
         # 缺它 = 全量 LNK2019：g_enabled / KVREC_VERSION_KEY / tl_worker_index …）
         target_link_libraries(nn_mod_${modname} INTERFACE "${_bmi_obj}")
     else()
-        target_compile_options(nn_mod_${modname} INTERFACE "-fmodule-file=${_cpp}=${_bmi}")
+        nn_module_ref(_self_ref ${modname})
+        target_compile_options(nn_mod_${modname} INTERFACE "${_self_ref}")
     endif()
     foreach(d IN LISTS NNM_DEPS)
         target_link_libraries(nn_mod_${modname} INTERFACE nn_mod_${d})
@@ -1019,12 +1083,13 @@ function(nn_use_modules target)
             # 消费方全量真实重编（正确行为，35 §2.4 口径预期）。
             get_target_property(_mod_srcs ${target} SOURCES)
             if(_mod_srcs)
+                nn_bmi_path(_m_bmi ${m})
                 foreach(s IN LISTS _mod_srcs)
                     # OBJECT_DEPENDS 路径按绝对路径解析（相对路径以构建目录为基）
                     get_filename_component(_s_abs "${s}" ABSOLUTE
                         BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
                     set_property(SOURCE ${_s_abs} APPEND PROPERTY
-                        OBJECT_DEPENDS "${NN_LIB_BINARY_DIR}/modules/nn.${m}.${NN_BMI_EXT}")
+                        OBJECT_DEPENDS "${_m_bmi}")
                 endforeach()
             endif()
         endif()
@@ -1232,235 +1297,184 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     list(APPEND NN_TEST_TARGETS f16_writeback_probe)
 
     # ── 多精度类型系统（f16 转换 / 舍入 / 张量精度 / f16 计算）──────────
-    nn_add_executable(precision_test src/precision_test.cpp)
-    list(APPEND NN_TEST_TARGETS precision_test)
+    nn_add_test_target(precision_test)
 
     # ── 多精度适配层（f16 存储真正生效：PrecisionEngine + DSL + 端到端）──
-    nn_add_executable(f16_precision_test src/f16_precision_test.cpp)
-    list(APPEND NN_TEST_TARGETS f16_precision_test)
+    nn_add_test_target(f16_precision_test)
 
     # ── 三值（T1_58）精度 + BitLinear（层能力校验 / 量化规则 / STE / 端到端）──
-    nn_add_executable(t1_58_test src/t1_58_test.cpp)
-    list(APPEND NN_TEST_TARGETS t1_58_test)
+    nn_add_test_target(t1_58_test)
 
     # ── BitNet b1.58 2B4T 的结构开关（SubLN / GQA / tied embedding，docs 22）──
-    nn_add_executable(bitnet_struct_test src/bitnet_struct_test.cpp)
-    list(APPEND NN_TEST_TARGETS bitnet_struct_test)
+    nn_add_test_target(bitnet_struct_test)
 
     # ── 写版本（write epoch）契约 + BitLinear 量化缓存（docs 21 §4.11）──
-    nn_add_executable(write_epoch_test src/write_epoch_test.cpp)
-    list(APPEND NN_TEST_TARGETS write_epoch_test)
+    nn_add_test_target(write_epoch_test)
 
     # ── 三值打包权重 + 量化 GEMM（P2/F3，docs 21 §5 的 P2 验收）──
-    nn_add_executable(ternary_gemm_test src/ternary_gemm_test.cpp)
-    list(APPEND NN_TEST_TARGETS ternary_gemm_test)
+    nn_add_test_target(ternary_gemm_test)
 
     # ── int8 激活量化（W1.58A8，P3，docs 21 §4.16）：quantize/unpack/matmul_q_i8
     #    + BitLinear int8-act 接线（前向界 / backward STE / 端到端收敛）──
-    nn_add_executable(int8_act_test src/int8_act_test.cpp)
-    list(APPEND NN_TEST_TARGETS int8_act_test)
+    nn_add_test_target(int8_act_test)
 
     # ── 模型文件角色（v7：.nnmodel / .nnckpt）+ 参数形态协议 ──
-    nn_add_executable(model_roles_test src/model_roles_test.cpp)
-    list(APPEND NN_TEST_TARGETS model_roles_test)
+    nn_add_test_target(model_roles_test)
 
     # ── 量化状态优化器 AdamWQuant（F5 第一步，docs 21 §4.13）──
-    nn_add_executable(adam_quant_test src/adam_quant_test.cpp)
-    list(APPEND NN_TEST_TARGETS adam_quant_test)
+    nn_add_test_target(adam_quant_test)
 
     # ── int8 打包状态优化器 AdamWInt8（docs 21 §4.19）：融合原语逐位对拍 +
     #    收敛 A/B + 状态账 + save/load 往返 ──
-    nn_add_executable(adam_int8_test src/adam_int8_test.cpp)
-    list(APPEND NN_TEST_TARGETS adam_int8_test)
+    nn_add_test_target(adam_int8_test)
 
     # ── Embedding 层（issue #32：查表 / 伴随散射 / padding / 整数入口）──
-    nn_add_executable(embedding_test src/embedding_test.cpp)
-    list(APPEND NN_TEST_TARGETS embedding_test)
+    nn_add_test_target(embedding_test)
 
     # ── Attention（梯度检查 + forward 一致性 + batch 行号回归）──────────
-    nn_add_executable(attn_test src/attn_test.cpp)
-    list(APPEND NN_TEST_TARGETS attn_test)
+    nn_add_test_target(attn_test)
 
     # ── CrossAttention（issue #33：双输入 / 矩形 / 双路梯度）─────────────
-    nn_add_executable(cross_attention_test src/cross_attention_test.cpp)
-    list(APPEND NN_TEST_TARGETS cross_attention_test)
+    nn_add_test_target(cross_attention_test)
 
     # ── 基础层数值梯度检查（SwiGLU / RMSNorm / Softmax）─────────────────
-    nn_add_executable(layer_gradcheck_test src/layer_gradcheck_test.cpp)
-    list(APPEND NN_TEST_TARGETS layer_gradcheck_test)
+    nn_add_test_target(layer_gradcheck_test)
 
     # ── BatchNorm（工厂不回落 + 训练/推理双态 fwd/bwd + running EMA
     #    + Model::set_training 转发 + save/load 往返逐位一致）────────────
-    nn_add_executable(batchnorm_test src/batchnorm_test.cpp)
-    list(APPEND NN_TEST_TARGETS batchnorm_test)
+    nn_add_test_target(batchnorm_test)
 
     # ── CNN（MaxPool2D 独立参考比对 + 缓存/checkpoint 契约 + 端到端冒烟）──
-    nn_add_executable(cnn_test src/cnn_test.cpp)
-    list(APPEND NN_TEST_TARGETS cnn_test)
+    nn_add_test_target(cnn_test)
 
     # ── GPT 模型（整链梯度检查 + 梯度检查点一致性）──────────────────────
-    nn_add_executable(gpt_test src/gpt_test.cpp)
-    list(APPEND NN_TEST_TARGETS gpt_test)
+    nn_add_test_target(gpt_test)
 
     # ── 采样器（P0-5：top-k / top-p / 重复惩罚 / 种子；默认配置 ≡ 旧路径）──
-    nn_add_executable(sampling_test src/sampling_test.cpp)
-    list(APPEND NN_TEST_TARGETS sampling_test)
+    nn_add_test_target(sampling_test)
 
     # ── 文档感知注意力（端到端不变性 + 灵敏度/跨样本隔离对照；掩码构建
     #    单测已随 build_attention_mask 删除）────────────────────────────────
-    nn_add_executable(doc_attn_test src/doc_attn_test.cpp)
-    list(APPEND NN_TEST_TARGETS doc_attn_test)
+    nn_add_test_target(doc_attn_test)
 
     # ── ZiPT / AttnZip 已移除（保留在 legacy/zipt 分支）──
     #     恢复前提见 docs/history/history.md「ZiPT 移除」条。
 
     # ── RAPT / ReLU 线性注意力（梯度 + 冒烟 + 梯度检查点）──────────────
-    nn_add_executable(rapt_test src/rapt_test.cpp)
-    list(APPEND NN_TEST_TARGETS rapt_test)
+    nn_add_test_target(rapt_test)
 
     # ── 表达式/IR 纯 CPU（DSL + 归约 + matmul + 优化 pass + 图 IR）────
-    nn_add_executable(expr_cpu_test src/expr_cpu_test.cpp)
-    list(APPEND NN_TEST_TARGETS expr_cpu_test)
+    nn_add_test_target(expr_cpu_test)
 
     # ── 表达式/IR GPU（图融合端到端 + AOT shader 验证 + 表达式求值）────
-    nn_add_executable(expr_gpu_test src/expr_gpu_test.cpp)
-    list(APPEND NN_TEST_TARGETS expr_gpu_test)
+    nn_add_test_target(expr_gpu_test)
 
     # ── DSL 无形状重载（dsl::compute / compute_reduce 的推导口径，P4-4）──
     # 纯 CPU（推理规则与后端无关）：推导形状 == 显式形状、逐位值一致、
     # 显式 P 透传、负例（冲突 / 无网格贡献者 → 明确报错、不猜形状）
-    nn_add_executable(dsl_shape_infer_test src/dsl_shape_infer_test.cpp)
-    list(APPEND NN_TEST_TARGETS dsl_shape_infer_test)
+    nn_add_test_target(dsl_shape_infer_test)
 
     # ── ModelSpec 架构校验（load_model 文件头 vs 模型规格比对）──────────
-    nn_add_executable(model_spec_validation_test src/model_spec_validation_test.cpp)
-    list(APPEND NN_TEST_TARGETS model_spec_validation_test)
+    nn_add_test_target(model_spec_validation_test)
 
     # ── 稀疏交叉熵融合（loss/grad vs 参考，CPU+GPU）─────────────────────
-    nn_add_executable(ce_fusion_test src/ce_fusion_test.cpp)
-    list(APPEND NN_TEST_TARGETS ce_fusion_test)
+    nn_add_test_target(ce_fusion_test)
 
     # ── 复合层逐子层默认广播（issue #29：set_precision_profile / set_training /
     # clear_cache 按 param_children() 默认转发）
-    nn_add_executable(layer_broadcast_test src/layer_broadcast_test.cpp)
-    list(APPEND NN_TEST_TARGETS layer_broadcast_test)
+    nn_add_test_target(layer_broadcast_test)
 
     # ── GPU 单次推理 batch 作用域（issue #28：InferenceScope / Model::forward
     # 自动作用域 / batch_active 查询）。无 Vulkan/无卡 → 77 = SKIP。
-    nn_add_executable(gpu_batch_scope_test src/gpu_batch_scope_test.cpp)
-    list(APPEND NN_TEST_TARGETS gpu_batch_scope_test)
+    nn_add_test_target(gpu_batch_scope_test)
 
     # ── 宿主桥公开 API（issue #30：nn::upload_span / download_span / download_vector）
     # 覆盖：F32/F16 往返（RHE 与 from_matrix 逐位同口径）、形状不匹配报错、
     # nn::detail:: 旧名过渡别名向后兼容。
-    nn_add_executable(host_bridge_test src/host_bridge_test.cpp)
-    list(APPEND NN_TEST_TARGETS host_bridge_test)
+    nn_add_test_target(host_bridge_test)
 
     # ── RV-01：前置条件校验（NN_ASSERT_ALWAYS / NN_FATAL）在 NDEBUG 下也终止 ──
     # 负例经子进程断言：越界 at / 未绑定 Tensor::engine() / 空 logits 采样
     # 必须非零退出、打印 `file:line`、且 tag 是新宏（不是 NDEBUG 下为空的 NN_ASSERT）
-    nn_add_executable(assert_always_test src/assert_always_test.cpp)
-    list(APPEND NN_TEST_TARGETS assert_always_test)
+    nn_add_test_target(assert_always_test)
 
     # ── 生命周期 v3（设备域 / Layer 状态机 / 引擎先析构路径）────────────
     # 覆盖：域模型与跨域拒绝、import 唯一入口、backend weak 缓存回收、
     # init 失败回滚、跨引擎重绑拒绝、Tensor 活过引擎。
-    nn_add_executable(layer_lifetime_test src/layer_lifetime_test.cpp)
-    list(APPEND NN_TEST_TARGETS layer_lifetime_test)
+    nn_add_test_target(layer_lifetime_test)
 
     # ── P0 生命周期契约负例（docs/internal/28 §5 P0）──────────────────────────
     # 覆盖：ExprSegment 强引用（录制段内丢外部引擎句柄仍可 end）、
     # ActivationOffloader 状态机（未 import 的重复 export = fail-fast；
     # discard 作废通道）与精度门（slab 恒 f32 ⇒ 非 F32 激活拒绝）、
     # optimizer 先于 Model 析构的正常顺序。
-    nn_add_executable(lifetime_contract_test src/lifetime_contract_test.cpp)
-    list(APPEND NN_TEST_TARGETS lifetime_contract_test)
+    nn_add_test_target(lifetime_contract_test)
 
     # -- P2a: TrainingSession (Model + Optimizer 同生共死, docs/internal/29) --
-    nn_add_executable(training_session_test src/training_session_test.cpp)
-    list(APPEND NN_TEST_TARGETS training_session_test)
+    nn_add_test_target(training_session_test)
 
     # ── RL 公共基础：有序 tensor schema / 具名张量 / 梯度包（docs/internal/31 §3）
-    nn_add_executable(tensor_schema_test src/tensor_schema_test.cpp)
-    list(APPEND NN_TEST_TARGETS tensor_schema_test)
+    nn_add_test_target(tensor_schema_test)
 
     # ── RL-0：named outputs / OutputBundleLayer / RowBandPacking / ModelSpec ─
-    nn_add_executable(rl_output_test src/rl_output_test.cpp)
-    list(APPEND NN_TEST_TARGETS rl_output_test)
+    nn_add_test_target(rl_output_test)
 
     # ── RL-1a：experience schema / GAE / return/group normalization ───────
-    nn_add_executable(rl_experience_test src/rl_experience_test.cpp)
-    list(APPEND NN_TEST_TARGETS rl_experience_test)
+    nn_add_test_target(rl_experience_test)
 
     # ── RL-1b：categorical distribution / objective components / REINFORCE ─
-    nn_add_executable(rl_policy_test src/rl_policy_test.cpp)
-    list(APPEND NN_TEST_TARGETS rl_policy_test)
+    nn_add_test_target(rl_policy_test)
 
     # ── RL-1c：PPO policy/value clip + 标准 preset 组合等价 ────────────────
-    nn_add_executable(rl_ppo_test src/rl_ppo_test.cpp)
-    list(APPEND NN_TEST_TARGETS rl_ppo_test)
+    nn_add_test_target(rl_ppo_test)
 
     # ── RL-1d：group advantage + GRPO preset ──────────────────────────────
-    nn_add_executable(rl_grpo_test src/rl_grpo_test.cpp)
-    list(APPEND NN_TEST_TARGETS rl_grpo_test)
+    nn_add_test_target(rl_grpo_test)
 
     # ── RL Vulkan smoke：AOT 闭合世界 + GPU 设备域（无卡时 77=SKIP）────────
-    nn_add_executable(rl_gpu_smoke_test src/rl_gpu_smoke_test.cpp)
-    list(APPEND NN_TEST_TARGETS rl_gpu_smoke_test)
+    nn_add_test_target(rl_gpu_smoke_test)
 
     # ── RL-2a：通用多模型 TrainingGroupSession ────────────────────────────
-    nn_add_executable(training_group_session_test
-                      src/training_group_session_test.cpp)
-    list(APPEND NN_TEST_TARGETS training_group_session_test)
+    nn_add_test_target(training_group_session_test)
 
     # ── RL-2b：rollout/buffer/sampler/metrics/checkpoint 编排 ─────────────
-    nn_add_executable(rl_pipeline_test src/rl_pipeline_test.cpp)
-    list(APPEND NN_TEST_TARGETS rl_pipeline_test)
+    nn_add_test_target(rl_pipeline_test)
 
     # ── RL end-to-end：named PPO gradients → optimizer update ─────────────
-    nn_add_executable(rl_training_integration_test
-                      src/rl_training_integration_test.cpp)
-    list(APPEND NN_TEST_TARGETS rl_training_integration_test)
+    nn_add_test_target(rl_training_integration_test)
 
     # ── F1：危险精度组合启动期告警（仅警告，不拒绝；docs/internal/24 §2.3）────
     # [1][2] 头文件函数组合矩阵（含 all=f16）单测；[3] 子进程跑 text_train/
     # mnist_train，捕获 stderr 断言告警出现 + 退出码不变；二进制缺失 → 77 = SKIP
-    nn_add_executable(cli_precision_warning_test src/cli_precision_warning_test.cpp)
-    list(APPEND NN_TEST_TARGETS cli_precision_warning_test)
+    nn_add_test_target(cli_precision_warning_test)
 
     # ── P1-1：text_train 模块化（recovery / checkpoint 的恢复路径单测）──────
     # [1] 断点路径派生；[2] --resume 角色门禁；[3] 断点往返（参数逐位一致）；
     # [4] 断点记账 + 收尾退出码语义（P1-1 第一刀回归锁）；[5] 推理模型角色。
     # 全 CPU、秒级、无外部依赖（临时目录自建自清）。
-    nn_add_executable(text_train_modules_test src/text_train_modules_test.cpp)
-    list(APPEND NN_TEST_TARGETS text_train_modules_test)
+    nn_add_test_target(text_train_modules_test)
 
     # ── P1-2 + P2-1：v8 训练状态段 + 整文件校验和（role 门禁 / 往返 / 截断）──
     # [1] TrainState ⇄ kvrec 往返；[2] Checkpoint 往返（状态 + 优化器张量逐位）；
     # [3] role 门禁；[4] Model 角色状态段长度为 0；[5] 校验和（翻字节/截断报错）；
     # [6] load_model 跳过状态段后参数逐位一致；[7] 数据集身份差异说明；
     # [8] 剥成 v7 后仍可加载（零破坏）。全 CPU、秒级、临时目录自建自清。
-    nn_add_executable(train_state_test src/train_state_test.cpp)
-    list(APPEND NN_TEST_TARGETS train_state_test)
+    nn_add_test_target(train_state_test)
 
     # ── TrainingSession 断点编排（issue #37：save_checkpoint/resume）──
-    nn_add_executable(session_checkpoint_test src/session_checkpoint_test.cpp)
-    list(APPEND NN_TEST_TARGETS session_checkpoint_test)
+    nn_add_test_target(session_checkpoint_test)
 
     # ── issue #39 RFC 32 阶段 B：BatchSource 数据供给契约 ──────────────────
-    nn_add_executable(batch_source_test src/batch_source_test.cpp)
-    list(APPEND NN_TEST_TARGETS batch_source_test)
+    nn_add_test_target(batch_source_test)
 
     # ── issue #39 RFC 32 阶段 C：RunDriver 领域无关训练骨架 ────────────────
-    nn_add_executable(run_driver_test src/run_driver_test.cpp)
-    list(APPEND NN_TEST_TARGETS run_driver_test)
+    nn_add_test_target(run_driver_test)
 
     # ── issue #31：epoch/step 学习率调度（multistep / step_cosine / 统一 warmup）─
     # [1] constant 兜底；[2] cosine warmup+退火+越界钳；[3] multistep ×gamma；
     # [4] step_cosine 分段重启（SGDR）+ 末段吸收余数；[5] warmup 对所有 schedule；
     # [6] lr_per_epoch 逃生舱优先级；[7] compute_step_lr 回归。
-    nn_add_executable(lr_scheduler_test src/lr_scheduler_test.cpp)
-    list(APPEND NN_TEST_TARGETS lr_scheduler_test)
+    nn_add_test_target(lr_scheduler_test)
 
     # ── P0-5 尾项：多轮对话闭环（prompt 构建 + CLI --turn/--reply-out 接线）──
     # [1] 对话模板结构；[2] ★ 上下文不丢（第 N 轮 prompt 以第 N-1 轮为前缀）；
@@ -1468,70 +1482,52 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     # [5] 纯文本词表回退；[6] 真实 text_infer 子进程端到端（prompt 与库逐 token
     # 一致、--reply-out == 生成 token 解码）；[7] CLI 负例（--turn 形状/互斥）。
     # app 缺失 → 77 = SKIP（CLI 半边跳过）。
-    nn_add_executable(chat_prompt_test src/chat_prompt_test.cpp)
-    list(APPEND NN_TEST_TARGETS chat_prompt_test)
+    nn_add_test_target(chat_prompt_test)
 
     # ── P1-2：优化器断点状态（save_state/load_state + 重启轨迹连续）────────
     # 覆盖 = kOptimizerTable 全表：状态存在性/非零 + 步计数器；中途存状态→重启续跑
     # 与直跑参数**逐位一致**（含冷启动负例做判别力检查）；张量数/形状不符报错。
-    nn_add_executable(optimizer_state_test src/optimizer_state_test.cpp)
-    list(APPEND NN_TEST_TARGETS optimizer_state_test)
+    nn_add_test_target(optimizer_state_test)
     # ── RV-04 优化器元数据表（唯一真源 ↔ 工厂）+ RV-03 同目标写序回归 ──────
     # [1] 表内每个 name 都能被 create_optimizer 构造、名单文本与表一致；
     # [2] AdamW（wd≠0）单步 vs 手写参考 + 顺序对调的负例；
     # [3] 同目标两次写必须建顺序边、不合组，反序时 validate_dst_order 必须报错
-    nn_add_executable(optimizer_test src/optimizer_test.cpp)
-    list(APPEND NN_TEST_TARGETS optimizer_test)
+    nn_add_test_target(optimizer_test)
 
     # ── P2b：训练样本概念（数据集的训练单位 = 窗口样本；step 是派生量）───────
     # [1] 切窗/样本视图；[2] make_batch 逐位约定（PAD/目标/掩码/doc_ids/
     # batch-major 扁平化）；[3] assistant 掩码按目标位置；[4] 缺 test 子集与
     # 非法窗口参数报错；[5] 断点状态段旧键 dataset_windows 兼容读。
-    nn_add_executable(dataset_samples_test src/dataset_samples_test.cpp)
-    list(APPEND NN_TEST_TARGETS dataset_samples_test)
+    nn_add_test_target(dataset_samples_test)
 
     # ── P2b：训练工厂 TextTrainer（数据集直接接入 + 训练状态 + 断点）─────────
     # [1] create(dataset) 建样本集/词表/数据身份；[2] fit 端到端（步数/参数移动/
     # 输出锚）；[3] max-steps/start_step；[4] 断点钩子 → TrainState → .nnckpt；
     # [5] 前置条件（batch=0 / 裁剪配置不一致）。
-    nn_add_executable(text_trainer_test src/text_trainer_test.cpp)
-    list(APPEND NN_TEST_TARGETS text_trainer_test)
+    nn_add_test_target(text_trainer_test)
 
     # ── 基础件（原 base 子仓下沉测试回归主仓 ctest）─────────────────────────
-    nn_add_executable(error_macro_test src/error_macro_test.cpp)
-    list(APPEND NN_TEST_TARGETS error_macro_test)
-    nn_add_executable(assert_test src/assert_test.cpp)
-    list(APPEND NN_TEST_TARGETS assert_test)
-    nn_add_executable(file_test src/file_test.cpp)
-    list(APPEND NN_TEST_TARGETS file_test)
-    nn_add_executable(sha256_test src/sha256_test.cpp)
-    list(APPEND NN_TEST_TARGETS sha256_test)
-    nn_add_executable(precision_type_test src/precision_type_test.cpp)
-    list(APPEND NN_TEST_TARGETS precision_type_test)
+    nn_add_test_target(error_macro_test)
+    nn_add_test_target(assert_test)
+    nn_add_test_target(file_test)
+    nn_add_test_target(sha256_test)
+    nn_add_test_target(precision_type_test)
 
     # ── 可移植算子缓存（kernels.nnk）round-trip 逐位锁 ────────────────────
-    nn_add_executable(kernel_cache_test src/kernel_cache_test.cpp)
-    list(APPEND NN_TEST_TARGETS kernel_cache_test)
+    nn_add_test_target(kernel_cache_test)
 
     # ── 并行（原 threadpool 子仓）───────────────────────────────────────────
-    nn_add_executable(threadpool_test src/threadpool_test.cpp)
-    list(APPEND NN_TEST_TARGETS threadpool_test)
-    nn_add_executable(parallel_test src/parallel_test.cpp)
-    list(APPEND NN_TEST_TARGETS parallel_test)
+    nn_add_test_target(threadpool_test)
+    nn_add_test_target(parallel_test)
 
     # ── KVRecord（原 kvrecord 子仓）─────────────────────────────────────────
-    nn_add_executable(kvrec_test src/kvrec_test.cpp)
-    list(APPEND NN_TEST_TARGETS kvrec_test)
+    nn_add_test_target(kvrec_test)
 
     # ── 数据集 / 分词器（原 dataset / tokenizer 子仓）────────────────────────
-    nn_add_executable(dataset_test src/dataset_test.cpp)
-    list(APPEND NN_TEST_TARGETS dataset_test)
-    nn_add_executable(tokenizer_test src/tokenizer_test.cpp)
-    list(APPEND NN_TEST_TARGETS tokenizer_test)
-    nn_add_executable(nnvocab_test src/nnvocab_test.cpp)
-    list(APPEND NN_TEST_TARGETS nnvocab_test)
-    nn_add_executable(dataset_integration_test src/dataset_integration_test.cpp)
-    list(APPEND NN_TEST_TARGETS dataset_integration_test)
+    nn_add_test_target(dataset_test)
+    nn_add_test_target(tokenizer_test)
+    nn_add_test_target(nnvocab_test)
+    nn_add_test_target(dataset_integration_test)
                 
 endif()
 
@@ -1545,6 +1541,17 @@ foreach(TARGET ${NN_TEST_TARGETS})
     set_target_properties(${TARGET} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/test)
 endforeach()
+
+# ── 附加参数变体用例：nn_add_test_variant(<用例名> <目标> <参数...>) ────────
+# 等价于 `if(TARGET) add_test(NAME … COMMAND <目标> <参数…>) + 退出码 77=SKIP`
+# 的固定三件套（77 由被测程序在无 Vulkan/无设备时返回，ctest 记 Skipped 而
+# 非 FAILED，否则 CPU-only 构建/CI 假红）。目标不存在（编译门未开）则不注册。
+function(nn_add_test_variant name target)
+    if(TARGET ${target})
+        add_test(NAME ${name} COMMAND ${target} ${ARGN})
+        set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+endfunction()
 
 # ── ctest 注册（NN_ENABLE_TESTS 门；编译门见上方 NN_BUILD_APPS 块）──────────
 # 注册门与编译门解耦：默认（NN_BUILD_APPS=ON）测试程序**已编译**，但只有
@@ -1561,73 +1568,38 @@ if(NN_ENABLE_TESTS)
     # CNN 的 GPU 变体：DSL 表达式校验只在 GPU/scan 路径发生（CPU 模板路径不校验），
     # 默认的纯 CPU cnn_test 测不出"只在 GPU 触发"的表达式结构回归
     # （如 MaxPool2D 裸视图根 → 空指令表）。无 Vulkan 构建下返回 77 = SKIP。
-    if(TARGET cnn_test)
-        add_test(NAME cnn_test_gpu COMMAND cnn_test --gpu)
-        set_tests_properties(cnn_test_gpu PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
+    nn_add_test_variant(cnn_test_gpu cnn_test --gpu)
     # CNN / RAPT 的 f16 端到端变体（P2-3）：Conv2D 权重/梯度按 param、融合算子
     # 按 compute 走 f16 → 断言"loss 有限且下降 / 梯度无 NaN"。CPU 与 GPU
     # 各一条（GPU 才暴露精度变体的闭合世界 miss 与 f16/f32 槽位错配）。
-    if(TARGET cnn_test)
-        add_test(NAME cnn_test_f16 COMMAND cnn_test --f16)
-        add_test(NAME cnn_test_f16_gpu COMMAND cnn_test --f16 --gpu)
-        set_tests_properties(cnn_test_f16 cnn_test_f16_gpu
-                             PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
-    if(TARGET rapt_test)
-        add_test(NAME rapt_test_f16 COMMAND rapt_test --f16)
-        add_test(NAME rapt_test_f16_gpu COMMAND rapt_test --f16 --gpu)
-        set_tests_properties(rapt_test_f16 rapt_test_f16_gpu
-                             PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
+    nn_add_test_variant(cnn_test_f16 cnn_test --f16)
+    nn_add_test_variant(cnn_test_f16_gpu cnn_test --f16 --gpu)
+    nn_add_test_variant(rapt_test_f16 rapt_test --f16)
+    nn_add_test_variant(rapt_test_f16_gpu rapt_test --f16 --gpu)
     # BatchNorm 的 GPU 变体：推理态/EMA 表达式的 ExprSpec 校验只在 GPU
     # 路径发生（CPU 模板路径不校验），且闭合世界 miss 只在 GPU 运行期暴露。
     # 无 Vulkan 构建下返回 77 = SKIP。
-    if(TARGET batchnorm_test)
-        add_test(NAME batchnorm_test_gpu COMMAND batchnorm_test --gpu)
-        set_tests_properties(batchnorm_test_gpu PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
+    nn_add_test_variant(batchnorm_test_gpu batchnorm_test --gpu)
     # 基准工具已移除（2026 清理：无法在 -Werror 下编译，且无 ctest 覆盖）
     # 三值（T1_58）BitLinear 的 GPU 变体：BitLinear 的表达式必须命中 AOT 融合
     # 注册表（闭合世界）+ 走一遍 f16 运行期精度分派；纯 CPU 构建/无设备 → 77。
-    if(TARGET t1_58_test)
-        add_test(NAME t1_58_test_gpu COMMAND t1_58_test --gpu)
-        set_tests_properties(t1_58_test_gpu PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
+    nn_add_test_variant(t1_58_test_gpu t1_58_test --gpu)
     # BitNet 结构开关的 GPU 变体：SubLN 的 norm 表达式 / GQA 的 reshape+gather
     # 必须命中 AOT 融合注册表（闭合世界）。无 Vulkan 构建/无设备 → 77。
-    if(TARGET bitnet_struct_test)
-        add_test(NAME bitnet_struct_test_gpu COMMAND bitnet_struct_test --gpu)
-        set_tests_properties(bitnet_struct_test_gpu PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
+    nn_add_test_variant(bitnet_struct_test_gpu bitnet_struct_test --gpu)
     # 写版本 + BitLinear 量化缓存的 GPU 变体：写版本记在 GpuBuffer 上（别名
     # 安全），且缓存命中路径不得绕过 AOT 闭合世界。无 Vulkan 构建/无设备 → 77。
-    if(TARGET write_epoch_test)
-        add_test(NAME write_epoch_test_gpu COMMAND write_epoch_test --gpu)
-        set_tests_properties(write_epoch_test_gpu PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
+    nn_add_test_variant(write_epoch_test_gpu write_epoch_test --gpu)
     # 三值打包 GEMM 的 GPU 变体：打包/解码在设备侧（GpuEngine 接打包路径后生效），
     # 未接的后端上 BitLinear 自动退回 f16 稠密缓冲（本用例会打印跳过）。无设备 → 77。
-    if(TARGET ternary_gemm_test)
-        add_test(NAME ternary_gemm_test_gpu COMMAND ternary_gemm_test --gpu)
-        set_tests_properties(ternary_gemm_test_gpu PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
+    nn_add_test_variant(ternary_gemm_test_gpu ternary_gemm_test --gpu)
     # int8 激活量化 GEMM 的 GPU 变体（quantize_i8/matmul_q_i8 设备侧 pipeline +
     # 2B4T 量级形状对拍）。无设备 → 77。
-    if(TARGET int8_act_test)
-        add_test(NAME int8_act_test_gpu COMMAND int8_act_test --gpu)
-        set_tests_properties(int8_act_test_gpu PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
+    nn_add_test_variant(int8_act_test_gpu int8_act_test --gpu)
     # 量化状态优化器的 GPU 变体（状态读写全在设备侧；GPU 上表达式须命中闭合世界）。
-    if(TARGET adam_quant_test)
-        add_test(NAME adam_quant_test_gpu COMMAND adam_quant_test --gpu)
-        set_tests_properties(adam_quant_test_gpu PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
+    nn_add_test_variant(adam_quant_test_gpu adam_quant_test --gpu)
     # int8 状态优化器的 GPU 变体（quantized_adamw_step 设备侧 pipeline）。无设备 → 77。
-    if(TARGET adam_int8_test)
-        add_test(NAME adam_int8_test_gpu COMMAND adam_int8_test --gpu)
-        set_tests_properties(adam_int8_test_gpu PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
+    nn_add_test_variant(adam_int8_test_gpu adam_int8_test --gpu)
     foreach(TARGET ${NN_BENCH_TARGETS})
         set_target_properties(${TARGET} PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/test)
