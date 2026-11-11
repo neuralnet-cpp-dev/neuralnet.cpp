@@ -11,14 +11,17 @@
 //    4. K 边界族：{1, 7, 32, 33, 100, 1000}——单列 / 非块整除 / 整除 / 尾块
 //    5. attention fold：5 掩码变体（含 Doc/AlibiDoc）× 4 形状族 vs 独立公式
 //       参考；{2,133,4} 跨 EXPR_FOLD_BLOCK=128 → 多块流式 + causal 整块跳过
-//    6. validate 负例：状态吃元素源 / fold+顶层 instrs / fold+matmul /
-//       finalize 读输入 —— 四类违规必须被拒绝（静态拒而非静默错算）
+//    6. validate 负例：状态吃元素源 / fold+matmul / finalize 读输入 /
+//       尾链读 body 临时·块归约 dst·元素寄存器、尾链归约指令、尾链归约视图
+//       —— 违规必须被拒绝（静态拒而非静默错算）
 //    7. 注册表去重 + key 契约（原 bin 序列化 roundtrip 的接替者：bin 已删除）：
 //       同结构重复 add 只留一条；tri_skip（只翻该字段）与掩码 body 差异均进 key
 //    8. 锚点代表值契约：注意力 fold 自登记（P4-4 ①）只登记一组代表形状，故
 //       同一组合跨形状 key 必须相同；10 个组合（掩码 × 偏置 × {MHA,GQA}）互不相同
 //    9. 行并行门控：越过 65536 门控的并行结果与逐行串行逐位一致（#T1）
 //   10. tri_skip 开/关逐位对拍 + 上三角毒化（整块与元素级，证明死区不被读，#T3）
+//   11. P10-③ fold 后逐元素尾链：rowsum+尾链 vs 独立参考（validate 正例 +
+//       数值对拍）；输出 = 尾链末指令 dst
 //  纯 CPU；输出 (rows,1)（eval_expr 的 cols 参数 = 1 调用约定）。
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -167,6 +170,49 @@ int test_expr_fold()
                                        " err=" + std::to_string(err));
             }
         }
+
+        // ── 3b) P10-③ fold 后逐元素尾链：rowsum + 尾链 vs 独立参考 ──
+        // out[row] = (Σ_k x[row,k] + 2.5) * g[row]；两域输入分槽
+        //（slot0 = 键域 (rows,K)、slot1 = 尾链域 (rows,1)）
+        {
+            nn::Matrix mg(rows, 1);
+            {
+                auto gs = mg.span();
+                for (auto& v : gs)
+                    v = dist(rng);
+            }
+            nn::Tensor g = upload(engine, mg);
+            const std::array<nn::Tensor, 2> sins{x, g};
+            nn::ExprSpec spec = nn::expr::make_fold_rowsum_tail(static_cast<std::uint32_t>(K));
+            check(nn::validate_expr_spec(spec, 2).has_value(),
+                  "rowsum_tail validate K=" + std::to_string(K));
+            auto out = engine.eval_expr(spec, sins, rows, 1);
+            if (!out)
+            {
+                check(false, "rowsum_tail eval K=" + std::to_string(K) + ": " + out.error().message);
+            }
+            else
+            {
+                const auto om = download(engine, *out);
+                const auto xm = download(engine, x);
+                const auto gm = download(engine, g);
+                const auto os = om.span();
+                const auto xs = xm.span();
+                const auto gss = gm.span();
+                Scalar err = 0;
+                for (std::size_t r = 0; r < rows; ++r)
+                {
+                    Scalar ref = 0;
+                    for (std::size_t k = 0; k < K; ++k)
+                        ref += xs[r * K + k];
+                    ref = (ref + Scalar{2.5f}) * gss[r];
+                    err =
+                        err_of(err, std::fabs(os[r] - ref) / std::fmax(Scalar{1}, std::fabs(ref)));
+                }
+                check(err <= kTol,
+                      "rowsum_tail vs ref K=" + std::to_string(K) + " err=" + std::to_string(err));
+            }
+        }
     }
 
     // ── 6) validate 负例（静态拒绝）──
@@ -188,16 +234,17 @@ int test_expr_fold()
             s.fold->body = {b};
             rejects(s, "state written from element source");
         }
-        // (b) fold + 顶层 instrs 非空
+        // (b) 尾链读 body 临时（非状态标量：softmax_denom 的 m_old 拷贝 reg4）
         {
-            nn::ExprSpec s = nn::expr::make_fold_rowsum(16);
+            nn::ExprSpec s = nn::expr::make_fold_softmax_denom(16);
+            s.num_regs = 11; // 尾链 dst 用新寄存器 10
             nn::ExprInstr t;
             t.op = static_cast<uint8_t>(nn::ExprOp::Add);
-            t.dst = 1;
-            t.a = nn::expr::reg(0);
+            t.dst = 10;
+            t.a = nn::expr::reg(4); // body 临时（行标量，非状态）
             t.b = nn::expr::cst(0);
             s.instrs = {t};
-            rejects(s, "fold + non-empty top-level instrs");
+            rejects(s, "fold tail reading body temp");
         }
         // (c) fold + matmul 段互斥
         {
@@ -221,6 +268,59 @@ int test_expr_fold()
             t.b = nn::expr::input(0);
             s.fold->finalize = {t};
             rejects(s, "finalize reading inputs");
+        }
+        // (e) 尾链含归约指令（输出网格语义不允许；也会误路由进归约生成器）
+        {
+            nn::ExprSpec s = nn::expr::make_fold_rowsum(16);
+            s.num_regs = 3;
+            nn::ExprInstr t;
+            t.op = static_cast<uint8_t>(nn::ExprOp::RowSum);
+            t.dst = 2;
+            t.a = nn::expr::reg(0);
+            s.instrs = {t};
+            rejects(s, "fold tail reduce instruction");
+        }
+        // (f) 尾链读块归约 dst（red 槽只保留最后一块的值；标量槽从未被写）
+        {
+            nn::ExprSpec s = nn::expr::make_fold_rowsum(16);
+            s.num_regs = 3;
+            nn::ExprInstr t;
+            t.op = static_cast<uint8_t>(nn::ExprOp::Add);
+            t.dst = 2;
+            t.a = nn::expr::reg(1); // body RowSum 的归约 dst
+            t.b = nn::expr::cst(0);
+            s.instrs = {t};
+            rejects(s, "fold tail reading block-reduce dst");
+        }
+        // (g) 尾链 dst 落在 body 元素寄存器上（GPU 端 e[]/rN 变量错位）
+        {
+            nn::ExprSpec s = nn::expr::make_fold_softmax_denom(16);
+            nn::ExprInstr t;
+            t.op = static_cast<uint8_t>(nn::ExprOp::Add);
+            t.dst = 7; // body 元素类（x − m' 派生链）
+            t.a = nn::expr::reg(0);
+            t.b = nn::expr::cst(0);
+            s.instrs = {t};
+            rejects(s, "fold tail dst in body element register");
+        }
+        // (h) 尾链输入用归约视图（缺 view_reduce 预计算 + 会误路由归约生成器）
+        {
+            nn::ExprSpec s = nn::expr::make_fold_rowsum(16);
+            s.num_regs = 3;
+            s.views.push_back(nn::expr::col_reduce_sum());
+            nn::ExprInstr t;
+            t.op = static_cast<uint8_t>(nn::ExprOp::Add);
+            t.dst = 2;
+            t.a = nn::expr::reg(0);
+            t.b = nn::expr::input(1);
+            s.instrs = {t};
+            rejects(s, "fold tail reduce-view input");
+        }
+        // 正例：合法尾链必须通过（P10-③）
+        {
+            const bool ok =
+                nn::validate_expr_spec(nn::expr::make_fold_rowsum_tail(16), 2).has_value();
+            check(ok, "validate accepts fold + elementwise tail (P10-③)");
         }
     }
 

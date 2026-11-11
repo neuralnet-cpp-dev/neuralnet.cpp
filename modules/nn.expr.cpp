@@ -149,12 +149,14 @@ using nn::dsl::operator!=;
         using nn::dsl::to_expr_spec;
     }
     namespace expr {
+        using nn::expr::col_reduce_sum;
         using nn::expr::cst;
         using nn::expr::input;
         using nn::expr::linear;
         using nn::expr::make_fold_logsumexp;
         using nn::expr::make_fold_rowmax;
         using nn::expr::make_fold_rowsum;
+        using nn::expr::make_fold_rowsum_tail;
         using nn::expr::make_fold_softmax_denom;
         using nn::expr::matmul_op;
         using nn::expr::reduce;
