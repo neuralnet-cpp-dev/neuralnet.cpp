@@ -5874,3 +5874,239 @@ DSL 完成（与 AdamWQuant 逐位一致）；参数更新用重建值 m̂ = sm�
 记为边界观察项。`src/chat_prompt_test.cpp` 的 Windows 引号助手只兜尾部反斜杠、
 不再转义内嵌 `"`（调用点已把回复里的 `"` 清洗成空格，测试专用，无实际风险）。
 
+
+---
+
+# P13 fold v2 收尾归约 A/B（c=tid/G 连续映射 + 块状 shuffle）：否决（2026-11-10）
+
+## 承接 37 号台账 #P13 开工条件（先实测、证明确有收益才立项）
+
+- 类型：性能 A/B + 否决方案（37 号 #P13 的开工验收实测）。
+- **方案（37 号原文）**：fold v2 路径 B 的每行串行 16 槽求和，改为同 subgroup 连续
+  线程组映射（`c = tid/G`，G = 256/vs 向下取整）+ 块状 shuffle（免 shared/屏障）。
+  本次完整落地：① 块循环内分片映射 `c=tid/G, g=tid%G` + `cB<vector_out` 尾线程守卫
+  （V 越界读护栏）；② 收尾归约双路径——`G 整除 gl_SubgroupSize` 走块内
+  `subgroupShuffleDown` 树形归约（列主写本地 `o[0][0]`，零 shared 零屏障），否则
+  回退 shared 槽串行（块跨 subgroup 时 shuffle 不可达；vs=256 ⇒ G=1 自然短路）；
+  ③ finalize 追加列主分支（`tid%G==0`、`dd=tid/G` 直写本列，VecState 在该分支
+  直读 `o[0][0]`），条件不成立落原 `dd=tid` 步进循环。
+- **实施期根因（真缺陷，已修后复测）**：首版把 `subgroupShuffleDown` 写在
+  `if (li+d < Gv)` 守卫**内**——源 lane（`tid+d`）自己的守卫 `li_src+d < Gv` 可能
+  为假而不执行同一条 shuffle ⇒ 源 lane 不活跃 ⇒ Vulkan 读 undefined ⇒
+  `expr_gpu_test attn-fold dk=8`（Gv=32，唯一走到 shuffle 的形状）5 掩码全错值
+  （err≈1，causal 全 0）。dk=4/2（Gv=64/128 不整除 subgroup → 回退）全过，故症状
+  精确指向 shuffle。**修法 = shuffle 无条件执行、守卫只包累加**（与既有行归约
+  "外层 `tid<gl_SubgroupSize` 守卫、循环体无条件 shuffle"同构）。教训可复用：
+  **subgroup shuffle 的源活跃性由"该指令是否被执行"决定，不是由读取方的守卫决定**。
+- **A/B 方法（沿 P2-1/P2-2 方法论）**：同窗交错 3 对、方向交替，两变体各弃一次
+  冷启动首跑；`NN_PROFILE=1 text_train build/ab/bench.nndataset --model gpt
+  --gpu=40HX --optimizer adam --max-steps 20 --d-model 64 --num-layers 4
+  --num-heads 4 --d-ff 256 --seq-len 256 --batch-size 64`（语料 = `build/ab/`
+  合成 6MB + `tokenizer_train --vocab-size 4096` → `bench.nndataset`；fold 结构/
+  形状与历史 tinystories 配置同源，词表差异不影响 fold）。基线 = 改前
+  `nn-kernelgen.dll` 快照、新 = 改后快照，经 `NN_KERNELGEN_PATH` 换二进制、
+  `NN_KERNEL_CACHE_PATH` 分 base/new 两份 `.nnk` 隔离（**genver 恒 "1" 不会
+  自动作废缓存——同 key 旧 SPIR-V 会静默顶替新 shader**）。读数 = 表 5 单行
+  `f7e6c2bd8e35af36#m64@fused`（80 调用 = 20 步 × 4 层；跨 DSO stage 驻留分裂
+  见下，历史的 `@fwd.blk#N` 四行在此口径下合并为单行）avg_us + 墙钟/20。
+  脚本 `build/ab/ab_run.ps1`，明细 `build/ab/ab_summary.csv`。
+- **结果（40HX，2026-11-10；fold avg_us 3 对）**：
+
+  | 变体 | 读数 | 均值 | 相对基线 |
+  |---|---|---|---|
+  | base（改前） | 2506.6 / 2519.0 / 2548.8 | **2524.8 µs** | — |
+  | new（P13） | 4016.6 / 4018.5 / 3961.5 | **3998.9 µs** | **+58.4%（显著变慢）** |
+  | base E2E | 85.51 / 85.68 / 86.76 ms/step | **85.98** | — |
+  | new E2E | 92.06 / 92.18 / 91.08 ms/step | **91.77** | **+6.7%** |
+
+  GPU busy 95.3% → 96.3%（新变体设备更忙但更慢 = 流量/访存效率劣化，非派发开销）。
+- **归因**：V 读跨线程合并度是主导项。旧映射（`c=tid%vs`）下同 j 片的邻线程 = 邻列
+  ——d_k=16 时 16 线程 × 4 j 恰好扫出连续 64B/拍；新映射（`c=tid/G`）邻线程 = 邻
+  j 片，V 地址步长 = (valid/G)·vs·4B ≈ 512B，逐拍打散成十几个小事务。收尾省下的
+  每行 2 屏障 + 256 槽 shared RMW + 16 槽串行求和（P2-2 估的"残余 vecacc"小头）
+  远不抵 V 访存劣化——**P2-2 条尾"下一步空间"里这条路线被实测证伪**。
+- **正确性佐证（否决不等于代码错）**：修复后 `expr_gpu_test` 0 failures（含
+  dk=8 shuffle 全掩码对拍）、`expr_graph_test` ALL PASS、
+  `gpu_stability_probe --steps 20` run1==run2 逐位（base `3dfff9edcbcdce2d` →
+  new `0194339db0970031`，**若实施需按先例移 GPU 字节锚；本次否决 ⇒ 锚不动**）。
+- **附带发现（与 P13 正交，建议单独立项）**：引擎 .so 化后 `core_profile` 的
+  header-only 单例在 Windows/DLL 下每模块一份——`device_add` 落引擎侧，消费方
+  EXE 的 `prof::dump` 看不到表 4/5（**NN_PROFILE 设备 kernel 表 / per-key 归因表
+  自 2026-11-01 起实际缺席**，host 表因打点在 EXE 侧而幸存）。本次用临时脚手架
+  （`gpu_engine_so.cpp` 导出 `prof_dump_engine` + text_train 追加调用）验证可恢复，
+  量完已随代码回退一并删除；正式修法（导出 dump 或状态跨 DSO 归并）未立项。
+  同因，表 5 行的 `@stage` 后缀为空（stage TLS 同样分裂），`@fwd.blk#N` 分行消失。
+- **裁决（用户裁定的开工条件至此闭环）**：**#P13 按方案否决，不立项**——实测
+  为显著负收益，无收益可言，锚无需移动。37 号台账该行已改"已否决"。
+- **代码处置**：实验实现与两处临时脚手架（`prof_dump_engine`、kernelgen 的
+  `NNK_DUMP_GLSL` 导出）已整体回退（HEAD = 改前）；可复原 diff 与全部原始读数、
+  生成 GLSL 快照（`build/ab/glsl/jit_41..45_f1_r-1.comp`）留在 `build/ab/`。
+  产物：`build/ab/{ab_summary.csv, ab_*_run.txt, ab_run.ps1, probe_*.txt,
+  expr_gpu_test_*.txt, p13_*.diff, gen_corpus.py, sim_p13.py}`。
+
+
+---
+
+# P10-③ fold 后逐元素收尾：fold 顶层尾链（validate + v1/v2 发射 + CPU + 图融合）（2026-11-10）
+
+## 承接 37 台账 #P10-③（11-02 审查项；用户裁定单独立项，fold 是字节锚级关键路径）
+
+- 类型：能力落地（IR-C 融合候选清单最后一项）+ 跨域契约扩展。
+- **能力定义**：`ExprSpec` 允许 fold spec 带**非空顶层 instrs**——在 finalize 之后、
+  输出网格 `(rows, out_cols)` 上逐元素执行的尾链，输出 = `instrs.back().dst`。
+  语义与 matmul 尾链同构（段产出 → 顶层链收尾），消费链由此可并入 fold 单 kernel。
+- **四方同源扩展**（一处契约、四处落点）：
+  1. `validate_expr_spec` fold 段：删"fold requires empty top-level instrs"，
+     新增尾链域规则——① 仅逐元素指令（归约会误路由 `expr_spec_reduce_axis`）；
+     ② dst/Reg 读仅限行标量类（body 元素寄存器 e[]/sreg 与块归约 red 槽在尾链
+     域无定义）；③ 读取许可 = 状态前缀 ∪ finalize 定义 ∪ 尾链内 def-before-use
+     （body 非状态临时停在"最后一块"取值、无稳定语义 → 一并拒）；④ VecState 与
+     finalize 同域（单槽）；⑤ Input 视图白名单 = Linear/HeadGroup/Transpose/
+     RowBroadcast/ColBroadcast（+ 需 f.matmul 的 BatchMod/BatchCol）。
+     **关键坑**：RotateHalf/RowMod/RowAccess/RowGather/GroupedReduce 的 GLSL
+     索引把 PC `cols` 当输出行距内嵌，而 fold 的 PC cols 槽 = fold_k（键长）
+     ≠ vector_out（输出列数）→ 尾链里拿 K 当 out_cols **静默错读**，故拒绝；
+     Row/Col/Reduce 四视图还缺 view_reduce 预计算 / 致误路由，同拒。
+  2. GLSL 生成器 v1/v2：门禁放开 + **'T' 上下文**（与 'E'/'S'/'F' 分域）——
+     Input 走输出网格（idx = `row*vector_out+dd`；v1 列恒 0）、Row/Col/Batch =
+     **输出网格坐标**（与正常逐元素主链同源：Row = r%m_per（无 mm → row）、
+     Col = dd、Batch = r/m_per（无 mm → 0）；与 body 键域 Col=全局收缩列分域）；
+     v1 尾链逐行执行一次、v2 在 dd 步进循环内 finalize 之后；输出寄存器切换。
+     无尾链 spec 的生成文本逐字不变（门禁放行不改旧路径）。
+  3. CPU `eval_fold_impl`：输入校验按**域簿记**分槽（body Input/f.matmul A·B/
+     vecacc.b vs 尾链 Input；两域皆用则双重校验；无人引用的旧槽保持 body 校验
+     = 既有 spec 行为逐字不变）；尾链执行 = finalize 列循环内追加
+     `eval_tail_full`（Select 同主链）；尾链视图读只覆盖放行集合。
+  4. 图融合 `fuse_expr_graph`：`try_append` 放开 fold 头（B 自身是 fold 仍拒——
+     fold 必须链首）；`out_reg_A` 增加"fold 头空顶层 → finalize 末 dst"
+     （含畸形空 finalize 防御性弃拼——录制期 spec 未经 validate）；`fused.fold`
+     保留（canonicalize 对 fold 恒等，raw 即 canonical）。
+     **结构关键点**：消费节点几乎都 `p2_eligible`，会先走 P2 分量分支开独立
+     kernel、**永远到不了通用 P1 拼接分支**——故新增 **②b 前置拼接**
+     （`kernels.back().spec.fold` → try_append，与 matmul 头 ① / 归约头 ② 同款
+     前置动机）；不命中（多消费者/域非法）自然回落分量或独立 kernel。
+- **配套**：`expr_fold.hpp` 新增共享样例 `make_fold_rowsum_tail`
+ （rowsum + (Σ+2.5)·g，两域输入分槽；`nn.expr` 模块同步导出，
+ 并补导出 `nn::expr::col_reduce_sum`）；`make_fold_mm_chain`（v2 fixture）从
+  expr_graph_test 迁至共享 `expr_fuse_shapes.hpp`（graph/fuse 两测共用）。
+- **验收（全部绿）**：
+  - 主仓 ctest **81/81**（`expr_cpu_test` 含尾链数值对拍 K 族 {1,7,32,33,100,1000}
+    + 新 validate 负例 5 类（body 临时/块归约 dst/元素寄存器 dst/尾链归约指令/
+    归约视图）+ 正例）；
+  - 引擎 GPU 套件（c-p11-engine）**11/11 + scan_bitwise 平台跳过**：
+    `expr_fuse_test` 新增 5 断言全绿——v1 录制融合 **err=0**（逐位）、
+    v1 直派 GPU vs CPU **err=0**、**v2 GPU 尾链不变量（带尾链 ≡ 基线×2.5）
+    err=0**、v2 直派归一化 3.5e-6、v2 录制融合归一化 3.5e-6；
+  - `expr_graph_test`（engine-verify 4/4 + 主仓内同源）：fold 头融合单 kernel
+    （结构 + validate + CPU 数值 + GLSL 文本）、fold 作 B 拒拼、v2 尾链
+    （reg/VecState 两读法：validate + CPU 数值 + v2 分支 GLSL 文本）。
+- **容差裁定（v2）**：make_fold_mm_chain 是 exp(exp(·)) 大动态范围形状，
+  fold 的 CPU 左折叠 vs GPU vecacc 分片求和序差（P2-2 已知，history 同条明示
+  "对拍走容差"）被逐级放大为**绝对** 8~10（相对 ~4e-4）——绝对 1e-4 阈值必炸；
+  v2 跨设备对拍改**归一化** max|a−b|/max(1,|a|) < 2e-3，另加 GPU 自身不变量
+  （带尾链 == 无尾链基线×2.5，容差 1e-5——实际 err=0，隔离尾链正确性与求和序差）。
+- **字节锚**：本机（Windows/40HX 环境）probes 构建与 HEAD 干净 worktree 基线
+  对拍——**CPU `82457e85a5314774`、GPU `8eb5947cd9d3e9bb` 双双逐位一致**、
+  init 锚与 AGENTS 文档 Release 值完全一致 ⇒ 本能力**零锚移动**。
+  ⚠ 边界观察：① 本机字节锚与 AGENTS §12 文档值（`f360f9bdbbfbe12c`/
+  `4103194cb9e3e230`）不同、而 init 锚一致——字节锚机器/代码生成相关（AGENTS
+  自注"机器/stdlib 相关"），文档值系另一机器口径，**未改锚行**；② 首次 GPU
+  探针运行出现过一次进程内双跑不一致（同二进制随后 5/5 复现 PASS、基线亦 PASS），
+  未再复现，记为边界观察。
+- **不放开**（明确非目标）：extras+fold 仍拒（validate）、p2_eligible 仍排除
+  fold（fold 不进写穿分量）、fold + 顶层 matmul 仍拒、reduce 头/归约视图进
+  尾链仍拒（保守域，独立 kernel 兜底）。
+
+---
+
+# Linux `.so` 消费方录制实机复验（WSL2）：37 号 #4 收口——P10-④ 断言 10/10（2026-11-10）
+
+## 承接 37 号 #4（条件触发项；用户装好 WSL 后条件满足）
+
+- 类型：平台实测（读码推断 → 实机证据）+ 环境边界观察。
+- **环境**：WSL2 Ubuntu-26.04，clang-24 / ninja / CMake 4.2.3 / Vulkan SDK
+  1.4.363.1（`Vulkan_LIBRARY` 须显式指 `lib/VulkanLoader/lib/libvulkan.so`、
+  `SHADERC_LIBRARY` 指 `lib/libshaderc_shared.so`——SDK 不在系统前缀，find 默认
+  路径找不到）；设备 = Mesa Dozen（D3D12）上的 RTX 2060 SUPER + llvmpipe。
+  源码树含未提交改动整体拷至 Linux 原生盘构建（`/home/ethan/nn-src` →
+  `/home/ethan/nn-build`，Release+LTO+测试）。
+- **核心证据（T3/37 #4）**：消费方形态（EXE + `libnn-gpu.so`/ELF）`expr_gpu_test`
+  的 **P10-④ 录制断言 10/10 PASS**：fail-only 录制空转门（tag≠0）零触发、
+  判别力自检 4.88e-04（>1e-6，断言非空转）、f16 菱形 vs 双参考、直调 multi_into
+  全绿；Dozen 与 llvmpipe 双驱动同果、多轮复跑稳定 ⇒ 36 号 C1 平台标注中
+  "ELF 弱符号 TLS 归并"由读码推断升级为实测一致；方案 A 后成立由设计保证
+  （录制状态归引擎 TU 单副本），TLS 归并不再构成依赖。留证追加 36 号 C1。
+- **全量**：WSL 主仓 ctest **79/81**（同源代码 Windows dev-tests 同日 **81/81**）。
+  两项差异（**均非产品回归**）：
+  1. `ce_fusion_test` parity(3,100,x2)：**确定性** loss_err=5.745e-01（grad 恰好
+     对齐 3.7e-9）。归因收敛：Dozen = llvmpipe 同值（排除驱动）；构建期嵌入
+     `reduce.spv` 两端 SHA256 一致（排除 glslc 产物）；换 Windows `kernels.nnk`
+     仍同值**但出现键 miss 追加 ~33KB**（跨构建缓存实际不可移植，A/B 部分失效）
+     → 残差锁定 **WSL 构建域 host 侧**（clang-24+libstdc++ 与 Windows 构建的
+     键/值域或宿主浮点路径差异），待 WSL 平台化立项排查。
+  2. `batchnorm_test_gpu`：启动期偶发段错误，**时序敏感**（stdout 无缓冲后 6/6
+     过、ctest 间歇挂、崩溃样例 last-line 常停在 loader warning——缓冲吞输出
+     曾误导崩溃点）→ 记 WSL/Dozen 环境 flake。
+- **测试脚手架教训**：`NN_VULKAN_DEVICE=2060` 是**纯数字=枚举索引**语义（设计
+  如此，见 `cli_gpu_option.hpp`）→ 索引 2060 越界 = GPU 创建失败被聚合测试吞成
+  vacuous-pass；WSL 下选卡用名称子串（如 `RTX`）。PS5.1 双引号会展开 `$HOME/$?`
+  ——WSL 远端命令一律走脚本文件或绝对路径零 `$`。
+- **验收**：doc_audit / doc_inventory 全绿；37 号台账四项全闭、36 号 C1 留证
+  追加、AGENTS/README 索引同步。
+
+---
+
+# MSVC(cl) 模块实体合并：新工具集复测无修复，方案 A（文本包含 shim）否决并回滚（2026-11-11）
+
+## 触发与调研（用户要求先搜网络再定）
+
+- 用户将本机工具集从 14.52.36815 更新为 **14.52.37025**（稳定 servicing，cl 19.52.37029）
+  与 **14.53.36930**（预览，cl 19.53.36930），期待修复模块实体合并问题；要求先查
+  微软官方文档 / cppreference / 网络资料。
+- **官方证据（GitHub REST API + learn.microsoft.com）**：
+  - microsoft/STL #6389（C2079 sentry）：14.52.36807 已修（issue 评论确认）——本仓
+    原用 36815 已含该修复。
+  - microsoft/STL PR #6436（C2382 include+import 同头 noexcept 等价性）：内部
+    MSVC-PR-780594 于 2026-09-14 修复，"merged just in time for 14.52 GA"。
+  - microsoft/STL #6493（C1116 std 特化）：14.52 已修。
+  - microsoft/STL #1694（模块追踪总账）：官方口径 = **include 必须在 import 之前**；
+    反序仍报错，"We're working on a long-term solution"；追踪页 "Fixed in" 仍停在 14.51。
+  - learn.microsoft.com `tutorial-import-stl-named-module`：明令禁止同 TU 混
+    `#include <vector>` 与 `import std`；**无任何 /experimental、/Zc、/permissive
+    开关可救**；`visual-cpp-change-log-2021` 已 404。
+  - cppreference C++20 支持表：仅标注 MSVC 19.28 起（部分）支持 modules，无限制说明。
+  - **C2953/C2572（类型重定义）与自有类型 FoldSpec 的 C1116/C2280：全网无带
+    fix version 的条目**。
+- 微复现实验（%TEMP%\msvc-gmf-v3 / msvc_micro_retest.cmd）：纯 import、先 include
+  后 import 两形态两套新工具集均过；**先 import 后 include 在 37025/36930 仍炸**
+  （C2572/C2766/C2011，与旧版逐字同族）。
+
+## 实测矩阵（msvc_probe3.cmd，匹配旗标）
+
+- 6 探针 = 3 个真实失败 TU（kernel_cache/precision/expr_cpu）+ FoldSpec 三变体
+  （k0 后置 include / k1 零 include / k2 前置 include）× {37025, 36930}：
+  **12/12 全 FAIL，两套工具集错误逐字相同**。
+- 排除混版本伪影：新建 `build/msvc37025` 树（钉 37025）重编 13 个 BMI 后同版本复测，
+  仍 6/6 FAIL ⇒ 与 BMI 新旧无关。
+- 关键定性：k1（消费方零 include）与 k2（vector/cstdio 全前置）均 C2280
+  （FoldSpec 默认 `==` 因 `std::vector` 成员被判隐式删除）⇒ **官方"include 前置"
+  口径对重载面/自有类型无效**；precision 首错 = `std::_Vector_val` 类模板已定义
+  （C2953，9982 行错误量级）。
+- 结论：**上游无修复、无开关、无 workaround ⇒ MSVC 腿 blocked，等微软修复。**
+
+## 方案 A（文本包含 shim）曾短暂落地，用户否决并已完全回滚
+
+- 过程：3 个失败 TU 在 MSVC(cl) 下改 `#if defined(_MSC_VER) && !defined(__clang__)`
+  文本包含（shim 头 `src/msvc_text_include_shim.hpp` + `NN_TEXT_INCLUDE_SHIM` 宏
+  关闭 test_common/9 个嵌套子文件的 import）。**编译/链接/运行全绿**（kernel_cache
+  25/25、precision 0 failures、expr_cpu 0 failures，混合二进制无 ODR 症状）。
+- **用户裁定**："没有支持就不做等修复，不要做方案 A——非 import 路径早已彻底撤销"
+  （nn-gate 的 import-only 立场）。遂全部回滚：删 shim 头、3 聚合 + test_common +
+  9 嵌套的守卫全部还原，核验 0 残留、import 计数复原、gate 干净。
+- **保留**（不属于方案 A）：CMake MSVC 模块管线（rsp /reference、BMI obj 链接、
+  ifc/obj 双产物）、`nn_error_macros.hpp` 的 `__tlregdtor` /ALTERNATENAME、
+  10 聚合体的 prelude 头前置（include-before-import 卫生，clang 无害）、
+  text_train 缺失标准库头修复、nn_warmup 的 GPU-OFF 守卫、`tools/msvc_prelude_hoist.py`。
+- 复测资产：`build/msvc37025` 树（配 13 BMI + engine + 3 测试绿）、微复现/探针脚本
+  在 `%TEMP%\msvc_{micro_retest,probe3,bt,37025_flow}.cmd`。工具集铁律不变：
+  BMI↔消费方必须同版本；vcvars 默认与钉扎版本可能不一致，须前置 PATH/INCLUDE/LIB。

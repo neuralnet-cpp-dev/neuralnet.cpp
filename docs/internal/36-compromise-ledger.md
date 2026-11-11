@@ -35,3 +35,10 @@ C1 平台标注补正留证（2026-11-10，跨 DSO 录制视图专项）：Windo
 （tag=0/nodes=0 实测红）→ 方案 A（状态读写归引擎 TU）修复后 `expr_gpu_test`
 P10-④ 断言全绿、engine-verify 4/4、dev-tests 全量 **81/81**、text_train 短跑
 `NN_IRC_TRACE=1` 出现 `[ir-c]` 录制/融合输出。
+Linux 侧补正（2026-11-10 晚，WSL2 Ubuntu-26.04 实机，37 号 #4 收口）：原"ELF
+弱符号 TLS 归并"为读码推断——现以消费方形态录制回归实证：`libnn-gpu.so`（ELF）
++ 消费方 EXE 下 `expr_gpu_test` 的 P10-④ 断言 **10/10 PASS**（录制空转门 fail-only
+零触发、判别力自检 4.88e-04>1e-6、f16 菱形 vs 双参考全绿），Dozen（RTX 2060
+SUPER）与 llvmpipe 双驱动同果、多轮复跑稳定 ⇒ Linux .so 消费方录制端到端成立；
+方案 A 后该成立由设计保证（状态全在引擎 TU 单副本），TLS 归并仅是 ELF 实现巧合
+（与本行平台标注一致、不再构成依赖）。

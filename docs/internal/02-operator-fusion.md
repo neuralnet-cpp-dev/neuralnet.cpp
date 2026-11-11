@@ -169,9 +169,9 @@ struct MatmulSpec {
 
 - **GPU 真录制**：`GpuEngine::execute_fused_graph`（图 → 融合分析 → kernel 序列 → JIT 派发），kernel 输出经 `output_override` 直接写进尾节点占位存储（`run_graph_kernel_into_`）。
 - **CPU no-op**：普通运行 `begin_expr/end_expr` 是 no-op（CPU 数值不变）；构建期 `NN_EXPR_SCAN` 收集器已删除，运行期一致性由 JIT 按同一套 `fuse_expr_graph` 结果现编保证。
-- **融合规则**：**P1 链**（单输出；两端节点均逐元素、无归约、同形状同精度；尾节点恰一个消费者、经 Linear 视图消费；允许 matmul 头段 = 旧 S5 规则）与 **P2 分量**（纯逐元素 F32 同形状节点按依赖边 union-find 成组，多消费者/菱形不再是融合边界；成员输出**全部写穿** = `ExprSpec.extras`，≤4 个 extras、至少 2 个成员；预算溢出则拆成更多 kernel）。kernel 序列按确定性稳定拓扑序执行。
+- **融合规则**：**P1 链**（单输出；两端节点均逐元素、无归约、同形状同精度；尾节点恰一个消费者、经 Linear 视图消费；允许 matmul 头段 = 旧 S5 规则；允许 **fold 头 + 逐元素尾链** = P10-③——fold 顶层 `instrs` = finalize 之后在输出网格上执行的收尾，域规则见 `validate_expr_spec` 的 fold 段，B 自身是 fold 头时仍拒拼）与 **P2 分量**（纯逐元素 **F32/F16 存储**（P10-④；f16 分量经边界 cast 折 f32 执行）同形状节点按依赖边 union-find 成组，多消费者/菱形不再是融合边界；成员输出**全部写穿** = `ExprSpec.extras`，≤4 个 extras、至少 2 个成员；预算溢出则拆成更多 kernel）。kernel 序列按确定性稳定拓扑序执行。
 - **Adam 接线**：`Adam::step`/`AdamW::step` 用 `begin_expr` + `ExprSegment` 录制整个 step；每个参数张量的 K1/K2 m/v 状态写穿 + K3 delta + K4 `p += delta` 目标传递收敛为**一个多输出 kernel**（f32；混合精度自动拆分）。实测（`NN_PROFILE`，GPU NVIDIA CMP 40HX，GPT d_model=64 / 4 层 / heads=4 / seq=256 / batch=64，`adam`，20 步）：`fused@optimizer` 设备 kernel **266 → 66.5 每步**、设备时间 **0.57 → 0.23 ms/step**（设备侧数字与构建配置无关；Debug 构建会放大 host 侧数字）。
-- **注册表降级（通用机制）**：融合分组依赖精度（P2 需全 F32 成员、P1 需同精度），混精度 profile 可能产出 `.nnk` 缓存从未编译过的**复合**结构。执行期通用降级：复合 kernel 的缓存未命中（或写穿前置条件不满足——多输出要求输入/输出全 f32）时，`execute_fused_graph` 把该 kernel 拆回逐成员派发——每个成员都是单节点结构，由运行期 JIT 现编并缓存。降级后即回落到单表达式的常规派发路径。
+- **注册表降级（通用机制）**：融合分组依赖精度（P2 需 F32/F16 存储成员（P10-④；f16 经边界 cast）、P1 需同精度），混精度 profile 可能产出 `.nnk` 缓存从未编译过的**复合**结构。执行期通用降级：复合 kernel 的缓存未命中（或写穿前置条件不满足——多输出要求输入/输出为 F32/F16 存储）时，`execute_fused_graph` 把该 kernel 拆回逐成员派发——每个成员都是单节点结构，由运行期 JIT 现编并缓存。降级后即回落到单表达式的常规派发路径。
 
 仍可（且常常更简单）把一条长逐元素链直接写成**一个** `dsl::compute` 表达式（单个 JIT 融合 kernel）——这仍是首选机制；跨表达式录制用于同一 step 内多个表达式共享写穿/多输出目标（优化器步即典型）。**`FusedChainLayer`（旧演示层）不存在**——跨表达式录制只提供机制。取舍记录见 `docs/history/history.md`，另见 `03-ir-optimization.md` §5.3。
 

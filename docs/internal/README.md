@@ -29,7 +29,7 @@
 | [`35-modules-migration-implementation.md`](35-modules-migration-implementation.md) | **src/ 全量 import 化与 AOT 收集 → JIT 预热实施文档（只读，用户提供）**：P0–P6 分阶段任务、验收门 A–G、D1–D9 清单；配套台账 = 36 号 |
 | [`36-compromise-ledger.md`](36-compromise-ledger.md) | **模块迁移妥协式设计台账（35 号配套，最终验收门 G 前必须清零）**：为解锁验收门引入的绕行（optimizer=f16 跳录制 / NN_NO_GRAPH 旁路 / 诊断改道 / A/B 残留）逐条登记 + 消灭方案与时机；根因级修复不入表 |
 | [`00-code-review-remediation.md`](00-code-review-remediation.md) | **2026-10-11 代码审查整改立项台账**：审查发现的问题逐条立项（现象/证据/根因/方案/验收/优先级） |
-| [`37-review-remaining-items.md`](37-review-remaining-items.md) | **11-02 / 11-09 两轮全库审查的剩余项台账**：清零后仅剩 4 项 ⏳（#P13 vecacc 收尾归约已恢复观察、开工条件 = shader 实测有效；#P10-③ 单独立项 + 注释/复验两小尾巴）；原两份审查报告已移除（原文 git `0cef8d8` / `048bd75`） |
+| [`37-review-remaining-items.md`](37-review-remaining-items.md) | **11-02 / 11-09 两轮全库审查的剩余项台账**：**四项已全部处置完毕（2026-11-10）**（#P13 否决 / #P10-③ fold 后收尾落地 / 注释修正 / Linux `.so` 消费方录制 WSL 实机复验 P10-④ 10/10）；原两份审查报告已移除（原文 git `0cef8d8` / `048bd75`） |
 | [`18-roadmap.md`](18-roadmap.md) | **"某件事该不该做"的唯一入口**：未来 6–12 个月方向 + 未完成项**裁定**台账（做 / 条件触发 / 不做）+ 验收口径 + 现状实测；**§4.5 P4 = 持续优化方向**（性能利用率 / 算子性能 / 显存开销 + API 易用性与 Fold 自动化扫描）。**不含执行计划**（见下一行） |
 | [`27-execution-plan.md`](27-execution-plan.md) | **执行计划（优先级象限）**：把 18 号 §3/§4/§6 与 00 号 RV 台账里当前可动手的项排成"先做哪个"（重要×简单四象限 + 第一步动作 + 串行依赖）——**想知道"下一个先做哪个"读它** |
 | [`32-trainer-skeleton-and-openspec.md`](32-trainer-skeleton-and-openspec.md) | **领域无关训练骨架（RunDriver）与开放模型规格（ModelSpecBase）RFC**（已实施）：TrainState/BatchSource/RunDriver 分层 + ModelSpecBase 多态规格（issue #39/#26） |
