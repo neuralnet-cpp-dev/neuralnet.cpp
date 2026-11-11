@@ -903,10 +903,18 @@ function(nn_add_module modname source)
     endif()
     if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         # Windows + clang（GNU 驱动）：CMake 给消费方编译加 -D_DLL -D_MT
-        # -Xclang --dependent-lib=msvcrt（/MD 动态 CRT），BMI 自定义命令必须
-        # 同值——否则 pcm 记录 MT_StaticRelease linker options，import 传播
-        # 与消费方本地 MD 冲突（lld-link RuntimeLibrary mismatch，40HX 实测）。
-        list(APPEND _flags -D_DLL -D_MT -Xclang --dependent-lib=msvcrt)
+        # -Xclang --dependent-lib=msvcrt（Release；Debug 是 msvcrtd），BMI
+        # 自定义命令必须**逐项同值**——否则 pcm 记录的 RuntimeLibrary /
+        # _ITERATOR_DEBUG_LEVEL（经 _DEBUG 决定）与消费方冲突：Release 下
+        # 表现为 lld-link RuntimeLibrary mismatch（40HX 实测），Debug 下表现为
+        # 同一 obj 内 IDL=2（消费方 _DEBUG）vs IDL=0（PCM 无 _DEBUG）的
+        # /failifmismatch 链接失败（c11-debug 树实测，2026-11-11）。
+        list(APPEND _flags -D_DLL -D_MT)
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            list(APPEND _flags -D_DEBUG -Xclang --dependent-lib=msvcrtd)
+        else()
+            list(APPEND _flags -Xclang --dependent-lib=msvcrt)
+        endif()
     endif()
     get_target_property(_thread_opts Threads::Threads INTERFACE_COMPILE_OPTIONS)
     if(_thread_opts)
