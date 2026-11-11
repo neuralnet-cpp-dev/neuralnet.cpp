@@ -92,6 +92,14 @@ int main(int argc, char** argv)
     }
     if (!env_cache_configured()) set_cache_dir(out_dir.empty() ? exe_dir(argv[0]) : out_dir);
 
+#ifndef NN_GPU_ENGINE
+    // GPU OFF（NN_ENABLE_GPU=OFF）：create_gpu_engine 符号不存在于 nn-cpu
+    // （gpu_engine_so.cpp 只编进 libnn-gpu），无守卫引用 = 链接失败——与
+    // cli_engine_factory 同一守卫口径（CMakeLists 1664 注释）。本工具只为
+    // GPU kernel 缓存服务，无 GPU 即 SKIP 返回 0（与"无 Vulkan 设备"同语义）。
+    std::cout << "[nn_warmup] SKIP: 本构建未启用 GPU 引擎（NN_ENABLE_GPU=OFF）\n";
+    return 0;
+#else
     // ── GPU 引擎（本目标只为 GPU kernel 缓存服务）────────────────────────────
     auto engine = nn::create_gpu_engine(nullptr);
     if (!engine)
@@ -184,4 +192,5 @@ int main(int argc, char** argv)
     }
     std::cout << "[nn_warmup] 完成，kernels.nnk = " << cache_path << "\n";
     return 0;
+#endif // NN_GPU_ENGINE
 }

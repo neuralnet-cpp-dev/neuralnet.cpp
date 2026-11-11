@@ -10,6 +10,20 @@
 // ── tensor_precision_test (variant 存储) ───────────────────────────────────
 #define main test_tensor_precision
 #define g_failures g_fail_tensor_precision
+// ── prelude（聚合体头提升）───────────────────────────────────────
+// 下方首个嵌套 .cpp 起即出现 import；MSVC 模块消费方对「import 之后再
+// 文本 include 同一头」不合并实体（C2953/C2572 族，上游 microsoft/STL
+// #6436 同类）。故把 flatten（本文件+全部嵌套 .cpp）的头在此先行包含；
+// include guard 幂等，clang/GCC 路径无害。改动此块须同步嵌套文件的头集合。
+#include <nn_error_macros.hpp>
+#include <cstring>
+#include <memory>
+#include "test_common.hpp"
+#include <cmath>
+#include <random>
+#include <vector>
+#include <string>
+
 #include "tensor_precision_test.cpp"
 #undef g_failures
 #undef main

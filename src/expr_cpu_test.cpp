@@ -9,6 +9,23 @@
 // ── expr_dsl_test ──────────────────────────────────────────────────────────
 #define main test_expr_dsl
 #define g_fail g_fail_dsl
+// ── prelude（聚合体头提升）───────────────────────────────────────
+// 下方首个嵌套 .cpp 起即出现 import；MSVC 模块消费方对「import 之后再
+// 文本 include 同一头」不合并实体（C2953/C2572 族，上游 microsoft/STL
+// #6436 同类）。故把 flatten（本文件+全部嵌套 .cpp）的头在此先行包含；
+// include guard 幂等，clang/GCC 路径无害。改动此块须同步嵌套文件的头集合。
+#include <cmath>
+#include <vector>
+#include "test_common.hpp"
+#include <nn_error_macros.hpp>
+#include <algorithm>
+#include <array>
+#include <limits>
+#include <optional>
+#include <random>
+#include <string>
+#include <type_traits>
+
 #include "expr_dsl_test.cpp"
 #undef g_fail
 #undef main

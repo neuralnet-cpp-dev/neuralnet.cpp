@@ -74,6 +74,16 @@ set(NN_LIB_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}" CACHE INTERNAL
 # 若将来改用 CMake 原生 FILE_SET CXX_MODULES，删掉这一行即可恢复默认行为。
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
+# BMI 产物扩展名按编译器分派：cl 走 /interface 产 .ifc，GNU 驱动 Clang 走
+# --precompile 产 .pcm。nn_add_module 的自定义命令/DEPS、nn_mod_* 的
+# -fmodule-file 与 /reference、nn_use_modules 的 OBJECT_DEPENDS 都从这里取，
+# 避免多处字面量漂移。
+if(MSVC)
+    set(NN_BMI_EXT "ifc")
+else()
+    set(NN_BMI_EXT "pcm")
+endif()
+
 # ── C++26 标准 ──────────────────────────────────────────────────────────
 # CMake 4.3 尚未内置 MSVC 的 CXX26 方言标志映射（VS2026 cl 19.51 也不认
 # /std:c++26，C++26 特性走 /std:c++latest），故对 MSVC 用 CMAKE_CXX_STANDARD=23
@@ -126,7 +136,11 @@ if(MSVC)
     # /bigobj：Debug 下 text_train.cpp（header-only 全量展开）实测触发
     # C1128「节数超过对象文件格式限制」（P1-5，MSVC 19.51 / VS18，2026-10-18）；
     # Release 未触发，但该限制与优化级别相关，统一打开以避免配置相关失败。
-    add_compile_options(/W4 /permissive- /Zc:preprocessor /utf-8 /bigobj)
+    # 单一真源：NN_COMMON 同时喂目录级 add_compile_options 与 nn_add_module
+    # 的 BMI 自定义命令（自定义命令不继承目录级选项，漏镜像 = IFC 导入时
+    # configuration 不一致，与 clang 侧 PCM mismatch 同因）。
+    set(NN_COMMON_COMPILE_OPTIONS /W4 /permissive- /Zc:preprocessor /utf-8 /bigobj)
+    add_compile_options(${NN_COMMON_COMPILE_OPTIONS})
     # /STACK：MSVC 默认 1 MB 栈。Debug 下多个模型/序列化测试实测
     # STATUS_STACK_OVERFLOW (0xC00000FD)（P1-5，2026-10-18：t1_58 / bitnet_struct /
     # model_roles / batchnorm / model_spec_validation / text_train_modules /
@@ -829,7 +843,7 @@ set(NN_MOD_CLI_HEADERS
 function(nn_add_module modname source)
     cmake_parse_arguments(NNM "" "" "DEPS;HEADERS" ${ARGN})
     set(_cpp "nn.${modname}")
-    set(_bmi "${NN_LIB_BINARY_DIR}/modules/${_cpp}.pcm")
+    set(_bmi "${NN_LIB_BINARY_DIR}/modules/${_cpp}.${NN_BMI_EXT}")
     # ── BMI 编译标志 = 目标编译命令**镜像**（P0/D1，docs/internal/35 §0.2）──
     # 目录级 add_compile_options 不作用于自定义命令，须在此显式重放消费方
     # 命令行的每一段；任何缺项都会让 PCM 加载报 configuration mismatch：
@@ -862,7 +876,31 @@ function(nn_add_module modname source)
     else()
         set(_opt ${RELEASE_FLAGS})
     endif()
-    list(APPEND _flags ${_opt} "-std=c++${CMAKE_CXX_STANDARD}")
+    if(MSVC)
+        # cl 不认 clang 形 -std=c++23（D9002）；方言用与消费方同值的
+        # -std:c++latest（cl 接受 -std: 别名；消费方另有一份目录级
+        # /std:c++latest，同值重复无害，IFC 记录的是解析后的方言值）。
+        list(APPEND _flags ${_opt} "-std:c++latest")
+        # ── MSVC 特有镜像段：自定义命令不继承目录级 add_compile_options /
+        # add_compile_definitions 与 CMake 运行库机制，须显式重放 ──
+        #   · -MD/-MDd（或 /MT[d]）：IFC 记录 RuntimeLibrary——与 clang BMI
+        #     镜像 -D_DLL -D_MT --dependent-lib 同因，缺失即消费方导入不一致
+        #   · _CRT_SECURE_NO_WARNINGS：WIN32 目录级 add_compile_definitions
+        list(APPEND _flags -D_CRT_SECURE_NO_WARNINGS)
+        if(CMAKE_MSVC_RUNTIME_LIBRARY MATCHES "Static")
+            if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+                list(APPEND _flags "-MTd")
+            else()
+                list(APPEND _flags "-MT")
+            endif()
+        elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            list(APPEND _flags "-MDd")
+        else()
+            list(APPEND _flags "-MD")
+        endif()
+    else()
+        list(APPEND _flags ${_opt} "-std=c++${CMAKE_CXX_STANDARD}")
+    endif()
     if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         # Windows + clang（GNU 驱动）：CMake 给消费方编译加 -D_DLL -D_MT
         # -Xclang --dependent-lib=msvcrt（/MD 动态 CRT），BMI 自定义命令必须
@@ -884,22 +922,64 @@ function(nn_add_module modname source)
         -I "${NN_LIB_SOURCE_DIR}/include")
     set(_file_deps "")
     foreach(d IN LISTS NNM_DEPS)
-        list(APPEND _flags "-fmodule-file=nn.${d}=${NN_LIB_BINARY_DIR}/modules/nn.${d}.pcm")
-        list(APPEND _file_deps "${NN_LIB_BINARY_DIR}/modules/nn.${d}.pcm")
+        if(MSVC)
+            list(APPEND _flags "/reference nn.${d}=${NN_LIB_BINARY_DIR}/modules/nn.${d}.${NN_BMI_EXT}")
+        else()
+            list(APPEND _flags "-fmodule-file=nn.${d}=${NN_LIB_BINARY_DIR}/modules/nn.${d}.${NN_BMI_EXT}")
+        endif()
+        list(APPEND _file_deps "${NN_LIB_BINARY_DIR}/modules/nn.${d}.${NN_BMI_EXT}")
     endforeach()
     foreach(h IN LISTS NNM_HEADERS)
         list(APPEND _file_deps "${NN_LIB_SOURCE_DIR}/${h}")
     endforeach()
-    add_custom_command(
-        OUTPUT ${_bmi}
-        COMMAND ${CMAKE_CXX_COMPILER} ${_flags} --precompile
-                -o ${_bmi} -x c++-module ${NN_LIB_SOURCE_DIR}/${source}
-        DEPENDS ${NN_LIB_SOURCE_DIR}/${source} ${_file_deps}
-        COMMENT "[nn] module BMI: ${_cpp}"
-        VERBATIM
-    )
+    if(MSVC)
+        # cl 无 --precompile：/interface 同时产 IFC + obj。IFC 文件名取源文件名
+        # （nn.core.cpp → nn.core.ifc，实测 /Fo 只挪 obj、IFC 恒落命令工作目录）
+        # ⇒ WORKING_DIRECTORY 钉到 modules/，使产物与 OUTPUT 对齐。
+        # ⚠ obj 必须进 OUTPUT 并链给消费方：模块 TU 的 GMF 附件实体（const/非
+        # inline 变量等）**只在模块 obj 里有定义**，消费方 import 后按外链引用 ——
+        # 不链 = 全量 LNK2019（实测 nn::prof::g_enabled / g_trace_path /
+        # __tlregdtor，63 个 exe 链接同挂）。clang 的 --precompile 只产 BMI、
+        # 消费方自行实例化，故 clang 分支无此义务。
+        set(_bmi_obj "${NN_LIB_BINARY_DIR}/modules/${_cpp}.obj")
+        add_custom_command(
+            OUTPUT ${_bmi} ${_bmi_obj}
+            COMMAND ${CMAKE_CXX_COMPILER} ${_flags} /interface /c
+                    /Fo${_bmi_obj}
+                    ${NN_LIB_SOURCE_DIR}/${source}
+            WORKING_DIRECTORY ${NN_LIB_BINARY_DIR}/modules
+            DEPENDS ${NN_LIB_SOURCE_DIR}/${source} ${_file_deps}
+            COMMENT "[nn] module IFC: ${_cpp}"
+            VERBATIM
+        )
+    else()
+        add_custom_command(
+            OUTPUT ${_bmi}
+            COMMAND ${CMAKE_CXX_COMPILER} ${_flags} --precompile
+                    -o ${_bmi} -x c++-module ${NN_LIB_SOURCE_DIR}/${source}
+            DEPENDS ${NN_LIB_SOURCE_DIR}/${source} ${_file_deps}
+            COMMENT "[nn] module BMI: ${_cpp}"
+            VERBATIM
+        )
+    endif()
     add_library(nn_mod_${modname} INTERFACE)
-    target_compile_options(nn_mod_${modname} INTERFACE "-fmodule-file=${_cpp}=${_bmi}")
+    if(MSVC)
+        # /reference 统一走**响应文件**（@nn-ifc-refs.rsp）：朴素写法两条都被
+        # CMake 的重复编译选项去重击穿——① 合成单串 "/reference nn.core=…"
+        # = 单 argv，cl 不在空格处拆分 ⇒ C2230；② 拆成两个 argv 后，13 个
+        # 字面相同的 "/reference" 被去重合并成 1 个，后 12 条 name=path 沦为
+        # 裸参数（tiny CMake 工程复现）。rsp 内部是规范的两 argv 形态；接口侧
+        # 只留唯一 @token，去重恰好是我们要的。
+        target_compile_options(nn_mod_${modname} INTERFACE
+            "@${NN_LIB_BINARY_DIR}/modules/nn-ifc-refs.rsp")
+        set_property(GLOBAL APPEND PROPERTY NN_IFC_REF_LINES
+            "/reference ${_cpp}=\"${_bmi}\"")
+        # 模块 obj 参与链接（见自定义命令处注释：GMF 附件实体的唯一定义所在；
+        # 缺它 = 全量 LNK2019：g_enabled / KVREC_VERSION_KEY / tl_worker_index …）
+        target_link_libraries(nn_mod_${modname} INTERFACE "${_bmi_obj}")
+    else()
+        target_compile_options(nn_mod_${modname} INTERFACE "-fmodule-file=${_cpp}=${_bmi}")
+    endif()
     foreach(d IN LISTS NNM_DEPS)
         target_link_libraries(nn_mod_${modname} INTERFACE nn_mod_${d})
     endforeach()
@@ -936,7 +1016,7 @@ function(nn_use_modules target)
                     get_filename_component(_s_abs "${s}" ABSOLUTE
                         BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
                     set_property(SOURCE ${_s_abs} APPEND PROPERTY
-                        OBJECT_DEPENDS "${NN_LIB_BINARY_DIR}/modules/nn.${m}.pcm")
+                        OBJECT_DEPENDS "${NN_LIB_BINARY_DIR}/modules/nn.${m}.${NN_BMI_EXT}")
                 endforeach()
             endif()
         endif()
@@ -1002,6 +1082,18 @@ nn_add_module(cli      modules/nn.cli.cpp      DEPS core HEADERS ${NN_MOD_CLI_HE
 set(NN_ALL_MODULES
     core kvrecord dataset tokenizer
     expr engine layer loss opt model train domain cli)
+
+# ── MSVC：全域 IFC 引用响应文件 ────────────────────────────────────────────
+# 注册全部完成后一次性生成；消费方经 nn_mod_* 接口拿到唯一 @token（见
+# nn_add_module 的 MSVC 分支注释：为何不能直接铺 /reference）。引号只包
+# 路径段（nn.core="C:/…"），cl 的 rsp 分词把它与前段合并为单 token，
+# 路径含空格也安全。
+if(MSVC)
+    get_property(_nn_ifc_lines GLOBAL PROPERTY NN_IFC_REF_LINES)
+    string(REPLACE ";" "\n" _nn_ifc_content "${_nn_ifc_lines}")
+    file(GENERATE OUTPUT "${NN_LIB_BINARY_DIR}/modules/nn-ifc-refs.rsp"
+         CONTENT "${_nn_ifc_content}\n")
+endif()
 
 # ── 测试/验证目标开关（默认关闭） ──────────────────────────────────────
 # 默认只构建应用与基准工具目标，避免生成大量验证程序；
