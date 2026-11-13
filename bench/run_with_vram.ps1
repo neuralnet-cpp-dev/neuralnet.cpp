@@ -16,6 +16,17 @@ $errFile = "$Log.stderr"
 $smi = (Get-Command nvidia-smi -ErrorAction SilentlyContinue).Source
 if (-not $smi) { $smi = Join-Path $env:SystemRoot 'system32\nvidia-smi.exe' }
 
+# NVML 故障探测：nvidia-smi 初始化失败（如 "Failed to initialize NVML: Unknown Error"）
+# 时回落到 PDH 计数器 "\GPU Adapter Memory(*)\Dedicated Usage"（整卡 dedicated 用量，
+# 取全部 GPU 适配器最大值 ≈ 旧口径的 NVIDIA 整卡 memory.used；2026-11-12 实测本机
+# NVML 不可用而 Vulkan/CUDA 正常时的等价采样）
+$usePdh = $false
+try {
+    $probe = (& $smi --query-gpu=memory.used --format=csv,noheader,nounits 2>$null)
+    if (-not ("$probe".Trim() -match '^\d+$')) { $usePdh = $true }
+} catch { $usePdh = $true }
+if ($usePdh) { Write-Host "[run_with_vram] nvidia-smi/NVML 不可用，改用 PDH GPU Adapter Memory 采样" }
+
 # ⚠ 采样必须在**前台**做：早期版本用 Start-Job 轮询（job 的 PATH/会话与前台
 # 不同 → 实测采到 0 条样本），改用 nvidia-smi 的 -lms 循环模式也受进程生命周期
 # 影响。当前实现 = 被测程序后台跑 + 前台每 ~150ms 取一次 memory.used。
@@ -25,8 +36,16 @@ $proc = Start-Process -FilePath $Exe -ArgumentList $Arguments `
 
 [System.Collections.Generic.List[int]] $samples = @()
 while (-not $proc.HasExited) {
-    $v = (& $smi --query-gpu=memory.used --format=csv,noheader,nounits 2>$null)
-    if ("$v".Trim() -match '^\d+$') { $samples.Add([int]"$v".Trim()) }
+    if ($usePdh) {
+        try {
+            $cs = (Get-Counter '\GPU Adapter Memory(*)\Dedicated Usage' -ErrorAction Stop).CounterSamples
+            $maxBytes = ($cs | Measure-Object -Property CookedValue -Maximum).Maximum
+            if ($maxBytes -ne $null) { $samples.Add([int][math]::Round($maxBytes / 1MB)) }
+        } catch { }
+    } else {
+        $v = (& $smi --query-gpu=memory.used --format=csv,noheader,nounits 2>$null)
+        if ("$v".Trim() -match '^\d+$') { $samples.Add([int]"$v".Trim()) }
+    }
     Start-Sleep -Milliseconds 150
 }
 $proc.WaitForExit()
