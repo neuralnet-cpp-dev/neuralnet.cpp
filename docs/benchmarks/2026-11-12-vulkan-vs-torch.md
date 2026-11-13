@@ -289,3 +289,19 @@ Remove-Item Env:NN_PROFILE,Env:NN_PROFILE_TRACE
 - **一次性成本**：修复后首次 `--f16` 运行 warmup 现编 typed kernel ≈2.6 s（入 `.nnk`，复跑 59 ms 命中）——§7 复现命令不变。
 - **复测产物**：`build/{nn_f16_afterfix,nn_f16_afterfix_r2,nn_allf16_afterfix,nn_f32_afterfix,nn_f32_afterfix_r2}.log`（+`.vram`/`.peak`）、`build/prof_f16_afterfix.txt`、`build/trace_afterfix.json`。
 - **残余优化（本修复未做）**：图路径（C4 裁决，optimizer 小张量）仍走边界 cast，可另行立项；`cast_into`/小张量 ~1.1 ms/step；`flush_batch` host 等待现已可见（busy 83%）→ 下一杠杆仍在设备 kernel 效率（与 10-06 §4 结论一致）。
+
+## 9 残余修复：图路径 typed 直通（2026-11-13）
+
+§8.3 的残余项「图路径仍走边界 cast」已修，改动只在 engine 子模块 `compute_gpu_engine.hpp` 的 `run_graph_kernel_into_`：`psig≠0` 分支原先无条件 `to_f32_all → V0 → cast_into`，现改为与 `eval_expr_*` 同源的运行期 typed JIT 直通（f16 直读直写、f32 算术、结果写回 `out` 真实存储）；任一环节失败（16bit 存储缺失 / 生成器不支持 / 建管或派发失败 / 负缓存命中）回退原边界 cast，正确性路径与 C4 裁决不变。
+
+| 指标（同卡 40HX，同语料） | §8 修复后 | §9 修复后 |
+|---|---:|---:|
+| `--f16` 20 步 `cast` 计数 / 墙钟 | 4220 / ~1.1 ms/step | **20 / 0.02 ms**（`cast_into` 0 次） |
+| `--f16` `eval_expr` 单次 | 222.0 µs | **213.4 µs** |
+| `--f16` 稳态 | 5.0–5.1 s/epoch | 5.1–5.2 s/epoch（≈104–106 ms/step） |
+| `--f16` 3 epoch loss | 7.348→5.876→5.225 | 7.3546→5.9078→5.2526（同曲线） |
+| 全 f16 1 epoch | 4.4 s/epoch，8.176 | 4.4 s/epoch，8.1746，有限无 NaN |
+
+- 验证：`precision_test` / `f16_precision_test`（ALL PASSED）/ `expr_gpu_test`（0 failure）/ `write_epoch_test` / `gpu_batch_scope_test` 通过；全 f16 `adamw` 3 步与 `adam` 1 epoch 复跑正常。
+- 全 f16 仍有 ≈2.3 ms/step 的 `cast`/`cast_into`，位于 forward 段 f16 GEMM/归一化的 NVI 回退，不属图路径，未在本轮范围。
+- 附注：本次排查发现**进程退出期** 0xc0000005（Application Error 1000，`text_train` 与 `f16_precision_test` 均现）；将本轮改动 stash 后的基线同样复现，与本修复无关，但会使退出码/测试收尾不可靠（偶发 WER 挂起），建议单独立项。
