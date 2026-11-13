@@ -80,7 +80,7 @@ auto pred = model.forward(input);                       // engine 在 Model 内�
 诚实设定边界，避免不匹配的预期：
 
 - **不做分布式训练**——单机单卡/CPU 为主，没有多机多卡、模型并行或流水线并行；
-- **不追吞吐排名**——与 PyTorch 的 f32 训练吞吐差距约 2.1×（见 [基准报告](docs/benchmarks/2026-10-06-vulkan-vs-torch.md)），
+- **不追吞吐排名**——与 PyTorch 的 f32 训练吞吐差距约 2.0×（见 [基准报告](docs/benchmarks/2026-11-12-vulkan-vs-torch.md)），
   本项目的价值在**可读、自研、可嵌入**，不是 benchmark 榜单；
 - **不是 Python 生态替代品**——没有 autograd 图、没有 pip 包、不兼容 ONNX/checkpoint 格式生态；
 - **GPU 只走 Vulkan**——不做 CUDA/Metal 后端；部分精度路径（全 f16 训练）有已知数值限制，

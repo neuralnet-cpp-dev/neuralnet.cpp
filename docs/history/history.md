@@ -33,7 +33,7 @@
 - [docs/development 02 · 03 · 05](#docs/development 02 · 03 · 05)（19 条）
 - [docs/development 01 · 04 · 06 · 07 · 10 · 14](#docs/development 01 · 04 · 06 · 07 · 10 · 14)（25 条）
 - [docs/development 15 · 16（ComputeEngine Refresh 设计与 P0 盘点，归档）](#docs/development 15 · 16（ComputeEngine Refresh：设计与 P0 盘点，2026-10-11 归档）)（2 条）
-- [docs/introduction · usage · benchmarks](#docs/introduction · usage · benchmarks)（46 条）
+- [docs/introduction · usage · benchmarks](#docs/introduction · usage · benchmarks)（47 条）
 - [构建系统 / CI（CMakeLists.txt、.github/workflows）](#构建系统 / CI（CMakeLists.txt、.github/workflows）)（8 条）
 - [AGENTS.md](#AGENTS.md)（24 条）
 - [ZiPT（AttnZip）移除](#ZiPT（AttnZip）移除（2026-10-01）)（1 条）
@@ -2304,6 +2304,14 @@ GPU 后端 / GPU 引擎头文件「历史状态类注释」摘录。整改原则
 - **关键差异：torch fp16"病态慢"本轮不复现**——同脚本、同 torch 2.14.0+cu132、同卡，fp16 30.4 ms/step 比 fp32 **快 1.65×**（旧值 150.3，慢 3.16×）；单步 probe：forward 47.64→**8.55**ms、fwd+loss+bwd 150.02→**26.604**ms，而 host 构 batch / H2D / Adam / zero_grad 各段不变（= 脚本与管线未变）⇒ 差异在 GPU kernel 执行本身，疑驱动 / 设备时钟 / 运行时环境；旧环境不可复现、**未二分**，标为待查项，不判旧报告为错误。f32 侧与显存则复现：吞吐比值 2.13→**2.14**、torch 显存 3313/1981 MiB **逐字一致**、两侧各 +5.7%/+6.0% 落在 ±15% 漂移内。
 - step 剖析（**d64/B64，与 e2e 同配置**，20 步，`NN_PROFILE=1`）：墙钟 2197.68ms（109.9 ms/step，观测开销 +2.6%）、**GPU busy 89.8%**（设备 kernel 1972.59ms）；阶段 forward 85.4% / backward 5.4% / optimizer 5.0% / sync 3.7% / data 0.3%；op 表 `copy_from` **78.3%**（121 次、avg 14.2ms）、`release_idle_pool_blocks` 3.5%、`import` 0.5%（68128 次）；设备侧 `fused_mm` 1211ms/1830 次 + `fused` 704ms/10197 次 = 每步 95.8ms 的 **87%**。读数：`copy_from` 的 78.3% **含阻塞等待、不可读作 PCIe 传输**——`fwd.blk#0` 单次 57ms 而该处每步上传仅 KB 级，物理上不可能是传输时间，实为承接上一步设备排队；**瓶颈在设备 kernel 效率与每步约 602 次 dispatch**，三项 host 侧优化落地后继续压 host 固定开销难以改变 2.14× 差距，下一杠杆应转向 `fused_mm`/`fused`。
 - 产物：`docs/benchmarks/2026-10-06-vulkan-vs-torch.md`；`build/{nn_short_f32,nn_short_f16rec,nn_short_f16,torch_short_fp32,torch_short_fp16}_20261006.log`（+`.vram`/`.peak`）、`build/torch_train_fp{32,16}_20261006.json`、`build/prof_bench_20261006.txt`、`build/trace_bench_20261006.json`、`build/{bench_bpe_8192.nnvocab,tinystories_bench40.nndataset}`。
+
+## nn vs torch 端到端训练基准第三轮复测（2026-11-12，新报告 docs/benchmarks/2026-11-12-vulkan-vs-torch.md）
+
+- 类型：性能 A/B / 演进记录
+- 内容：HEAD `90dce64` 干净树（运行期 JIT + `.nnk`、引擎 DLL 化后首次 e2e 复测）vs torch 2.15.0+cu132，两侧同日同卡（CMP 40HX）同语料（10-06 语料已丢失，按同口径从 HF TinyStories 重建：4000 行 / 3,377,345 B / sha `0a2edd42…`，两侧同用）。主对比 f32：nn **109.2 ms/step / 150,059 tok/s / 3237 MiB**（复跑 112.2 / 145,966）vs torch **53.5 ms/step / 304,534 tok/s / 3741 MiB**（复跑 53.8 / 303,464，±0.4%）→ **torch 吞吐 2.03×（复跑 2.08×）、nn 显存省 13%**；两侧 loss 曲线与 10-06 几乎重合（7.359→5.146 / 7.338→5.231）→ 上轮"≈2.1×"结论稳定。torch fp16 病态慢连续第二轮不复现（probe forward 9.2 ms，fp16 端到端仍比 fp32 快 1.60×）。
+- **⚠ 新发现（待查）：nn f16 路径显存/性能回归**——`--f16` 显存 2113（10-06 nvidia-smi）→ **6972 MiB**（本轮 PDH；同轮 f32 两口径差仅 ~3% 解释不了 3.3×，分适配器探针 `build/mem_probe.ps1` 复现 epoch 内持续 5.4–6.9 GB、仅 epoch 边界回落），e2e 慢 17%（118.4→138.8 ms/step），profile 同调用数（3687）`eval_expr` 单次 229.9→509.8 µs（2.2×）；全 f16 由"3 epoch 跑完但 -nan"恶化为**首步 OOM**（`VK_ERROR_OUT_OF_DEVICE_MEMORY`）。f32 路径不受影响（107.1→109.2，+2.0%）。18 号 C9（f16 降速已修）在当前 HEAD 的 40HX 上不成立，待二分。
+- 环境异常（不影响两侧同卡结论）：nvidia-smi NVML 初始化失败 → `run_with_vram.ps1` 自动回落 PDH `\GPU Adapter Memory(*)\Dedicated Usage`（**显存数字与历轮 nvidia-smi 口径不可逐字比**）；WMI 显示名 "RTX 2060 SUPER" 与 Vulkan/CUDA 枚举名 "CMP 40HX" 不符。`NN_PROFILE` 设备侧 timestamp 表（GPU busy%）本轮四次运行均未回填（host 表正常）→ 上轮 89.8% 无法复核，待查。构建侧：MSVC STL 19.51→19.52 使全部 BMI 失效需全量重编；HEAD 上 `precision_test` 有 `NN_TEST_COUNTER` 宏重定义编译错（与基准无关，按应用目标绕开）。
+- 产物：`docs/benchmarks/2026-11-12-vulkan-vs-torch.md`；`build/{nn_short_f32,nn_short_f32_r2,nn_short_f16rec,nn_short_f16,torch_short_fp32,torch_short_fp32_r2,torch_short_fp16}_20261112.log`（+`.vram`/`.peak`）、`build/torch_train_fp{32,16}*_20261112.json`、`build/{prof_bench_20261112.txt,prof_bench_f16_20261112.txt,trace_bench_20261112.json,probe_torch_step_20261112.log,mem_probe.ps1,fetch_corpus.py}`、`build/{bench_bpe_8192.nnvocab,tinystories_bench40.nndataset}`、`bench/raw/torch_bpe_8192.json`。
 
 ## 评估分块（CNN 全量评估 OOM 修复，2026-09-20，原位置 AGENTS.md §12）
 

@@ -115,6 +115,7 @@
 | [`../CMakePresets.json`](../CMakePresets.json) | 预设构建（`cmake --preset dev` 等）——见 CONTRIBUTING §1 |
 | [`benchmarks/2026-09-25-vulkan-vs-cuda.md`](benchmarks/2026-09-25-vulkan-vs-cuda.md) | Vulkan 后端 vs CUDA（torch）基准 |
 | [`benchmarks/2026-10-06-vulkan-vs-torch.md`](benchmarks/2026-10-06-vulkan-vs-torch.md) | 第二轮复测 |
+| [`benchmarks/2026-11-12-vulkan-vs-torch.md`](benchmarks/2026-11-12-vulkan-vs-torch.md) | 第三轮复测 |
 | `release-notes/v1.5.0.md` … `v1.13.0.md` | 版本变更说明，覆盖 v1.5.0 → v1.13.0 的全部 tag（**大版本发布要求**见 [`contributors/release-requirements.md`](contributors/release-requirements.md)） |
 
 > 历次文档整理的记录（2026-10-11 两轮、2026-11 第三轮）统一在
