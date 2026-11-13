@@ -18,6 +18,11 @@
 #include <nn_error_macros.hpp>
 #include <cstring>
 #include <memory>
+// 聚合体先行包含 test_common.hpp → 其 #ifndef NN_TEST_COUNTER 落到默认
+// g_fail，随后嵌套 .cpp 的 `#define NN_TEST_COUNTER g_failures` 就成了异名
+// 重定义（-Wmacro-redefined）。这里先按首选计数器名定义，嵌套文件的同名
+// 重定义即为逐字相同、无告警。
+#define NN_TEST_COUNTER g_failures
 #include "test_common.hpp"
 #include <cmath>
 #include <random>
