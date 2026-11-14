@@ -79,12 +79,13 @@ auto pred = model.forward(input);                       // engine 在 Model 内�
 
 诚实设定边界，避免不匹配的预期：
 
-- **不做分布式训练**——单机单卡/CPU 为主，没有多机多卡、模型并行或流水线并行；
+- **不做分布式训练**——单机单卡/CPU 为主，没有多机多卡、模型并行或流水线并行（针对分布式训练的开发将于单机运行稳定后开始）；
 - **不追吞吐排名**——与 PyTorch 的 f32 训练吞吐差距约 2.0×（见 [基准报告](docs/benchmarks/2026-11-12-vulkan-vs-torch.md)），
-  本项目的价值在**可读、自研、可嵌入**，不是 benchmark 榜单；
-- **不是 Python 生态替代品**——没有 autograd 图、没有 pip 包、不兼容 ONNX/checkpoint 格式生态；
+  本项目的价值在**可读、自研、可嵌入**，不是 benchmark 榜单（针对性能优化的开发将于架构稳定后开始）；
+- **不是 Python 生态替代品**——没有 autograd 图、没有 pip 包、不兼容 ONNX/checkpoint 格式生态（针对兼容性的开发将于架构稳定后进行）；
 - **GPU 只走 Vulkan**——不做 CUDA/Metal 后端；部分精度路径（全 f16 训练）有已知数值限制，
-  现状见 [`research/`](research/README.md) 与 [多精度文档](docs/development/05-mixed-precision.md)。
+  现状见 [`research/`](research/README.md) 与 [多精度文档](docs/development/05-mixed-precision.md)（针对其他后端的开发将于架构稳定后进行）。
+- **上述预期仅针对v1**
 
 ## 文档
 
@@ -130,14 +131,13 @@ neuralnet.cpp/
 - **用库遇到问题**：提 issue，附最小复现与构建环境（编译器版本 + preset）。
 - **想贡献代码**：入口是 [CONTRIBUTING.md](CONTRIBUTING.md)（构建、测试口径、PR 自查清单）；
   改代码前先读 [C++ 开发规范](docs/contributors/cpp-standards.md) 与 [踩坑警示录](docs/contributors/pitfalls.md)。
-- **维护者**：@EthanPeng-2048。发布与版本号规则见 [release-policy](docs/contributors/release-policy.md)
-  （**版本号由人提出，agent 不得擅自发布**）。
+- **维护者**：@EthanPeng-2048。发布与版本号规则见 [release-policy](docs/contributors/release-policy.md)。
 - 所有参与方须遵守 [行为准则](CODE_OF_CONDUCT.md)。
 
 ## 许可证
 
-[GNU Lesser General Public License v3.0](LICENSE)（LGPL-3.0，含 GPL-3.0 条款），
-© 2026 EthanPeng-2048。闭源应用可以链接本库；对**本库本身**的修改须以本许可证继续开源。
+[MIT License](LICENSE)，
+© 2026 EthanPeng-2048。
 
 > **数据集说明**：`scripts/` 的下载脚本仅从第三方拉取数据（TinyStories、OpenWebText、中文 wiki 等），
 > 数据集各自持有独立许可证，不随本项目 LGPL 分发，请自行遵守其条款。
@@ -145,5 +145,4 @@ neuralnet.cpp/
 ## 🤖 AI 工具致谢
 
 本项目的部分代码由 AI 辅助生成，当前使用：DeepSeek V4 / V4.1、Mi Mimo v2.5 / v2.6、
-Qwen3.8、VS Code Copilot、ChatGPT Codex。AI 仅作为辅助工具，代码所有权与最终版权
-归 EthanPeng-2048，不影响 LGPL 许可证效力。
+Qwen3.8、VS Code Copilot、ChatGPT Codex、Mimo Desktop、DeepSeek Harness。AI 仅作为辅助工具，代码所有权与最终版权归 EthanPeng-2048，不影响 LGPL 许可证效力。
