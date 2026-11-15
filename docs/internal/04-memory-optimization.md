@@ -35,7 +35,7 @@
 - 验收：`src/rapt_checkpoint_test.cpp` 并入 `rapt_test`，stride∈{1,2} 与全存基线**逐位一致（max_abs=0）**；GPU 侧 `rapt_offload_test` 与全存基线逐位一致。
 
 **L2 内存池整块归还 + 统计**
-- `MemoryPool`：`PoolStats` + `pool_debug_stats()`（块数/占用/空闲/碎片）、`release_idle_blocks()`（整块 `vkFreeMemory` + 从 `blocks_` 移除，带 `retain_free_bytes_` 保留阈值防抖动）、`set_retain_free_bytes()`。
+- `MemoryPool`：`PoolStats` + `pool_debug_stats()`（块数/占用/空闲/碎片）、`release_idle_blocks()`（整块 `vkFreeMemory` + 从 `blocks_` 移除；`retain_free_bytes_` 保留阈值 + **空闲龄期**——只归还上次 release 以来未被子分配过的全闲块，稳态工作块每步复用不抖动，2026-11-15）、`set_retain_free_bytes()`。
 - `GpuBackend::release_idle_pool_blocks()`（先 `flush_pending_destroys()` 再归还）；`ComputeEngine` 提供 `release_idle_pool_blocks()` / `pool_stats()`；`GpuEngine` override。
   - **现行口径（M5）**：`pool_stats()` 不再有"CPU 返回空串"的空档——无池引擎（CPU）默认返回**宿主直配账本** `direct{ blocks=… live_bytes=… peak_bytes=… total_blocks=… total_bytes=… }`（`nn::host_alloc_ledger()`，在 `algebra_matrix.hpp` 的 `MatrixT` 分配/释放路径记账，relaxed 原子、元素热循环零参与）；`release_idle_pool_blocks()` 对 CPU 是**语义成立的 no-op**（直配无整块可归还）。两引擎同一动词、都非空，训练日志一套代码读两个引擎（17 §4.5）。
 - 接入：`text_train` 的 `--checkpoint-every N` 与每 step 末尾 `release_idle_pool_blocks()`（end_batch 提交完成、延迟销毁已 flush 后调用，安全）。
@@ -98,7 +98,7 @@ fp32 基线下激活、梯度、权重、优化器态全部 4B。
 ### 内存池碎片化（问题 L2，已由整块归还缓解）
 
 - `backend/compute_memory_pool.hpp`：**first-fit 子分配 + 相邻 free region 自动前后合并**（O(log n)、O(1) 合并）。
-- 整块回收：空闲 Block 可经 `release_idle_blocks()` 整块 `vkFreeMemory` 并移出 `blocks_`（`retain_free_bytes_` 阈值防抖动）；`text_train` 每 step 末尾调用 `release_idle_pool_blocks()`。block 底材按需 128MB（或超尺寸单块）申请。
+- 整块回收：空闲 Block 可经 `release_idle_blocks()` 整块 `vkFreeMemory` 并移出 `blocks_`（`retain_free_bytes_` 阈值 + 空闲龄期防抖动：只归还整步未触碰的块）；`text_train` 每 step 末尾调用 `release_idle_pool_blocks()`。block 底材按需 128MB（或超尺寸单块）申请。
 - 残余风险：碎片与闲置块在 step 内仍会累积（归还只发生在 step 边界），峰值生命周期仍是"一步之内"。
 
 ### 注意力形态（L3，语义复杂）

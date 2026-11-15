@@ -6485,3 +6485,38 @@ DSL 完成（与 AdamWQuant 逐位一致）；参数更新用重建值 m̂ = sm�
   `docs/contributors/pitfalls.md` §4.14。
 - 产物：`build/t5_fused_dsl_ab.txt`、`build/t5_fused_dsl_hash.txt`；
   作废 `build/t5_fused_swz_ab.txt`（layer 模式）。
+
+# host 残余清理（item 8）：池归还空闲龄期 + host bottleneck 复核（2026-11-15）
+
+- 类型：性能 A/B + 机制修复（GEMM/host 线收尾项「create_tensor / copy_from 残余」）
+- **复核结论（先讲清楚"还有什么可抠"）**：`NN_PROFILE=1 text_train`（d64/bench
+  配置，同窗交错复测）**GPU busy 已回到 91~93%**（首轮 46.7% 系污染读数，复跑
+  不现）→ host 工作基本藏进 GPU 在飞帧下，P2-9「copy_from↔flush_batch 换位无
+  收益」的裁定在当前忙率下继续成立；逐项到下限：
+  `create_tensor` 0.56 ms/步（422 次）、`import` 0.46 ms/步（5.6 万次×0.2µs）、
+  `zero` 1.9 ms/步（batch 内录制）——均无量级空间。**host 线到此收口**：剩余
+  e2e 缺口（~56 ms/step vs torch 同配置量级）主体是 kernel 时间，归 GEMM/fold 线。
+- **池归还空闲龄期（保留，唯一代码改动）**：`release_idle_blocks` 的 retain 分支
+  增加 `Block::last_alloc_epoch`——只归还**上次 release 以来未被子分配过**的全闲
+  块（`release_epoch_` 每次 release 递增；首轮调用保持旧行为全放，infer 一次性
+  回收语义不变）。根因：稳态训练 ~513MB 工作块每步步末全闲，原实现仅按
+  `total_free` 阈值判、插入序可能先释放大工作块 → 下步 vkAllocate 重抖
+  （WDDM 大块 5~17 ms/次）。
+  同窗交错 A/B（40HX，poolold/poolnew 两 DLL，3 轮，`NN_PROFILE=1`，20 步）：
+  | 变体 | wall ms（中位） | release 总 ms（中位） | busy |
+  |---|---|---|---|
+  | old（阈值 only） | 1124.75 | 91~130（4.6~6.5 ms/次） | 91.5~92.7% |
+  | new（+龄期） | 1122.20 | **43~54（2.1~2.7 ms/次）** | 92.3~93.0% |
+  **墙钟中位持平（省下的释放时间本就藏在在飞帧下），但释放耗时 −60%、消掉
+  WDDM free/alloc 抖动与尾部尖峰**（对照轮曾见 17.3 ms/次 → wall 1309 ms 的
+  单轮离群）。机制旁证：`NN_POOL_RETAIN_MB=65536`（零释放）臂 wall 1081~1089
+  稳定（`build/t5_retain_ab.txt`）。
+- 验证：`lifetime_contract` / `layer_lifetime` / `gpt_test --gpu` / `expr_gpu_test` /
+  `training_session` / `int8_act --gpu` / `ternary_gemm --gpu` / `rapt --gpu` 全绿；
+  text_train 20 步正常完成、loss 路径不变。
+- 关键文件：`engine/.../backend/compute_memory_pool.hpp`（Block::last_alloc_epoch +
+  release_epoch_）、`docs/internal/04-memory-optimization.md`（L2 口径补龄期）。
+- 产物：`build/t5_host_prof.txt`（首prof）、`build/t5_retain_ab.txt`（机制 A/B）、
+  `build/t5_pool_ab.txt`（修复 A/B）、`build/t5_trace_gaps.py`（trace 分析脚本）。
+- 关联：P2-9（18 号台账，已评估-不做）的"无收益"前提是忙率 95.9%——本轮复测
+  忙率仍 ~92%，结论维持；host 线立项可关。
