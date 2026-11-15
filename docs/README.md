@@ -96,6 +96,7 @@
 
 - `internal/18-roadmap.md` — **"某件事该不该做"的唯一入口**（裁定台账 + 验收口径 + 现状实测；不含执行计划）。
 - `internal/27-execution-plan.md` — **执行计划（优先级象限）**："下一个先做哪个"。
+- `internal/38-model-level-fusion.md` — **Model 级融合试点设计（P4-5）**：首跑/手动捕获 → 训练步只执行模型级融合计划（TODO，未实施）。
 - `internal/31-rl-training-primitives.md` — **RL 主线与通用训练基础设施**（2026-10-23 ✅ 已随 `v1.12.0` 发布）；调用指南见 `usage/06-reinforcement-learning.md`。
 - `internal/00-code-review-remediation.md` — 2026-10-11 代码审查整改立项台账。
 - `internal/12` / `17` / `19` / `21` / `22` / `23` — 现行设计/盘点。

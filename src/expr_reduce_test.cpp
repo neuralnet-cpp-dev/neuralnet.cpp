@@ -17,6 +17,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <random>
 #include <vector>
 
 #include "test_common.hpp"
@@ -327,7 +328,146 @@ void test_validation()
     }
 }
 
-// ── 测试 10：规范 key 确定性 ────────────────────────────────────────────
+// ── 测试 10：双 ColSum 链 + 全网格尾（LayerNorm/RMSNorm 单算子化形态）──────
+// 形态 = 单个 dsl::compute（vector_out=0 全网格输出），内部含多条同轴 ColSum：
+//   A. mean 走归约视图（对输入 Tensor 直接归约）→ diff → var 归约指令 →
+//      sinv → 全网格尾 diff*sinv（LayerNorm forward E1 形态）
+//   B. backward grad_x 形态：1 归约视图（x 的 mean）+ 3 归约指令
+//      （var / mean_g / mean_gn），尾链经 Reduce 操作数读三条归约
+//   C. mean 也走归约指令（leaf 直归约）→ 第二条归约指令的源经 Reduce
+//      操作数引用第一条归约结果（链式归约依赖）
+void test_chain_colsum_fullgrid()
+{
+    auto eng_owner = nn::create_cpu_engine();
+    nn::ComputeEngine& eng = *eng_owner;
+    const std::size_t R = 6, C = 5;
+    nn::Tensor x = make_tensor(eng, R, C, 0.5f, 0.03f);
+    const float inv_r = 1.0f / static_cast<float>(R);
+    const float eps = 1e-5f;
+    const nn::Matrix xm = download(eng, x);
+
+    // 宿主参考：mean/var/sinv 逐列，out = (x-mean)*sinv
+    auto ln_ref = [&](const nn::Matrix& m) {
+        nn::Matrix ref(R, C);
+        const auto xs = m.span();
+        auto rs = ref.span();
+        for (std::size_t c = 0; c < C; ++c)
+        {
+            float mean = 0.0f;
+            for (std::size_t r = 0; r < R; ++r) mean += xs[r * C + c];
+            mean *= inv_r;
+            float var = 0.0f;
+            for (std::size_t r = 0; r < R; ++r)
+            {
+                const float d = xs[r * C + c] - mean;
+                var += d * d;
+            }
+            const float sinv = 1.0f / std::sqrt(var * inv_r + eps);
+            for (std::size_t r = 0; r < R; ++r)
+                rs[r * C + c] = (xs[r * C + c] - mean) * sinv;
+        }
+        return ref;
+    };
+    const nn::Matrix ref = ln_ref(xm);
+
+    // A. mean 归约视图 + var 归约指令 + 全网格尾
+    {
+        const auto diff = dsl::leaf(x) - dsl::col_reduce_sum(x) * dsl::rparam(inv_r);
+        const auto var_raw = dsl::col_reduce_sum(diff * diff);
+        const auto sinv =
+            dsl::rsqrt(var_raw * dsl::rparam(inv_r) + dsl::rparam(eps));
+        auto out = dsl::compute(eng, diff * sinv, R, C);
+        CHECK(out.has_value(), "chain_colsum A: compute failed");
+        if (out)
+            check_close(eng, *out, upload(eng, ref),
+                        "双 ColSum 链 A（视图 mean + 指令 var + 全网格尾）", g_fail);
+    }
+
+    // B. backward grad_x 形态：1 视图 + 3 归约指令（var/mean_g/mean_gn）
+    {
+        nn::Matrix gm(R, C), nm(R, C), gm_(R, 1);
+        std::mt19937 rng(21);
+        std::uniform_real_distribution<Scalar> dist(-1.0f, 1.0f);
+        for (auto& v : gm.span()) v = dist(rng);
+        for (auto& v : nm.span()) v = dist(rng);
+        for (auto& v : gm_.span()) v = dist(rng);
+        const nn::Tensor gt = upload(eng, gm);
+        const nn::Tensor nt = upload(eng, nm);
+        const nn::Tensor gammat = upload(eng, gm_);
+
+        const auto mean = dsl::col_reduce_sum(x) * dsl::rparam(inv_r);
+        const auto diff = dsl::leaf(x) - mean;
+        const auto sinv =
+            dsl::rsqrt(dsl::col_reduce_sum(diff * diff) * dsl::rparam(inv_r) +
+                       dsl::rparam(eps));
+        const auto gy = dsl::leaf(gt) * dsl::row_broadcast(gammat);
+        const auto mean_g = dsl::col_reduce_sum(gy) * dsl::rparam(inv_r);
+        const auto mean_gn =
+            dsl::col_reduce_sum(gy * dsl::leaf(nt)) * dsl::rparam(inv_r);
+        auto out = dsl::compute(
+            eng, (gy - mean_g - dsl::leaf(nt) * mean_gn) * sinv, R, C);
+        CHECK(out.has_value(), "chain_colsum B: compute failed");
+
+        nn::Matrix ref_b(R, C);
+        {
+            // 宿主参考：gy/mean_g/mean_gn/sinv 逐列
+            const auto xs = xm.span();
+            const auto gsp = gm.span();
+            const auto nsp = nm.span();
+            const auto wsp = gm_.span();
+            auto rs = ref_b.span();
+            std::vector<float> sinv_c(C), mg_c(C), mgn_c(C);
+            for (std::size_t c = 0; c < C; ++c)
+            {
+                float mean0 = 0.0f, var = 0.0f, s1 = 0.0f, s2 = 0.0f;
+                for (std::size_t r = 0; r < R; ++r) mean0 += xs[r * C + c];
+                mean0 *= inv_r;
+                for (std::size_t r = 0; r < R; ++r)
+                {
+                    const float d = xs[r * C + c] - mean0;
+                    var += d * d;
+                }
+                sinv_c[c] = 1.0f / std::sqrt(var * inv_r + eps);
+                for (std::size_t r = 0; r < R; ++r)
+                {
+                    const float gyv = gsp[r * C + c] * wsp[r];
+                    s1 += gyv;
+                    s2 += gyv * nsp[r * C + c];
+                }
+                mg_c[c] = s1 * inv_r;
+                mgn_c[c] = s2 * inv_r;
+            }
+            for (std::size_t r = 0; r < R; ++r)
+                for (std::size_t c = 0; c < C; ++c)
+                {
+                    const float gyv = gsp[r * C + c] * wsp[r];
+                    rs[r * C + c] =
+                        (gyv - mg_c[c] - nsp[r * C + c] * mgn_c[c]) * sinv_c[c];
+                }
+        }
+        if (out)
+            check_close(eng, *out, upload(eng, ref_b),
+                        "双 ColSum 链 B（backward：1 视图 + 3 指令 + 全网格尾）",
+                        g_fail);
+    }
+
+    // C. mean 走归约指令：第二条归约的源经 Reduce 操作数引用第一条
+    {
+        const auto mean_i = dsl::col_reduce_sum(dsl::leaf(x));
+        const auto diff = dsl::leaf(x) - mean_i * dsl::rparam(inv_r);
+        const auto var_raw = dsl::col_reduce_sum(diff * diff);
+        const auto sinv =
+            dsl::rsqrt(var_raw * dsl::rparam(inv_r) + dsl::rparam(eps));
+        auto out = dsl::compute(eng, diff * sinv, R, C);
+        CHECK(out.has_value(), "chain_colsum C: compute failed");
+        if (out)
+            check_close(eng, *out, upload(eng, ref),
+                        "双 ColSum 链 C（指令链：var 源引用 mean 归约结果）",
+                        g_fail);
+    }
+}
+
+// ── 测试 11：规范 key 确定性 ────────────────────────────────────────────
 void test_key_determinism()
 {
     auto eng_owner = nn::create_cpu_engine();
@@ -361,6 +501,7 @@ int main()
     test_reduce_with_scalar();
     test_fold_structure();
     test_validation();
+    test_chain_colsum_fullgrid();
     test_key_determinism();
 
     if (g_fail == 0) std::printf("\n[expr_reduce_test] 全部通过 ✅\n");

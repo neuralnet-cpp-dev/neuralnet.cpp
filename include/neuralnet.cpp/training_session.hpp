@@ -204,8 +204,10 @@ public:
                         std::to_string(options.normalization_units) + "）");
         }
 
-        Result<void> begin_r = starts_update ? begin_and_zero_() : Result<void>{};
-        NN_TRY_CHECK(begin_r);
+        // update 起点不再清零：finish_update_ 成功路径已 zero_grad，构造期
+        // InitSpec::zero 与 reset_accumulation() 也保证干净；失败路径靠
+        // accumulation_dirty 拦截到 reset。begin_and_zero_ 每步多打一轮
+        // ~N 次 fill（forward 内 140 次/步的来源之一），成功路径恒冗余。
 
         RecordingGuard rec{engine()};
         auto out_r = step_fn(model_, engine(), batch);
@@ -347,8 +349,7 @@ public:
                         std::to_string(options.normalization_units) + "）");
         }
 
-        Result<void> begin_r = starts_update ? begin_and_zero_() : Result<void>{};
-        NN_TRY_CHECK(begin_r);
+        // 同 train_step：update 起点不重复 zero_grad（见上方注释）。
 
         RecordingGuard rec{engine()};
         auto out_r = step_fn(model_, engine(), batch);
@@ -594,16 +595,6 @@ private:
     private:
         ComputeEngine* engine_;
     };
-
-    [[nodiscard]] Result<void> begin_and_zero_()
-    {
-        auto b = engine().begin_batch();
-        if (!b) return b;
-        RecordingGuard rec{engine()};
-        auto z = model_.zero_grad();
-        if (!z) return z;
-        return rec.finish();
-    }
 
     [[nodiscard]] Result<void> finish_update_(const TrainingStepOptions& options)
     {

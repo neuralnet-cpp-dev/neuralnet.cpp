@@ -465,7 +465,8 @@ f16 / 训练性能与这条链无正确性依赖：可以后做，不能成为 R
 - MCTS、PUCT、游戏规则、局面编码、环境 `reset/step`、自对局 worker 池；
 - 新后端、CUDA、分布式训练作为当前交付；
 - 为某个 loss 新增 shader / 引擎虚函数；
-- 任意动态图、自动微分框架或完整 DAG 调度器；
+- 完整 DAG 调度器（**求导已按 2026-11 总方向全项目立项 = 自动微分**，见 [`18`](18-roadmap.md) §4.7；
+  RL 交付本身仍只依赖现有 forward/backward）；
 - 用单一 `RLTrainingSession` / `RLTrainer` 把模型、优化器、rollout、buffer 和 I/O 合成 god object；
 - 强制所有消费者采用同一套 replay、RNG 或 checkpoint 布局。
 

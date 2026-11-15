@@ -454,6 +454,7 @@ public:
 //             mean_g = (1/F) * Σ_f gy                  (col_reduce_sum + scale)
 //             gy_norm = gy * normalized                (elementwise Mul)
 //             mean_gn = (1/F) * Σ_f gy_norm            (col_reduce_sum + scale)
+//             std_inv 从 x 重算（mean/var 两条链式 ColSum，不缓存）
 //             grad_x = (gy - mean_g - normalized*mean_gn) * std_inv
 //             grad_gamma += Σ_b gy_norm                (row_reduce_sum)
 //             grad_beta += Σ_b grad_out                (row_reduce_sum)
@@ -470,9 +471,10 @@ private:
     Tensor grad_gamma_;
     Tensor grad_beta_;
 
-    // backward 缓存
+    // backward 缓存：输入（backward 从 x 重算 μ/σ，std 不物化）+ 归一化结果
+    //（dγ 的 row 归约直接消费，无需在行归约表达式里重算）
+    Tensor input_cache_; // (features, batch)
     Tensor normalized_cache_; // (features, batch)
-    Tensor std_cache_; // (1, batch) — std_inv
 
     static constexpr Scalar EPSILON = 1e-5;
 
@@ -503,29 +505,27 @@ public:
 
     void clear_cache() override
     {
+        input_cache_ = Tensor{};
         normalized_cache_ = Tensor{};
-        std_cache_ = Tensor{};
     }
 
     std::vector<TensorRef> activation_cache() override
     {
         std::vector<TensorRef> r;
+        if (input_cache_.valid()) r.emplace_back(input_cache_);
         if (normalized_cache_.valid()) r.emplace_back(normalized_cache_);
-        if (std_cache_.valid()) r.emplace_back(std_cache_);
         return r;
     }
 
     // ── forward ───────────────────────────────────────────────────────────
-    // 单表达式融合（算法公式不变，diff_sq (F,B) 由归约 kernel 内部消解）：
-    //   融合表达式保持 F 无关结构（不含 1/F、ε 常量）；形状相关标量在
-    //   (1,B) 小向量上用引擎原语施加：
-    //   1. mean_raw = col_reduce_sum(x)                    → (1,B) 归约向量输出
-    //   2. mean     = mean_raw*(1/F)
-    //   3. diff     = x - mean (col 广播)                  → (F,B) 融合逐元素
-    //   4. var_raw  = col_reduce_sum(diff²)                → (1,B) 归约向量输出
-    //   5. std_inv  = rsqrt(var_raw*(1/F) + ε)             → (1,B) 原语
-    //   6. normalized=diff * std_inv (col 广播)            → (F,B) 融合逐元素
-    //   7. out      = normalized*gamma + beta (row 广播)   → (F,B) 融合逐元素
+    // 两个 kernel：
+    //   E1 = 单个 dsl::compute：mean（归约视图）→ diff → var（归约指令，源
+    //        经视图读 mean）→ std_inv → 全网格 normalized = diff*std_inv
+    //        （不含 γβ）。mean/diff/var/std_inv 全部留寄存器/归约槽，不落 HBM；
+    //        输出写入 normalized_cache_（backward 的 dγ 消费）。
+    //   E2 = normalized*γ + β（纯逐元素，row 广播）。
+    // 1/F、ε 由 RParam 承载（值不进 expr_spec_key，结构与 F/ε 无关）；
+    // 精度：两段均 p_.stable，归约累加恒 f32。
     [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
     {
         ComputeEngine& engine = engine_ref();
@@ -533,50 +533,21 @@ public:
         const Scalar inv_features = Scalar{1} / static_cast<Scalar>(normalized_shape_);
         const std::size_t F = normalized_shape_;
         const std::size_t B = input.cols();
+        if (!checkpoint_mode_) input_cache_ = input;
 
-        // 1. mean_raw = col_reduce_sum(x) → (1,B)
-        auto mean_raw =
-            dsl::compute_reduce(engine, dsl::col_reduce_sum(dsl::leaf(input)), F, B, p_.stable);
-        NN_TRY_CHECK(mean_raw);
-
-        // 2. mean = mean_raw*(1/F) → (1,B)
-        // （1/F 是形状相关标量，由 RParam 承载：**值不进 expr_spec_key**，
-        //   融合表达式保持 F 无关 → 不同归一化维度共享同一 AOT 融合 shader）
-        auto mean = dsl::compute(engine, dsl::leaf(*mean_raw) * dsl::rparam(inv_features),
-                                 mean_raw->rows(), mean_raw->cols(), p_.stable);
-        NN_TRY_CHECK(mean);
-
-        // 3. diff = x - mean (col 广播) → (F,B)
-        auto diff =
-            dsl::compute(engine, dsl::leaf(input) - dsl::col_broadcast(*mean), F, B, p_.stable);
-        NN_TRY_CHECK(diff);
-
-        // 4. var_raw = col_reduce_sum(diff²) → (1,B)
-        auto var_raw = dsl::compute_reduce(
-            engine, dsl::col_reduce_sum(dsl::leaf(*diff) * dsl::leaf(*diff)), F, B, p_.stable);
-        NN_TRY_CHECK(var_raw);
-
-        // 5. std_inv = rsqrt(var_raw*(1/F) + ε) → (1,B)
-        // （"乘 1/F → 加 ε → rsqrt"三步塌成单表达式、单次遍历；1/F、ε 由
-        //   RParam 承载，表达式结构仍与 F / ε 取值无关）
-        auto std_inv = dsl::compute(
-            engine,
-            dsl::rsqrt(dsl::leaf(*var_raw) * dsl::rparam(inv_features) + dsl::rparam(epsilon_)),
-            var_raw->rows(), var_raw->cols(), p_.stable);
-        NN_TRY_CHECK(std_inv);
-        Tensor std_inv_t = std::move(*std_inv);
-        if (!checkpoint_mode_) std_cache_ = std_inv_t;
-
-        // 6. normalized = diff * std_inv (col 广播) → (F,B)
-        auto normalized =
-            dsl::compute(engine, dsl::leaf(*diff) * dsl::col_broadcast(std_inv_t), F, B, p_.stable);
+        // E1：链式 ColSum + 全网格尾（单 kernel）
+        const auto diff =
+            dsl::leaf(input) - dsl::col_reduce_sum(input) * dsl::rparam(inv_features);
+        const auto var_raw = dsl::col_reduce_sum(diff * diff);
+        const auto sinv =
+            dsl::rsqrt(var_raw * dsl::rparam(inv_features) + dsl::rparam(epsilon_));
+        auto normalized = dsl::compute(engine, diff * sinv, F, B, p_.stable);
         NN_TRY_CHECK(normalized);
-        Tensor normalized_t = std::move(*normalized);
-        if (!checkpoint_mode_) normalized_cache_ = normalized_t;
+        if (!checkpoint_mode_) normalized_cache_ = *normalized;
 
-        // 7. out = normalized*gamma + beta (row 广播) → (F,B)
+        // E2：out = normalized*γ + β（row 广播）
         return dsl::compute(engine,
-                            dsl::leaf(normalized_t) * dsl::row_broadcast(gamma_) +
+                            dsl::leaf(*normalized) * dsl::row_broadcast(gamma_) +
                                 dsl::row_broadcast(beta_),
                             F, B, p_.stable);
     }
@@ -586,10 +557,11 @@ public:
     //   gy = grad_out * gamma
     //   mean_g  = col_reduce_sum(gy) * invF
     //   mean_gn = col_reduce_sum(gy * normalized) * invF
+    //   std_inv 从 x 重算（mean/var 两条链式 ColSum）
     // grad_gamma += row_sum(gy ⊙ normalized)
     // grad_beta  += row_sum(grad_out)
-    // 单表达式融合（融合表达式 F 无关，1/F 在 (1,B) 上用原语施加）：
-    //   mean_g/mean_gn 为列归约向量输出；(F,B) 全尺寸中间量由融合 kernel 消解。
+    // grad_x 为单个 dsl::compute（1 归约视图 + 3 归约指令 + 全网格尾，
+    // 纯 col 轴）；dγ/dβ 保持 row 归约 + 累加两步（row/col 不同轴不能同 spec）。
     [[nodiscard]] Result<Tensor> backward(const Tensor& grad_output) override
     {
         ComputeEngine& engine = engine_ref();
@@ -597,36 +569,22 @@ public:
         const std::size_t F = normalized_shape_;
         const std::size_t B = grad_output.cols();
 
-        // 1. mean_g_raw = col_reduce_sum(gy) → (1,B)
-        auto mg_raw = dsl::compute_reduce(
-            engine, dsl::col_reduce_sum(dsl::leaf(grad_output) * dsl::row_broadcast(gamma_)), F, B,
+        // 1. grad_x 单表达式：从 x 重算 μ/σ + mean_g/mean_gn 链式 ColSum
+        const auto mean = dsl::col_reduce_sum(input_cache_) * dsl::rparam(inv_features);
+        const auto diff = dsl::leaf(input_cache_) - mean;
+        const auto sinv =
+            dsl::rsqrt(dsl::col_reduce_sum(diff * diff) * dsl::rparam(inv_features) +
+                       dsl::rparam(epsilon_));
+        const auto gy = dsl::leaf(grad_output) * dsl::row_broadcast(gamma_);
+        const auto mean_g = dsl::col_reduce_sum(gy) * dsl::rparam(inv_features);
+        const auto mean_gn =
+            dsl::col_reduce_sum(gy * dsl::leaf(normalized_cache_)) * dsl::rparam(inv_features);
+        auto grad_x = dsl::compute(
+            engine, (gy - mean_g - dsl::leaf(normalized_cache_) * mean_gn) * sinv, F, B,
             p_.stable);
-        NN_TRY_CHECK(mg_raw);
-        auto mean_g = dsl::compute(engine, dsl::leaf(*mg_raw) * dsl::rparam(inv_features),
-                                   mg_raw->rows(), mg_raw->cols(), p_.stable);
-        NN_TRY_CHECK(mean_g);
-
-        // 2. mean_gn_raw = col_reduce_sum(gy ⊙ normalized) → (1,B)
-        auto mgn_raw = dsl::compute_reduce(
-            engine,
-            dsl::col_reduce_sum(dsl::leaf(grad_output) * dsl::row_broadcast(gamma_) *
-                                dsl::leaf(normalized_cache_)),
-            F, B, p_.stable);
-        NN_TRY_CHECK(mgn_raw);
-        auto mean_gn = dsl::compute(engine, dsl::leaf(*mgn_raw) * dsl::rparam(inv_features),
-                                    mgn_raw->rows(), mgn_raw->cols(), p_.stable);
-        NN_TRY_CHECK(mean_gn);
-
-        // 3. grad_x = (gy - mean_g - normalized*mean_gn) * std_inv → (F,B)
-        auto grad_x = dsl::compute(engine,
-                                   (dsl::leaf(grad_output) * dsl::row_broadcast(gamma_) -
-                                    dsl::col_broadcast(*mean_g) -
-                                    dsl::leaf(normalized_cache_) * dsl::col_broadcast(*mean_gn)) *
-                                       dsl::col_broadcast(std_cache_),
-                                   F, B, p_.stable);
         NN_TRY_CHECK(grad_x);
 
-        // 4. grad_gamma += row_reduce_sum(gy ⊙ normalized) → (F,1)
+        // 2. grad_gamma += row_reduce_sum(gy ⊙ normalized) → (F,1)
         //    （∂L/∂γ_f = Σ_b gy·n：γ 是 out 的线性因子，导数不含 γ）
         auto gg = dsl::compute_reduce(
             engine, dsl::row_reduce_sum(dsl::leaf(grad_output) * dsl::leaf(normalized_cache_)), F,
@@ -636,7 +594,7 @@ public:
             dsl::compute_into(engine, dsl::leaf(grad_gamma_) + dsl::leaf(*gg), grad_gamma_);
         NN_TRY_CHECK(grad_gamma_acc);
 
-        // 5. grad_beta += row_reduce_sum(grad_out) → (F,1)
+        // 3. grad_beta += row_reduce_sum(grad_out) → (F,1)
         auto gb = dsl::compute_reduce(engine, dsl::row_reduce_sum(dsl::leaf(grad_output)), F, B,
                                       p_.stable);
         NN_TRY_CHECK(gb);
@@ -662,6 +620,7 @@ public:
 //   backward: gy       = grad_out * gamma          (broadcast_row Mul)
 //             gy_norm  = gy ⊙ normed               (elementwise Mul)
 //             m        = (1/F) * Σ_f gy_norm       (col_reduce_sum + scale)
+//             rms_inv  从 x 重算（ColSum(x²)，不缓存）
 //             grad_x   = (gy - m*normed) * rms_inv (broadcast_col Mul + Sub + Mul)
 //             grad_gamma += row_reduce_sum(gy_norm) (row_reduce_sum)
 // ══════════════════════════════════════════════════════════════════════════
@@ -674,9 +633,10 @@ private:
     Tensor gamma_; // (normalized_shape, 1)
     Tensor grad_gamma_;
 
-    // backward 缓存
+    // backward 缓存：输入（backward 从 x 重算 rms_inv，不物化）+ 归一化结果
+    //（dγ 的 row 归约直接消费）
+    Tensor input_cache_; // (features, batch)
     Tensor normed_cache_; // (features, batch)
-    Tensor rms_inv_cache_; // (1, batch)
 
     static constexpr Scalar EPSILON = 1e-5;
 
@@ -704,26 +664,25 @@ public:
 
     void clear_cache() override
     {
+        input_cache_ = Tensor{};
         normed_cache_ = Tensor{};
-        rms_inv_cache_ = Tensor{};
     }
 
     std::vector<TensorRef> activation_cache() override
     {
         std::vector<TensorRef> r;
+        if (input_cache_.valid()) r.emplace_back(input_cache_);
         if (normed_cache_.valid()) r.emplace_back(normed_cache_);
-        if (rms_inv_cache_.valid()) r.emplace_back(rms_inv_cache_);
         return r;
     }
 
     // ── forward ───────────────────────────────────────────────────────────
-    // 单表达式融合（算法公式不变，中间 x_sq (F,B) 由归约 kernel 内部消解）：
-    //   融合表达式保持 F 无关结构（不含 1/F、ε 常量，避免注册表 key 随
-    //   归一化维度漂移）；形状相关标量在 (1,B) 小向量上用引擎原语施加：
-    //   1. s_raw  = col_reduce_sum(x*x)                    → (1,B) 归约向量输出
-    //   2. rms_inv= rsqrt(s_raw*(1/F) + ε)                 → (1,B) 原语
-    //   3. normed = x * rms_inv (col 广播)                 → (F,B) 融合逐元素
-    //   4. out    = normed * gamma (row 广播)              → (F,B) 融合逐元素
+    // 两个 kernel：
+    //   E1 = 单个 dsl::compute：s_raw = ColSum(x²)（归约指令）→ rms_inv
+    //        → 全网格 normed = x*rms_inv（不含 γ）。s_raw/rms_inv 留寄存器/
+    //        归约槽不落 HBM；输出写入 normed_cache_（backward 的 dγ 消费）。
+    //   E2 = normed*γ（纯逐元素，row 广播）。
+    // 1/F、ε 由 RParam 承载（值不进 expr_spec_key）；精度：两段均 p_.stable。
     [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
     {
         ComputeEngine& engine = engine_ref();
@@ -731,42 +690,29 @@ public:
         const Scalar inv_features = Scalar{1} / static_cast<Scalar>(normalized_shape_);
         const std::size_t F = normalized_shape_;
         const std::size_t B = input.cols();
+        if (!checkpoint_mode_) input_cache_ = input;
 
-        // 1. s_raw = col_reduce_sum(x*x) → (1,B)
-        auto s_raw = dsl::compute_reduce(
-            engine, dsl::col_reduce_sum(dsl::leaf(input) * dsl::leaf(input)), F, B, p_.stable);
-        NN_TRY_CHECK(s_raw);
-
-        // 2. rms_inv = rsqrt(s_raw*(1/F) + ε) → (1,B)
-        // （"乘 1/F → 加 ε → rsqrt"三步塌成单表达式、单次遍历；1/F、ε 由
-        //   RParam 承载：值不进 expr_spec_key → 表达式结构保持 F/ε 无关）
-        auto rms_inv = dsl::compute(
-            engine,
-            dsl::rsqrt(dsl::leaf(*s_raw) * dsl::rparam(inv_features) + dsl::rparam(epsilon_)),
-            s_raw->rows(), s_raw->cols(), p_.stable);
-        NN_TRY_CHECK(rms_inv);
-        Tensor rms_inv_t = std::move(*rms_inv);
-        if (!checkpoint_mode_) rms_inv_cache_ = rms_inv_t;
-
-        // 3. normed = x * rms_inv (col 广播) → (F,B)
-        auto normed =
-            dsl::compute(engine, dsl::leaf(input) * dsl::col_broadcast(rms_inv_t), F, B, p_.stable);
+        // E1：单 ColSum + 全网格尾（单 kernel）
+        const auto sinv =
+            dsl::rsqrt(dsl::col_reduce_sum(dsl::leaf(input) * dsl::leaf(input)) *
+                           dsl::rparam(inv_features) +
+                       dsl::rparam(epsilon_));
+        auto normed = dsl::compute(engine, dsl::leaf(input) * sinv, F, B, p_.stable);
         NN_TRY_CHECK(normed);
-        Tensor normed_t = std::move(*normed);
-        if (!checkpoint_mode_) normed_cache_ = normed_t;
+        if (!checkpoint_mode_) normed_cache_ = *normed;
 
-        // 4. out = normed * gamma (row 广播) → (F,B)
-        return dsl::compute(engine, dsl::leaf(normed_t) * dsl::row_broadcast(gamma_), F, B,
+        // E2：out = normed * gamma（row 广播）
+        return dsl::compute(engine, dsl::leaf(*normed) * dsl::row_broadcast(gamma_), F, B,
                             p_.stable);
     }
 
     // ── backward ──────────────────────────────────────────────────────────
-    // 单表达式融合（融合表达式 F 无关，1/F 在 (1,B) 小向量上用原语施加）：
     //   gy       = grad * gamma
-    //   m_raw    = col_reduce_sum(gy ⊙ normed)             → (1,B) 归约向量输出
-    //   m        = m_raw * (1/F)
-    //   grad_x   = (gy - m*normed) * rms_inv               → (F,B) 融合逐元素
-    //   grad_gamma += row_reduce_sum(gy ⊙ normed)          → (F,1) 归约向量输出
+    //   rms_inv  从 x 重算（ColSum(x²)，不缓存）
+    //   m        = col_reduce_sum(gy ⊙ normed) * invF
+    //   grad_x   = (gy - m*normed) * rms_inv   —— 单个 dsl::compute
+    //             （2 归约指令 + 全网格尾，纯 col 轴）
+    //   grad_gamma += row_reduce_sum(gy ⊙ normed)（row 归约 + 累加两步保留）
     [[nodiscard]] Result<Tensor> backward(const Tensor& grad_output) override
     {
         ComputeEngine& engine = engine_ref();
@@ -774,26 +720,19 @@ public:
         const std::size_t F = normalized_shape_;
         const std::size_t B = grad_output.cols();
 
-        // 1. m_raw = col_reduce_sum(gy ⊙ normed) → (1,B)
-        auto m_raw = dsl::compute_reduce(
-            engine,
-            dsl::col_reduce_sum(dsl::leaf(grad_output) * dsl::row_broadcast(gamma_) *
-                                dsl::leaf(normed_cache_)),
-            F, B, p_.stable);
-        NN_TRY_CHECK(m_raw);
-        auto m = dsl::compute(engine, dsl::leaf(*m_raw) * dsl::rparam(inv_features), m_raw->rows(),
-                              m_raw->cols(), p_.stable);
-        NN_TRY_CHECK(m);
-
-        // 2. grad_x = (gy - m*normed) * rms_inv → (F,B)
-        auto grad_x = dsl::compute(engine,
-                                   (dsl::leaf(grad_output) * dsl::row_broadcast(gamma_) -
-                                    dsl::col_broadcast(*m) * dsl::leaf(normed_cache_)) *
-                                       dsl::col_broadcast(rms_inv_cache_),
-                                   F, B, p_.stable);
+        // 1. grad_x 单表达式：rms_inv 从 x 重算 + m 链式 ColSum
+        const auto sinv =
+            dsl::rsqrt(dsl::col_reduce_sum(dsl::leaf(input_cache_) * dsl::leaf(input_cache_)) *
+                           dsl::rparam(inv_features) +
+                       dsl::rparam(epsilon_));
+        const auto gy = dsl::leaf(grad_output) * dsl::row_broadcast(gamma_);
+        const auto m =
+            dsl::col_reduce_sum(gy * dsl::leaf(normed_cache_)) * dsl::rparam(inv_features);
+        auto grad_x =
+            dsl::compute(engine, (gy - m * dsl::leaf(normed_cache_)) * sinv, F, B, p_.stable);
         NN_TRY_CHECK(grad_x);
 
-        // 3. grad_gamma += row_reduce_sum(gy ⊙ normed) → (F,1)
+        // 2. grad_gamma += row_reduce_sum(gy ⊙ normed) → (F,1)
         //    （∂L/∂γ_f = Σ_b gy·n：γ 是 out 的线性因子，导数不含 γ）
         auto gg = dsl::compute_reduce(
             engine, dsl::row_reduce_sum(dsl::leaf(grad_output) * dsl::leaf(normed_cache_)), F, B,

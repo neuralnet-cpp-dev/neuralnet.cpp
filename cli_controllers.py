@@ -18,6 +18,7 @@ CLI控制器模块 - 封装neuralnet.cpp各CLI工具的执行与输出解析
 """
 
 import subprocess
+import tempfile
 import threading
 import queue
 import re
@@ -100,6 +101,98 @@ class ChatSession:
         return "\n".join(lines)
 
 
+# ── 实验性选项（引擎环境变量注入；2026-11-13）──────────────────────────────
+# **单一真源**：UI 展示名 / 取值类型 / 对应环境变量都在这里；GUI 的"实验性
+# 选项"面板（TabBase._add_experimental_panel）按本表自动建行，控制器经
+# set_experimental() → Popen(env=…) 注入子进程——**不进 CLI 参数**，
+# 与 bench/gui_cli_audit.py 的 fields→--flag 门禁零交集。
+# 引擎侧语义真源（改动须两侧同改）：
+#   NN_MM_KSPLIT_ATOMIC  compute_vk_backend_pipelines.inc mm_ksplit_atomic_enabled
+#   NN_MM_NO_KSPLIT / NN_MM_KSPLIT_S / NN_MM_NO_FINE 同文件既有阀
+#   NN_FOLD_*_PROBE      expr_glsl_gen.hpp fold_v2 两个计时探针（输出无效）
+EXPERIMENTAL_OPTIONS: Dict[str, Dict[str, Any]] = {
+    "ksplit_atomic": {
+        "env": "NN_MM_KSPLIT_ATOMIC", "kind": "bool",
+        "label": "原子 K 切分 (#ksa)",
+        "desc": "CAS 单遍免 #kr 二段；破坏运行间确定性；仅无尾链纯 matmul 生效",
+    },
+    "ksplit_off": {
+        "env": "NN_MM_NO_KSPLIT", "kind": "bool",
+        "label": "关闭 K 切分（对照）",
+        "desc": "饥饿网格回落细 tile / 64-tile 路径",
+    },
+    "fine_off": {
+        "env": "NN_MM_NO_FINE", "kind": "bool",
+        "label": "关闭细 tile #f（对照）",
+        "desc": "饥饿网格回落 64-tile 路径",
+    },
+    "ksplit_s": {
+        "env": "NN_MM_KSPLIT_S", "kind": "int", "default": "0", "min": 0, "max": 64,
+        "label": "K 切分段数 S (0=自动, 2..8)",
+        "desc": "强制段数做 A/B 调参（引擎钳到 [2,8]）",
+    },
+    "fold_barrier_probe": {
+        "env": "NN_FOLD_BARRIER_PROBE", "kind": "bool",
+        "label": "探针：省略 fold v2 全部 barrier",
+        "desc": "⚠ 输出无效，仅计时诊断；自动启用专用 .nnk 缓存防污染",
+    },
+    "fold_kvzero_probe": {
+        "env": "NN_FOLD_KVREAD_ZERO_PROBE", "kind": "bool",
+        "label": "探针：fold v2 K/V 读清零",
+        "desc": "⚠ 输出无效，仅计时诊断；自动启用专用 .nnk 缓存防污染",
+    },
+}
+# 只在这些 key 开启时需要专用缓存（同键不同码会污染默认 .nnk）
+_PROBE_OPTION_KEYS = ("fold_barrier_probe", "fold_kvzero_probe")
+
+
+def experimental_env_overrides(selections: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """实验性选项选择集 → 子进程环境变量增量。
+
+    - bool：显式发 "1"/"0"（未勾选也发 "0" → 不受宿主 shell 残留变量影响）
+    - int：十进制字符串，越界钳到 [min,max]（0 = 引擎侧 auto）
+    - 未出现在 selections 里的 key 不发（沿用宿主环境）
+    """
+    if not selections:
+        return {}
+    out: Dict[str, str] = {}
+    for key, opt in EXPERIMENTAL_OPTIONS.items():
+        if key not in selections:
+            continue
+        v = selections[key]
+        if opt["kind"] == "int":
+            try:
+                iv = int(str(v).strip() or "0")
+            except (TypeError, ValueError):
+                iv = 0
+            iv = max(int(opt.get("min", 0)), min(int(opt.get("max", 64)), iv))
+            out[opt["env"]] = str(iv)
+        else:
+            out[opt["env"]] = "1" if v else "0"
+    return out
+
+
+def child_env_for(exe_path: str, overrides: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """构造子进程环境：继承 os.environ + 引擎 dll 目录自动入 PATH + 覆盖项。
+
+    exe（如 text_train.exe）链接 nn-gpu.dll/nn-cpu.dll，位于 `<preset>/engine/`，
+    而 exe 在 `<preset>/` 根 —— 不把 engine/ 加进 PATH 的话，未配置环境变量的
+    终端（GUI 直接启动等）会 0xC0000135 / 启动即 AV。此处按 **exe 同级 engine/
+    目录** 自动补（已存在则不动），GUI/CLI/探针三条启动路径共用。
+    """
+    env = dict(os.environ)
+    engine_dir = Path(exe_path).parent / "engine"
+    if engine_dir.is_dir():
+        path_key = next((k for k in env if k.lower() == "path"), "PATH")
+        cur = env.get(path_key, "")
+        parts = [p for p in cur.split(os.pathsep) if p]
+        if str(engine_dir) not in parts:
+            env[path_key] = os.pathsep.join([str(engine_dir)] + parts)
+    if overrides:
+        env.update(overrides)
+    return env
+
+
 class CLIController(ABC):
     """
     CLI控制器抽象基类
@@ -122,6 +215,9 @@ class CLIController(ABC):
         self.executable_path = executable_path
         self.process: Optional[subprocess.Popen] = None
         self.state = RunState.IDLE
+        # 实验性选项注入的子进程 env 增量（见 EXPERIMENTAL_OPTIONS /
+        # set_experimental）；空 = 纯继承宿主环境，零行为变化
+        self.env_overrides: Dict[str, str] = {}
         
         # 回调函数
         self._output_callback: Optional[Callable[[str], None]] = None
@@ -158,13 +254,16 @@ class CLIController(ABC):
             exe_name += ".exe"
             
         exe_path = build_dir / exe_name
-        if exe_path.exists():
-            return str(exe_path)
-
-        # preset 构建（CMakePresets.json）把产物放在 build/<preset>/ 下
-        for sub in sorted(build_dir.glob("*")):
-            if sub.is_dir() and (sub / exe_name).exists():
-                return str(sub / exe_name)
+        # preset 构建（CMakePresets.json）把产物放在 build/<preset>/ 下。多个
+        # preset/历史构建树并存时取**最新修改**的一份 —— 旧实现取 sorted-first，
+        # 会挑中 b-p3 等过期 exe、与 PATH 里的新引擎 dll ABI 错配（启动即
+        # 0xC0000005，2026-11-13 实测）。
+        candidates = [exe_path] if exe_path.exists() else []
+        if build_dir.is_dir():
+            candidates += [sub / exe_name for sub in build_dir.glob("*")
+                           if sub.is_dir() and (sub / exe_name).exists()]
+        if candidates:
+            return str(max(candidates, key=lambda p: p.stat().st_mtime))
 
         # 尝试在当前目录查找
         current_dir = Path(__file__).parent
@@ -189,6 +288,14 @@ class CLIController(ABC):
     def set_completion_callback(self, callback: Callable[[int], None]):
         """设置进程完成回调函数（参数为退出码）"""
         self._completion_callback = callback
+
+    def set_experimental(self, selections: Optional[Dict[str, Any]] = None) -> None:
+        """设置实验性选项（EXPERIMENTAL_OPTIONS 的 key → bool/int）。
+
+        每次调用**整体替换**；None/空 = 清空（回到纯继承环境）。只影响下一次
+        run() 启动的子进程（Popen env），不影响本进程 os.environ。
+        """
+        self.env_overrides = experimental_env_overrides(selections)
     
     def _build_command(self, **kwargs) -> List[str]:
         """
@@ -339,14 +446,32 @@ class CLIController(ABC):
         
         try:
             cmd = self._build_command(**kwargs)
-            
+
+            # 子进程环境：engine dll 目录自动入 PATH（见 child_env_for）+
+            # 实验性选项覆盖。探针类开启时 shader 与默认 .nnk **同键不同码**
+            # → 强制本进程专用全新缓存路径，防污染默认缓存。
+            probe_on = any(
+                (self.env_overrides or {}).get(EXPERIMENTAL_OPTIONS[k]["env"]) == "1"
+                for k in _PROBE_OPTION_KEYS)
+            overrides = dict(self.env_overrides or {})
+            if probe_on and "NN_KERNEL_CACHE_PATH" not in overrides:
+                overrides["NN_KERNEL_CACHE_PATH"] = os.path.join(
+                    tempfile.gettempdir(),
+                    f"nnk_probe_{os.getpid()}_{int(time.time() * 1e6)}.nnk")
+                if self._output_callback:
+                    self._output_callback(
+                        "[系统] 探针开启 → 本进程专用 .nnk 缓存（防污染，可删）: "
+                        + overrides["NN_KERNEL_CACHE_PATH"])
+            popen_env = child_env_for(cmd[0], overrides)
+
             # 启动进程
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
-                bufsize=1
+                bufsize=1,
+                env=popen_env
             )
             
             # 启动输出读取线程

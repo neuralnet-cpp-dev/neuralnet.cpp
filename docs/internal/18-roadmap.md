@@ -17,6 +17,15 @@
 见 [`31`](31-rl-training-primitives.md) §11）；f16 与训练性能优化保留为已立项 backlog，等待后续排序。
 工程门禁与生态缺口继续按既有裁定处理。
 
+**2026-11 总目标（用户裁定）：把项目从实验库变成能作为 PyTorch 替代品的、全功能、高性能的
+机器学习 / 计算库，同时不失去现有优势**（CPU/Vulkan 双后端与可移植性、逐位确定性与字节锚、
+f16/三值等精度与量化能力、header-only 低门槛消费、低层可控性）。围绕该目标的四项当期裁定
+（细则见 §4.7）：① **多后端**——先做可插拔架构（M7 存储多态 + IR-D 第二 emitter 立项），
+具体新后端等真实需求按 §6 接入；② **求导 = 自动微分**立项（翻案「自动微分框架」旧非目标）；
+③ **性能追 PyTorch**（同任务对拍为验收锚）；④ **不做实验库、做真实可用的库**——
+`install()`/`find_package` 与 Python/C 绑定随此翻案为做。**torch 替代品所需的其余能力面**
+（分布式、ONNX、服务化等）在总目标下逐项重审，重审完成前 §7 维持原裁定。
+
 ## 1. 定位与用法
 
 | 文档 | 角色 | 何时读 |
@@ -82,7 +91,7 @@
 | 统一 Tensor / ComputeEngine 契约（M1–M6） | 全部实施 | `docs/internal/17-unified-tensor-engine.md` §5 |
 | 访问不变量（Tensor 存储私有、一切经引擎） | 铁律 #11，编译期强制 | `AGENTS.md` §5 |
 | L2+ 计算路径禁用 `Matrix` | 铁律 #12，审计口径 `L2-VIOLATIONS: 0` | `AGENTS.md` §5；`bench/doc_inventory.ps1` 第 [4] 节 |
-| AOT 注册表 + 单 fold 注意力 kernel（主路径 JIT 兜底） | 现行；掩码 × 位置偏置两正交维度 | `docs/internal/02-operator-fusion.md` |
+| 运行期 JIT + `.nnk` 缓存 + 单 fold 注意力 kernel（FoldSpec） | 现行（构建期 AOT 收集/注册表链已删除，见 [`33`](33-kernel-cache-and-engine-decouple.md)）；掩码 × 位置偏置两正交维度 | `docs/internal/02-operator-fusion.md` |
 | 位置编码多态统一（按注入点分所有权） | 现行；新增 `compute_position_encoding.hpp` | `docs/history/history.md`「Layer 层简化轮」条 |
 | BPE 保序并行 encode（任意并行度逐字节一致） | 现行 | `AGENTS.md` §12 |
 | 声明式初始化 `InitSpec`（初值跨进程确定） | 现行 | `docs/internal/17-unified-tensor-engine.md` §4.4 |
@@ -115,7 +124,7 @@
 | # | 现象 | 坐标 | 影响面 |
 |---|---|---|---|
 | E1 | CI 是唯一自动门禁，却**只编译生产目标、不编译测试、不跑 ctest** | `.github/workflows/cmake-single-platform.yml`（configure 无 `NN_ENABLE_TESTS`，无 ctest 步骤） | 所有测试结论只存在于本地；回归可在无人察觉时合入 |
-| E2 | 无 `install()` / export，无 `CMakePresets.json` | `CMakeLists.txt` 实测 `install(` 0 处；根目录无 `CMakePresets.json` | **嵌入路径已完成**：门面目标 `neuralnet::nn` + `NN_ENABLE_GPU`/`NN_BUILD_APPS` 开关 + 库内外自定义 `dsl::compute` 统一走运行期 JIT（`libnn-kernelgen` + `.nnk` 缓存 + `model_warmup` 预热；构建期 AOT 链与 `nn_enable_gpu_fusion` 不存在，见 `docs/usage/05-consume-as-library.md`、样例 `examples/downstream/`）；**剩余**：`install()`/`find_package`（用户裁定本轮不做）；`CMakePresets.json` **已于 2026-10-11 补上**（`release`/`dev`/`debug`/`portable`/`cpu`/`probes` + build/test/workflow preset，见 `CONTRIBUTING.md` §1） |
+| E2 | 无 `install()` / export，无 `CMakePresets.json` | `CMakeLists.txt` 实测 `install(` 0 处；根目录无 `CMakePresets.json` | **嵌入路径已完成**：门面目标 `neuralnet::nn` + `NN_ENABLE_GPU`/`NN_BUILD_APPS` 开关 + 库内外自定义 `dsl::compute` 统一走运行期 JIT（`libnn-kernelgen` + `.nnk` 缓存 + `model_warmup` 预热；构建期 AOT 链与 `nn_enable_gpu_fusion` 不存在，见 `docs/usage/05-consume-as-library.md`、样例 `examples/downstream/`）；**剩余**：`install()`/`find_package`（**2026-11 随「真实可用」方向翻案为做**，见 §4.7）；`CMakePresets.json` **已于 2026-10-11 补上**（`release`/`dev`/`debug`/`portable`/`cpu`/`probes` + build/test/workflow preset，见 `CONTRIBUTING.md` §1） |
 | E3 | `CMakeLists.txt` 版本与 git tag 不一致，且缺 v1.5.1 release note | `CMakeLists.txt` 的 `project(...)` 行（**已对齐 v1.6.0**）；`docs/release-notes/` 仍缺 v1.5.1 | 版本可读性缺失；分发产物无对应变更说明（release note 缺口仍在） |
 | E4 | 文档内 ctest 计数曾自相矛盾（19 vs 20） | `AGENTS.md` §12 已统一为实测 21（19 目标 + `cnn_test_gpu` + `fusion_custom_layer_example`） | 已修；口径差异来源见 §2 口径说明 |
 | E5 | ~~`src/text_train.cpp` 1746 行、34 处 `std::exit`~~ **✅ 已解决（P1-1 模块化，2026-10-16）**：1830 → **396 行**（入口只留接线），训练循环 / 恢复 / 断点三块拆到 `include/neuralnet.cpp/cli/text_train_{config,loop,recovery,checkpoint}.hpp`，三模块一律返回 `Result` 不终止进程——`std::exit` 全部集中在 **CLI 参数解析层**（`cli/text_train_config.hpp`） | 原坐标（CLI 解析 + 训练循环 + TDR 恢复 + checkpoint 混杂） | 原影响面（任一改动牵动全文件）已解除；C4 的前置阻塞解除，P1-2 可直接开工 |
@@ -141,8 +150,8 @@
 |---|---|---|---|
 | M1 | 优化器共 **5 个**：SGD / SGDWithMomentum / Adam / **AdamW** / Muon；其中**直接派生自 `Optimizer` 的是 4 个**（SGD/SGDWithMomentum/Adam/Muon），`AdamW` 派生自 `Adam` | `compute_optimizer.hpp:200`（SGD）、`:236`（SGDWithMomentum）、`:294`（Adam）、`:434`（`AdamW : public Adam`）、`:628`（Muon）；工厂注册名 `:723`、创建分支 `:745` | 缺无 m/v 状态的低显存优化器，模型规模受优化器状态限制（P2-2） |
 | M2 | LRLA 仅存在于文档对比表，未实现 | `docs/development/08-rapt-algorithm.md` §LRLA | 线性注意力家族停在本项目基线 RLA-2/RAPT |
-| M3 | ~~IR-C 跨表达式图融合不采用~~ **已恢复并接入训练路径（P1+P2）**：`begin_expr/end_expr` + 图融合（P1 链 / P2 写穿多输出）+ Adam/AdamW 接线；S6 自动窗口仍未接线 | `docs/internal/03-ir-optimization.md`；`docs/history/history.md`「IR-C 定位修正与恢复立项」「IR-C P2 收官」 | S6 之外的"能融的必须写进单个 `dsl::compute`"已放宽（跨表达式经录制段融合）；**P4 CE online-softmax fold 已落地（通用 FoldSpec 机制，5→3 kernel/step，见 `docs/history/history.md`「CE online-softmax 单趟 fold（P4）」）**；**P3 跨链批量派发已落地（`#b` 批量变体 + BDA 实例表 + 图内同签名分组 CAP 32）**：设备表读数口径 = 批量/非批量分列（用户裁定），`fused@optimizer` 归零、派发计入 `fused_b@optimizer` 行，**合计 1330 → 57 calls/20 步（2.85/step ≤ 6/step）**；批量 vs 逐个逐字节一致（含同组混形状）、字节锚逐位不变，见 `docs/history/history.md`「P3 跨链批量派发」 |
-| M4 | M7 存储多态未立项 | `docs/internal/17-unified-tensor-engine.md` §5 M7 行 | 新增第三后端仍需改 `compute_tensor.hpp` |
+| M3 | ~~IR-C 跨表达式图融合不采用~~ **已恢复并接入训练路径（P1+P2）**：`begin_expr/end_expr` + 图融合（P1 链 / P2 写穿多输出）+ Adam/AdamW 接线；S6 自动窗口仍未接线。**Model 级（模型作用域）捕获已另行立项 = P4-5（2026-11-13 裁定，设计 [`38`](38-model-level-fusion.md)）**，与 S6（自动窗口）是两件事 | `docs/internal/03-ir-optimization.md`；`docs/history/history.md`「IR-C 定位修正与恢复立项」「IR-C P2 收官」「Model 级融合撤销否决并裁定试点」 | S6 之外的"能融的必须写进单个 `dsl::compute`"已放宽（跨表达式经录制段融合）；**P4 CE online-softmax fold 已落地（通用 FoldSpec 机制，5→3 kernel/step，见 `docs/history/history.md`「CE online-softmax 单趟 fold（P4）」）**；**P3 跨链批量派发已落地（`#b` 批量变体 + BDA 实例表 + 图内同签名分组 CAP 32）**：设备表读数口径 = 批量/非批量分列（用户裁定），`fused@optimizer` 归零、派发计入 `fused_b@optimizer` 行，**合计 1330 → 57 calls/20 步（2.85/step ≤ 6/step）**；批量 vs 逐个逐字节一致（含同组混形状）、字节锚逐位不变，见 `docs/history/history.md`「P3 跨链批量派发」 |
+| M4 | M7 存储多态 **已立项（2026-11 多后端方向，见 §4.7）** | `docs/internal/17-unified-tensor-engine.md` §5 M7 行 | 新增第三后端仍需改 `compute_tensor.hpp`（立项前的旧影响面） |
 | M5 | ZiPT / AttnZip 已整体移除，代码保留在 `legacy/zipt` 分支 | `docs/history/history.md`「ZiPT 移除」条 | 记忆压缩方向暂缺实现 |
 | M6 | ~~**三值（T1_58）模型无法续训**~~ **✅ 已解决（P1-7，2026-10-16）**：原现象 = `.nnmodel` 载荷是打包形态，BitLinear 载入后进 `packed_only_` 部署态，`backward()` 直接报错（「部署态只读」）⇒ 三值模型不能从推理模型做 SFT / QAT 续训。**现在**：载入意图 `WeightLoadIntent::Trainable` 按文件 τ 反量化成 f32 latent（量化器不动点）+ 播种量化缓存 ⇒ 首次 forward 与推理文件逐位一致、可反向、可更新；`.nnmodel` 的 role 门禁（P1-2 的"唯一拒绝"）已删除 | `ternary_pack.hpp`（`latent_row_scale`/`dequant_row`）；`model_serialization.hpp`（`param_blob_to_entry` 意图分流 + `load_model`）；`compute_layer_bitlinear.hpp`（`TernaryLatent + aux(τ)` 播种分支）；`cli/text_train_recovery.hpp` | 缺口已关闭（见 §4.2 P1-7 行）；推理侧部署只读态不变（`Inference` 为默认意图） |
 
@@ -161,7 +170,8 @@ P4 = 持续优化方向（底座已稳后继续加杠杆，2026-10-14 立项，�
 | 期 | 项数 | 项目 | 共同前置 |
 |---|---|---|---|
 | **RL** ✅ 2026-10-23 | 3 | **RL-0 通用多输出协议 → RL-1 schema 化 experience 与策略目标组件 → RL-2 通用多模型会话/编排**；issue #23 是能力下界，公共 API 面向未知库消费者；见 [`31`](31-rl-training-primitives.md) §11、[`../usage/06-reinforcement-learning.md`](../usage/06-reinforcement-learning.md) | 无；以 f32 正确性先行，不等待 f16 / 性能项 |
-| **P0** | 5 | CI 真跑测试（**✅**）、文档一致性回正（**✅ 2026-10-15**）、BatchNorm 禁止静默回落（**✅**）、CMake install/export + presets（嵌入路径 ✅ / install 用户裁定不做）、**推理采样 top-k/top-p + 多轮对话闭环（✅ 2026-10-16，两半齐，见 §4.1 P0-5 行）** | 无（P0-1 是所有人的前置） |
+| **2026-11 方向** | 4 | **多后端可插拔架构（M7/IR-D 立项）、自动微分立项、性能追 PyTorch、真实可用（install + 绑定翻案）**；见 §4.7 | 见 §4.7（设计另行立项成文） |
+| **P0** | 5 | CI 真跑测试（**✅**）、文档一致性回正（**✅ 2026-10-15**）、BatchNorm 禁止静默回落（**✅**）、CMake install/export + presets（嵌入路径 ✅ / install **2026-11 翻案为做**，见 §4.7）、**推理采样 top-k/top-p + 多轮对话闭环（✅ 2026-10-16，两半齐，见 §4.1 P0-5 行）** | 无（P0-1 是所有人的前置） |
 | **P1** | 8 | `text_train` 模块化（**✅ 2026-10-16**）、checkpoint 优化器状态（P1-2，**✅ 2026-10-16**）、危险精度组合启动期告警（细则见 [`24`](24-f16-training-defects.md)）、`gpt_test` flaky（**✅ 2026-10-15**）、CI 冒烟扩 MSVC Debug（**✅ 2026-10-18**）、**自定义层使用文档 + 精度自检**（P1-6 **✅ 2026-10-14**）、**三值模型续训入口**（P1-7，**✅ 2026-10-16**）、**生命周期 v3 + Session 层**（P1-8，🟡 2026-10-20 立项，见 [`28`](28-lifecycle-v3.md)/[`29`](29-session-architecture.md)） | P0-1；P1-6 无依赖 |
 | **P2** | 15 | `.bin` 校验和（**✅ 2026-10-16，随 P1-2 同批交付**）、Adafactor、RAPT/CNN f16、Dataset/DataLoader、Python/C 绑定、GUI 两项、header 拆分、F16C、step 内固定 I/O 开销（P2-9）、**原生 f16 算术用足（P2-10）**、**编译期精度特化（P2-11，已完成）**、**优化器 f16 批量派发（P2-12）**、**f16 K 切分/fine tile（P2-13）**、**全流程真 f16（P2-14，⏸）**、**标准 `--f16` / PyTorch AMP（P2-15，⏸）** | P0-1；P2-7 另需 P1-5（**✅ 2026-10-18**）；P2-6 另需 P0-5 |
 | **P3** | 7 | 由 §6 触发条件启动（含 CUDA、分布式）——IR-C 已落地故已移出本档（2026-10-16 计数回正：原写 8） | 各自触发条件 |
@@ -186,7 +196,7 @@ P4 = 持续优化方向（底座已稳后继续加杠杆，2026-10-14 立项，�
 | **P0-1 CI 真跑构建 + 测试** ✅ **已完成（2026-10-12）**（最高优先） | workflow 加 `-DNN_ENABLE_TESTS=ON`，并在 Linux 与 Windows 各跑一轮 `ctest`（失败时输出完整失败日志）；顺带再跑一轮 `NN_BIND_DEBUG=1 ctest`（RV-06 绑定门禁）。**实施**：`.github/workflows/cmake-single-platform.yml` 两个 configure 步各加 `-DNN_ENABLE_TESTS=ON`，Build 之后加 4 个测试步（Linux/Windows × 普通/`NN_BIND_DEBUG=1`，`--output-on-failure`）；打包步补 `dataset_gen`/`dataset_convert`（8 个应用入口齐全）。**前置修复**：`matmul_q_impl`（CPU/GPU）在递归 impl 产物/静态工厂产物上进公共 `cast` 前未 stamp → 三值用例（`t1_58_test`/`ternary_gemm_test`/`model_roles_test`）在 `NN_BIND_DEBUG=1` 下红；补 `adopt` 后本机 Release+CPU `NN_BIND_DEBUG=1 ctest` **40/40** | GitHub Actions 绿且日志出现全部用例；需 Vulkan 的用例按退出码 77 记 skip 而非失败 | 完成 | 无 |
 | **P0-2 文档一致性回正** ✅ **已完成 2026-10-15** | ① ctest 计数统一（当时实测 **48**〔GPU 树〕/ **46**〔无 Vulkan 树〕；同日 P0-5 加 `sampling_test` 后为 **49** / **47**、P4-2b 再加 `scan_bitwise_test` 后为 **50** / **48**，口径与历史数字的处理见 §2 口径说明）；② `CMakeLists.txt` 版本与 tag 对齐（v1.8.2）；③ 补 `docs/release-notes/v1.5.1.md`（2026-10-15 依据 `git log v1.5.0..v1.5.1` 与 history 两条归档**补写**）；④ `README.md` 死链/mojibake/链式 API 声明/索引（已在前一轮迭代修完）。**⑤ 门禁补强（原 E8）**：`bench/doc_align_audit.ps1` 的 [A] 扩展到 markdown 链接目标，并修掉它当场抓到的 `internal/25` → `../CONTRIBUTING.md` 死链 | `bench/doc_align_audit.ps1` 的 [A][B][D][E][F] 可行动项为 0（2026-10-15 复测：[A] 0 / [D] 0 / [E] 0 / [F] 0）；文档中 ctest 计数统一写当前值（当时 48，现 49） | 小–中（纯文档 + 审计脚本一段） | P0-1（否则改动无法被自动验证） |
 | **P0-3 BatchNorm 禁止静默回落** ✅ **已完成（真实现路线）** | **已实施**：`compute_layer_mlp.hpp` 新增 `BatchNorm` 层（训练/推理双态、running 统计 EMA + `extra_state` 序列化、`forward_recompute` 抑制 EMA），`make_norm_layer` 真分支；`scan_exprs` 模型 pass 补推理态 fwd+bwd 覆盖（GPU 注册表）；新增断言测试 `batchnorm_test`（+`--gpu` 变体），ctest 21 → 23，scan 结构 84 → 91（库内口径；样例收集器 93） | 构造 batchnorm 规格给出真层（可观测、不再静默降级）；ctest 含 `batchnorm_test`；详见 `docs/history/history.md`「BatchNorm 落地」条 | 已完成 | 无 |
-| **P0-4 CMake install/export + CMakePresets** ⚡ **嵌入路径已完成（用户裁定拆分）** | **2026-11-08 勘误**：下文"`nn_enable_gpu_fusion` 树外可用 / scan 收集 91 条"为 2026-10 快照；构建期 AOT 收集链与 `nn_enable_gpu_fusion` 已删除，库内外统一走运行期 JIT（`.nnk` 缓存 + `model_warmup` 预热），`examples/downstream/` 仅保留最小消费形态。**剩余**：`install()`/`find_package(neuralnet.cpp)`（用户裁定本轮不做）；`CMakePresets.json` ✅ 已于 2026-10-11 落地（`cmake --preset dev/portable/cpu/probes`，历史记录见 `docs/history/history.md` 的 presets 条） | 嵌入口径 ✅：干净构建目录里 `cmake -S examples/downstream` CPU 与 GPU（`NN_ENABLE_GPU=ON`）两路径均编译、链接、运行通过（GPU 路径含 scan 收集 91 条 = 库内口径），fusion 树外调用可用；install 口径待剩余部分 | 已完成（嵌入）/ 小–中（剩余） | P0-1（preset 需进 CI 才不腐化） |
+| **P0-4 CMake install/export + CMakePresets** ⚡ **嵌入路径已完成（用户裁定拆分）** | **2026-11-08 勘误**：下文"`nn_enable_gpu_fusion` 树外可用 / scan 收集 91 条"为 2026-10 快照；构建期 AOT 收集链与 `nn_enable_gpu_fusion` 已删除，库内外统一走运行期 JIT（`.nnk` 缓存 + `model_warmup` 预热），`examples/downstream/` 仅保留最小消费形态。**剩余**：`install()`/`find_package(neuralnet.cpp)`（**2026-11 翻案为做**，见 §4.7）；`CMakePresets.json` ✅ 已于 2026-10-11 落地（`cmake --preset dev/portable/cpu/probes`，历史记录见 `docs/history/history.md` 的 presets 条） | 嵌入口径 ✅：干净构建目录里 `cmake -S examples/downstream` CPU 与 GPU（`NN_ENABLE_GPU=ON`）两路径均编译、链接、运行通过（GPU 路径含 scan 收集 91 条 = 库内口径），fusion 树外调用可用；install 口径待剩余部分 | 已完成（嵌入）/ 小–中（剩余） | P0-1（preset 需进 CI 才不腐化） |
 | **P0-5 推理采样 top-k / top-p + 多轮对话闭环** ✅ **两半全完成（采样 2026-10-15 / 多轮闭环 2026-10-16）** | **采样半边（已实施）**：`nn::SamplingConfig`（temperature / top_k / top_p / repeat_penalty / repeat_window / seed）落在 `compute_layer_base.hpp`，共用采样器按"重复惩罚 → 温度 → top-k → top-p → softmax → 采样/贪心"固定顺序；`GPTModel`/`RAPTModel::generate` 新增配置重载（旧 temperature 重载保留、语义 = 全默认）；`text_infer` 暴露 `--top-k` / `--top-p` / `--repeat-penalty` / `--repeat-window` / `--seed`，GUI GPT 推理 Tab 同步；门禁 `sampling_test`。**多轮闭环半边（2026-10-16，P0-5 尾项）**：① prompt 构建唯一真源 = `Tokenizer::chat_prompt`（`domain_tokenizer_base.hpp`）：对话标记模板（`BOS<|system|>…<|end_of_system|><|user|>…<|end_of_user|><|assistant|>`，末轮 user 补 `<|assistant|>`）+ 内容两种给法（`text` 走 encode / `tokens` **原样灌入**）；超 `seq_len` 时从**最旧的一问一答整轮丢弃**（system 块与末轮恒保留、丢弃后仍以 user 起头），无标记词表退化为换行相接 + 截尾。② CLI：`--interactive` 从"每轮只拼当轮输入"改为**进程内累积历史**（助手轮用生成的原 token 回灌，超限打印丢弃轮数）；新增 `--turn <role>:<text>`（可重复，历史自带、一次一问）与 `--reply-out <path>`（回复落盘 → 调用方不解析日志）与 `--system <text>`；形状不合法（role 写错 / 不交替 / 末条不是 user / 与 `--prompt`·`--interactive` 并用）**解析期报错**。③ GUI：「GPT 推理」页新增「对话记录」面板 + **「💬 发送（多轮）」** + **「🧹 清空对话」**（历史 = `cli_controllers.py` 的 `ChatSession`，**无状态协议**：每轮把整段历史随采样参数一起传回 CLI）；字段表新增「系统提示（多轮对话）」（→ `--system`）；`TabBase._run_args` 抽出共用运行路径。**门禁**：`chat_prompt_test`（模板结构 / ★前缀不变式 / tokens 回灌 / 整轮截断 / 纯文本回退 / 真实 `text_infer` 子进程端到端：prompt tokens 与库逐 token 一致 + `--reply-out` == 生成 token 解码 / 7 条 CLI 负例）+ `bench/gui_cli_audit.py` 第 **[7]** 节（Python 侧参数面：第 N 轮 args 以第 N-1 轮为前缀、回复闭环、清空归零、`_on_send` 真的传历史）。**实测（三组「编译器 × 标准库」，2026-10-16）**：本机 clang 24 + libstdc++（`build/cpu`，Release + CPU-only）**52/52**；`102` WSL clang 24 + **libc++**（`~/nn-verify/build`）**52/52**；`102` WSL g++ 15.2 + libstdc++（同目录 `build-gcc`）**52/52**——三棵树均零告警（`-Werror`）且都含新用例 `chat_prompt_test`。本机 GPU 树（`build-gpu`，Release + Vulkan）新用例已构建并运行通过、`ctest -N` 注册 **54** 条，但**全量 GPU ctest 未跑**（本项结论只依赖 CPU 树）。`gui_cli_audit` 退出码 0（七节） | 采样：同 prompt 在 top-k / top-p 下输出可复现（同 seed）✅。多轮：**连续 N 轮不丢上下文** ✅ —— 可验证形式 = 第 N 轮的 prompt 以第 N-1 轮为**逐 token 前缀**（`chat_prompt_test` [2] 库级 + [6] CLI 端到端；GUI 侧 `gui_cli_audit` [7] 在参数层同款断言）；GUI 侧真机链路已实测（`ChatSession` → `GptInferController` → `text_infer`：第 2 轮 prompt = 第 1 轮 prompt + 第 1 轮生成 token + `<|end_of_assistant|>` + `<|user|>` + 新输入 + `<|end_of_user|>` + `<|assistant|>`）；超 `seq_len` 时按一问一答丢弃并有可见提示 | 中 | 无。命名冲突：`--topk` 属 `mnist_infer`、`--top` 属 `tokenizer_infer`；新开关取 `--top-k`/`--top-p`，无冲突。多轮开关取 `--turn`/`--reply-out`/`--system`，亦无冲突 |
 
 > **口径说明（与本文 §4 前置清单的差异）**：任务书前置清单把"危险精度组合 fail-fast"列在 P0；
@@ -227,7 +237,7 @@ P4 = 持续优化方向（底座已稳后继续加杠杆，2026-10-14 立项，�
 | **P2-2 Adafactor 类无 m/v 优化器** | 新增不物化二阶矩的优化器，训练更大模型 | 同任务对比 Adam 的显存下降与收敛曲线；`create_optimizer` 可创建 | 中 | 无 |
 | **P2-3 RAPT / CNN f16 接线** | ✅ **已完成 2026-10-14**。① RAPT：**27 处** `dsl::compute*` 补精度实参 `p_.compute`（此前全部落默认 F32）；两个残差分支从硬编码 `Precision::F32` 改为 `p_.compute`（与 GPTBlock/TransformerEncoderLayer 同口径）；`token_emb_`/`grad_token_emb_` 改 `p_.param`；`rms_norm_forward_/backward_` 的输出张量从默认 F32 改 `p_.compute`（**否则 dst/src 精度错配 → `insert_rows` 断言**）。② Conv2D：`w_`/`b_`/`grad_w_`/`grad_b_` 改 `p_.param`，4 处 `dsl::compute*` 补 `p_.compute`。③ `CnnConfig` 增 `precision` 字段，`build_cnn_model(_from_spec)` 在 add 之前注入（新增可选 profile 形参）。**门禁**：`cnn_smoke_test`/`rapt_smoke_test` 增 `--f16`；ctest 新增 4 条 `cnn_test_f16(_gpu)` / `rapt_test_f16(_gpu)`（断言 loss 有限且下降、梯度无 NaN） | f16 下 CNN/RAPT 训练健康收敛；默认 profile 的 f32 逐位不变（param/compute 默认 F32） | 中 | ✅ **已完成**（ctest 47/47） |
 | **P2-4 Dataset / DataLoader 抽象 + 流式文本**（**前半 Dataset 已落地** = 19 号设计阶段一~三；**P2b 补上样本概念/训练工厂** = `dataset_samples.hpp` + `text_trainer.hpp`；本条只剩**流式后半**：DataLoader/分块迭代 `for_each_chunk`，不再把语料整段读进内存） | 流式加载（Dataset 格式与统一只读类见 `docs/internal/19-unified-dataset.md`） | 大文件训练内存曲线平稳；`dataset_test` 逐位一致口径回归 | 中 | 无 |
-| **P2-5 Python / C 绑定** | 提供稳定 C ABI 或 pybind 绑定，供生态集成 | 绑定层跑通训练/推理最小示例；ABI 报错信息可读 | 中–大 | **条件触发**（§6） |
+| **P2-5 Python / C 绑定** | 提供稳定 C ABI 或 pybind 绑定，供生态集成 | 绑定层跑通训练/推理最小示例；ABI 报错信息可读 | 中–大 | **做（2026-11 随「真实可用」方向翻案，见 §4.7）** |
 | **P2-6 GUI 声明式字段表 + 绘制节流** ✅ **两侧均已完成（2026-10-15）** | **已实施（绘制半边）**：一笔一个画布项（`_paint_live` 原地 `coords`）+ 空帧跳过 + 视觉刷新按帧节流（`_PAINT_MS = 16`，数据侧不节流）+ PIL 光栅化延迟到 `_downsample_buffer`（读缓冲唯一入口）。**实测**：合成 2000 motion 事件 16.6 ms vs 旧写法 37.9 ms（2.3×），画布项 2058 → 59。**✅ 字段表半边已完成（2026-10-15）**：`Field` 声明式表 + 纯函数 `collect_fields` + `ParamsMixin`；6 个 Tab 全部迁移（`engine→--gpu` / `precision_preset→--f16/--t1_58` / `input_method→input` 这类后处理显式保留）；**逐字段等价性验证**：同一个 fake self 驱动 HEAD 版旧 `collect_args` 与新表实现，22 个场景中 17 个逐字段一致、4 个是有意收紧（fixed 调度下不再发被隐藏的 min_lr/warmup）、1 个命令行层等价；审计新增 [5] 节（表 ↔ Controller 闭包），并当场抓到 `TabBase` 遗留 `collect_args` 桩覆盖 mixin（4 个页会一个参数都不发）等 2 个真 bug | 现有 Tab 参数零遗漏（`bench/gui_cli_audit.py` 退出码 0，五节 ✅）；拖动开销下降 ✅ | 小–中 | P0-5（采样新开关已定型 ✅） |
 | **P2-7 超大 header 拆分** | backend 拆 fence / staging / dispatch / 算子为独立 TU；`compute_vk_backend.hpp` 瘦身 | 拆分前后 build 全绿 + ctest 全绿 + CPU/GPU 字节锚逐位一致 | 中–大 | **前置 = 先补编译/链接期冒烟**（P0-1 + P1-5），否则拆分无回归网 |
 | **P2-8 F16C 半精度转换快路径** | ✅ **已完成 2026-10-14**。`detail::float_to_half_bits` / `half_bits_to_float` 增加 `#if defined(__F16C__)` 快路径：**运行时**走硬件单指令（`_cvtss_sh`/`_cvtsh_ss`，imm8 = `_MM_FROUND_TO_NEAREST_INT` → 与 MXCSR 无关、恒 RNE），**常量求值**与 `NN_ENABLE_NATIVE=OFF` 的可移植构建仍走软件位操作（`std::is_constant_evaluated()` 分流；两条路径语义同源 ⇒ constexpr 求值不受影响）。**新增门禁**：`precision_test` 增「快路径一致性」段——用 23 条 f32→f16（±0 / 次正规 / 2^-25 平局 / 65504/65519/65520/2^16 上溢边界 / ±inf / NaN 负载）与 15 条 f16→f32 位型，把**编译期软件路径**与**运行期硬件路径**逐位对比。**实测**：CPU GPT f16 训练 10 步 **3.6 s → 1.9 s**（f32 1.9 s，即 CPU f16 不再慢于 f32）；`NN_ENABLE_NATIVE=ON`（F16C）与 `OFF`（portable）两态均通过；ctest 47/47 | CPUID 探测 + 两态构建 + 逐位对拍 | 小 | ✅ **已完成** |
@@ -236,8 +246,8 @@ P4 = 持续优化方向（底座已稳后继续加杠杆，2026-10-14 立项，�
 | **P2-11 编译期精度特化（去运行期分派三元）** | ✅ **已完成 2026-10-13**。把"精度是运行期参数"（`#x`）在热路径换回"精度是编译期常量"：新增 `key#s`（全输入 f16 + 输出 f16，无条件发射）与 `key#xxxx`（扫描期**真实观察到的签名**：`scan_exprs` 的 dry-run/模型 pass 各跑 f32+f16 两遍，`scan_register` + CPU 引擎 `eval_expr*` 按真实张量精度 + 真实 P 记入 `ExprRegistry::variants`）；运行期查找顺序 `#a` → `#xxxx`/`#s` → `#x`（未枚举到的签名照旧兜底）。**只需 16 位存储，不需要 `shaderFloat16`** | 850M：`--f16` 2260 → **2055 ms/15 步**（f32 2037，+10.6% → **+0.9%**），峰值显存 818 → **606 MiB**；`ctest` CPU 41/41 + GPU 43/43；构建期 110 条签名 → 88 条特化 | 无 | ✅ **已完成**（[`26`](26-f16-speedup-plan.md) §4 S1s、[`24`](24-f16-training-defects.md) §4.5） |
 | **P2-12 优化器 f16 批量派发（`#b`）** | ✅ **已完成 2026-10-14**（两段：`#b` 变体发射 + "scan 与运行期同源"修复）。① `#b` 对**每个 extras 为空的静态签名变体**各发一份（键形如 `key#0002#b`；extras 的元素类型不在 `ExprPrecSig` 编码里 → 带 extras 的 f16 结构仍逐 kernel 降级）；运行期组键带精度身份、实例缓冲按 `t.precision()` 取槽位。② **残差收口**：Adam 复合 kernel 在 `--f16` 下逐成员降级的根因是 **scan 与运行期不同源**（不是派发器）——(a) scan 的优化器 dry-run 把当前 pass 的 precision profile 透传给 `create_optimizer`（否则 f16 pass 融合出的复合结构与运行期不同 ⇒ 命中不到 ⇒ 降级）；(b) scan 的 CPU `end_expr` 为**复合 kernel** 补记运行期精度签名（单节点有 `scan_register`/`eval_expr*` 入口，融合结构只在 GPU `end_expr` 才算出签名）。**实测（40HX，f16，`d64/h4/L4/ff256/seq256/b64`，20 步，`329f8f1` vs `5bb6a51` 配对）**：`[ir-c][degrade]` **70 → 0**/步；优化器派发 **138.7 → 8.55 calls/步（−94%）**（每步恰 3 组批量：K1 `#0002#b` / K2 `#0002#b` / 复合 `#10004#b`，各 32+32+6 实例）；优化器 host 阶段 **9.94 → 6.51 ms/步（−34%）**；f16 loss 轨迹与 f32 同步（850M 9.009→8.594 vs 9.006→8.591）。**端到端墙钟无可见收益**（1320.95 → 1324.08 ms，噪声内）——设备忙率 95.5%，host 节省被 overlap 吃掉。字节锚（cpu/40HX/AMD iGPU）逐位不变。**边界**：只覆盖 scan 真跑过的 profile（f32 + `--f16`）；其它显式组合（`stable=f16`+`optimizer=f16`）仍按设计回落降级 | f16 下优化器回落批量派发；残差收口后**每步 0 降级、派发 −94%**（e2e 收益在 GPU-bound 下不可测） | P2-11 | 低 | ✅ **已完成 2026-10-14** |
 | **P2-13 f16 的 K 切分 / fine tile 变体** | ✅ **已完成 2026-10-14**。把 sig 穿进 `#f`/`#ks`/`#kr` 生成路径：每个**静态签名变体**各发一份网格粒度变体（键形如 `key#10003#ks`）；**部分和缓冲恒 f32**（后端按 f32 分配 → `#ks` 输出声明钉成 `float`，sig 只决定 A/B 读取类型），末段由 `#kr` 按 sig 落盘；后端"网格变体无需 16 位存储"的豁免收窄到**纯 V0 键**。**实测**：40HX（b64）该 wgrad **f16 16.0 ms/块 vs f32 25.1 ms/块**（此前 f16 79 ms/块）；40HX 端到端 `--f16` **1013 ms vs f32 1027 ms（−1.4%）**，850M（b16）`--f16` **2005 vs f32 2038 ms（−1.6%）** | 40HX 上 `--f16` step ≤ f32；850M 不回归 | 中 | ✅ **已完成**（[`24`](24-f16-training-defects.md) §4.5、[`26`](26-f16-speedup-plan.md) §4 S3） |
-| **P2-14 全流程真 f16（恢复计划）** | ⏸ **已立项、暂缓执行（2026-10-23：RL 优先）**。2026-10-18 恢复立项时的事实仍有效：F5 后四字段全 f16 已**可训练**，但还不是真 f16（CE 标量仍是 F32 补丁、matmul/归约仍有 f32 累加、native16 未全覆盖）。本项要求：**B-Mem = 训练/推理/checkpoint/model 文件无 f32 持久张量**；capable 设备另追 **B-Arith = 零 f16↔f32 转换**（补偿 kernel 的局部 f32 逐条豁免）；incapable 设备转换只由计算引擎在算子内部隐式完成（Layer/DSL/CLI 零手写 cast）。包含一键 `--f16-all`、native16 全覆盖、f16 累加/CE 标量改造、logits/CE 融合、**R2.5 数值鲁棒性技术栈**（SR / GradientStabilizer / ECO / attention δ 修复，见 26 §8.B.7）、全模型/全设备长跑与转正。原 S1/S5 的“已评估-不做”只针对当时的**提速**目标；S1 重做前必须先让 `scan_exprs` 覆盖 CE backward | 见 [`26`](26-f16-speedup-plan.md) §8.3 R0–R6、§8.B.7 与 §8.B.4 验收矩阵；B-Mem 必达；B-Arith = capable 设备 `cast`/`cast_into` = 0、f32 临时量 = 0（补偿 kernel 豁免表）；incapable 设备转换只在引擎内；GPT/MLP/CNN/RAPT × CPU/850M/40HX 长跑无 NaN、loss 下降、权重移动 | 中–大 | F5 ✅；RAPT f16 C11（§3.1）是 R5 前置；**当前等待 RL 主线收口** |
-| **P2-15 标准 `--f16` 训练（参考 PyTorch AMP）** | ⏸ **已立项、暂缓执行（2026-10-23：RL 优先）**。A 路线目标是把现有 `--f16` 做成可解释、可对拍的标准混合精度——`profile_f16()`（f16 参数/激活 + f32 stable/optimizer）为默认，`profile_master_weights()`（f32 主权重 + f16 计算）为更接近 AMP 的可选形态；补动态 loss scaling（GradScaler 语义）、敏感链 f32 与 PyTorch AMP 对照。**不要求零转换/native16 全覆盖** | 同数据/同 seeds：`--f16` 与 f32 轨迹在冻结容差内、无 NaN/冻结、权重移动；与 PyTorch AMP 同量级；loss scaling 的 growth/inf-skip/恢复用例通过；峰值显存低于 f32，step 不慢于 f32 | 中 | 无正确性依赖（原可与 P2-14 并行；A1.1 的 loss scaling 可被 P2-14 复用）；**当前等待 RL 主线收口** |
+| **P2-14 全流程真 f16（恢复计划）** | ⏸ **已立项（2026-10-23 曾以「RL 优先」暂缓；RL 已收口，暂缓解除，排序见 27 号）**。2026-10-18 恢复立项时的事实仍有效：F5 后四字段全 f16 已**可训练**，但还不是真 f16（CE 标量仍是 F32 补丁、matmul/归约仍有 f32 累加、native16 未全覆盖）。本项要求：**B-Mem = 训练/推理/checkpoint/model 文件无 f32 持久张量**；capable 设备另追 **B-Arith = 零 f16↔f32 转换**（补偿 kernel 的局部 f32 逐条豁免）；incapable 设备转换只由计算引擎在算子内部隐式完成（Layer/DSL/CLI 零手写 cast）。包含一键 `--f16-all`、native16 全覆盖、f16 累加/CE 标量改造、logits/CE 融合、**R2.5 数值鲁棒性技术栈**（SR / GradientStabilizer / ECO / attention δ 修复，见 26 §8.B.7）、全模型/全设备长跑与转正。原 S1/S5 的“已评估-不做”只针对当时的**提速**目标；S1 重做前必须先补 CE backward 的融合/无降级覆盖（原 `scan_exprs` 口径已随 AOT 链删除，见 [`26`](26-f16-speedup-plan.md) §4 机制勘误与 §8 R3） | 见 [`26`](26-f16-speedup-plan.md) §8.3 R0–R6、§8.B.7 与 §8.B.4 验收矩阵；B-Mem 必达；B-Arith = capable 设备 `cast`/`cast_into` = 0、f32 临时量 = 0（补偿 kernel 豁免表）；incapable 设备转换只在引擎内；GPT/MLP/CNN/RAPT × CPU/850M/40HX 长跑无 NaN、loss 下降、权重移动 | 中–大 | F5 ✅；RAPT f16 C11（§3.1）是 R5 前置；**RL 主线已收口（2026-10-23）⇒ 原暂缓解除，排序见 27 号** |
+| **P2-15 标准 `--f16` 训练（参考 PyTorch AMP）** | ⏸ **已立项（2026-10-23 曾以「RL 优先」暂缓；RL 已收口，暂缓解除，排序见 27 号）**。A 路线目标是把现有 `--f16` 做成可解释、可对拍的标准混合精度——`profile_f16()`（f16 参数/激活 + f32 stable/optimizer）为默认，`profile_master_weights()`（f32 主权重 + f16 计算）为更接近 AMP 的可选形态；补动态 loss scaling（GradScaler 语义）、敏感链 f32 与 PyTorch AMP 对照。**不要求零转换/native16 全覆盖** | 同数据/同 seeds：`--f16` 与 f32 轨迹在冻结容差内、无 NaN/冻结、权重移动；与 PyTorch AMP 同量级；loss scaling 的 growth/inf-skip/恢复用例通过；峰值显存低于 f32，step 不慢于 f32 | 中 | 无正确性依赖（原可与 P2-14 并行；A1.1 的 loss scaling 可被 P2-14 复用）；**RL 主线已收口（2026-10-23）⇒ 原暂缓解除，排序见 27 号** |
 
 > **原生 f16 口径（2026-10-18 更新）**：`shaderFloat16` 通路**允许启用、不排除**——`#a` 变体
 > 在运行期查找序里**优先级最高**，设备能力经 `shaderFloat16` 查询 + 启用，逃生阀
@@ -254,25 +264,30 @@ P4 = 持续优化方向（底座已稳后继续加杠杆，2026-10-14 立项，�
 
 ### 4.4 P3（择机）
 
-P3 不排期，只由 §6 的触发条件启动：S6 自动窗口、M7 存储多态、IR-D 第二 emitter、
-ZiPT 恢复、LRLA、CUDA、分布式（7 项）。
+P3 不排期，只由 §6 的触发条件启动：S6 自动窗口、ZiPT 恢复、LRLA、CUDA、分布式（5 项）。
 **IR-C 跨表达式图融合已不在本档**——它已落地为现行能力（`begin_expr/end_expr` + 图融合，
 已接入 Adam/AdamW），见 §3.4 M3 与 [`03`](03-ir-optimization.md) §7。
+**M7 存储多态与 IR-D 第二 emitter 已移出 P3**——2026-11 随多后端方向立项，见 §4.7。
 
 ### 4.5 P4（持续优化方向，2026-10-14 立项）
 
 > **来源**：用户 2026-10-14 指定的四条长期方向。**不是新里程碑，而是"底座已稳后继续加杠杆"的常设项**——
 > 每条都按"同窗配对 A/B + 字节锚逐位不变"验收，避免"继续提升"退化成无口径的口号。
 > **2026-10-23 优先级裁定：本节的训练加速 / 显存性能工作暂缓，待 RL 主线收口；P4-4 的 API 工作只有与 RL 直接冲突时才调整。**
+> **RL 主线已于 2026-10-23 收口（RL-0/1/2 全部 ✅）⇒ 该暂缓条件已满足、暂缓解除**；具体执行顺序按
+> [`27`](27-execution-plan.md) 与 §4.7（2026-11「性能追 PyTorch」方向）重排。
 > **与既有裁定的关系**：P2-9（step 内固定 I/O）已证**无可回收收益** ⇒ P4-1 **不再从"搬 I/O 位置"找收益**；
-> P2-10（原生 f16 资格扩张）已评估不做 ⇒ P4-2 **不含"扩 native16 覆盖"**。凡与 §5/§7 冲突的做法先改裁定再实施。
+> P2-10（原生 f16 资格扩张）的"不再扩张"**仅适用于 2026-10-14 的提速形态，已被 2026-10-18 口径反转**——
+> native16 资格扩张归真 f16（P2-14 R4.1），见 §4.3 口径注与 [`26`](26-f16-speedup-plan.md) §8.B.5。
+> 凡与 §5/§7 冲突的做法先改裁定再实施。
 
 | 项目 | 现状（实测锚） | 方向 | 验收口径 | 成本 | 关联 |
 |---|---|---|---|---|---|
 | **P4-1 性能利用率继续提升** | GPU 忙率 ~95.5%（40HX f16）/ ~95.9%（850M）；`墙钟 − 设备 kernel ≈ 4.2%`（P2-9，f32/f16 同幅、与精度无关） | ① 把剩余 4.2% 归因到 host 录制 / driver 提交 / fence 等待三处；② 提高设备端并行（帧环深度、descriptor 复用、队列提交粒度）；③ CPU 线程池利用率（小算子并行度与分块） | `NN_PROFILE=1` 同窗配对 A/B：墙钟下降 ≥3% 且 busy% 上升；字节锚逐位不变 | 中 | P2-9（**已否决**的搬 I/O 不重复）；`core_profile.hpp` |
-| **P4-2 算子性能继续提升** ✅ **C10 派生的 (a)+(b) 均已完成（2026-10-15）** | `layer_bench` 已提供 op 级配对 A/B（`--op` … + `--dk`/`--hash`）。**(a)** `rms_norm_forward_` 逐头 1/rms 收集改设备侧拼装：step 741.81 → 521.68 ms（−29.7%）。**(b)** `scan_prefix_outer` 专用路径（dk ≤ 64）改**行归属 + 4 路展开 + `dk ≤ 32` 窄共享变体**：单次 **7.4–7.9 → 1.64 ms（4.7×）**、`layer_bench --op scan_prefix` 配对 A/B **5.9×**（10.9 → 1.85 ms @ dk=32）、同会话 e2e RAPT **step 888.24 → 510.24 ms（−42.6%）**；数值**逐位不变**（位级哈希 + `rapt_test` stdout md5 + 新门禁 `scan_bitwise_test`）。**新瓶颈（下一手）**：host 侧 staging 等待 `copy_from` ≈66% 墙钟（与 GPU 忙时成正比 ⇒ 与 P2-9 的「host 等待总量不变」同机制）。`scan_suffix_outer` **刻意不改**（流量/争用受限，加占用率实测更慢）。 | 按 op 逐项调参（tile / occupancy / 网格粒度）与算法（三值 GEMV、扫描原语）；**不含**扩 native16 覆盖（P2-10 已裁定不做） | `layer_bench --op <name> --hash` 配对 A/B 提效、无系统性回退（噪声 ±6%）；端到端不回归。**(b) 已达**：−42.6% 且逐位不变 | 中（shader 迭代可只重建 `layer_bench` ≈2 min：PCH + 1 TU；全量重建 ≈20 min 只在最后做一次） | P2-11/P2-13；`docs/internal/02`；C10 归因（2026-10-15）；细节/消融/否决项见 `docs/history/history.md`「P4-2 (b)」条 |
+| **P4-2 算子性能继续提升** ✅ **C10 派生的 (a)+(b) 均已完成（2026-10-15）** | `layer_bench` 已提供 op 级配对 A/B（`--op` … + `--dk`/`--hash`）。**(a)** `rms_norm_forward_` 逐头 1/rms 收集改设备侧拼装：step 741.81 → 521.68 ms（−29.7%）。**(b)** `scan_prefix_outer` 专用路径（dk ≤ 64）改**行归属 + 4 路展开 + `dk ≤ 32` 窄共享变体**：单次 **7.4–7.9 → 1.64 ms（4.7×）**、`layer_bench --op scan_prefix` 配对 A/B **5.9×**（10.9 → 1.85 ms @ dk=32）、同会话 e2e RAPT **step 888.24 → 510.24 ms（−42.6%）**；数值**逐位不变**（位级哈希 + `rapt_test` stdout md5 + 新门禁 `scan_bitwise_test`）。**新瓶颈（下一手）**：host 侧 staging 等待 `copy_from` ≈66% 墙钟（与 GPU 忙时成正比 ⇒ 与 P2-9 的「host 等待总量不变」同机制）。`scan_suffix_outer` **刻意不改**（流量/争用受限，加占用率实测更慢）。 | 按 op 逐项调参（tile / occupancy / 网格粒度）与算法（三值 GEMV、扫描原语）；**不含**扩 native16 覆盖（归真 f16 P2-14 R4.1；P2-10 旧裁定已反转，见 §4.3 口径注） | `layer_bench --op <name> --hash` 配对 A/B 提效、无系统性回退（噪声 ±6%）；端到端不回归。**(b) 已达**：−42.6% 且逐位不变 | 中（shader 迭代可只重建 `layer_bench` ≈2 min：PCH + 1 TU；全量重建 ≈20 min 只在最后做一次） | P2-11/P2-13；`docs/internal/02`；C10 归因（2026-10-15）；细节/消融/否决项见 `docs/history/history.md`「P4-2 (b)」条 |
 | **P4-3 显存开销继续压低** | 04 号 L1（激活重计算）/L2（池归还）已实施；三值权重已压 param 侧（4 B → <2 B）；峰值显存（850M f16）606 MiB | 立项 04 号 **L3**：① Adafactor 类无 m/v 优化器（= P2-2）；② 注意力/softmax 子图进一步融合、消除 Q/K/V 激活集物化；③ 优化器状态低精度（`AdamWQuant` 已存在，4 B → 与三值同量级） | 同任务峰值显存下降，loss 曲线与基线一致（gradcheck 全绿） | 中–大 | `docs/internal/04`（L3 待立项）；P2-2 |
 | **P4-4 API 易用性 + Fold 表达式自动化扫描** | ✅ **① fold 组合由定义方直接给出（2026-10-15；原自登记机制已随后续 AOT 链整体删除）**：`compute_layer_attention.hpp` 的掩码清单 `NN_ATTN_MASK_KIND_LIST`（X 宏单一真源）直接给出「掩码 × {无偏置, 位置偏置} × {MHA, GQA}」全部组合，`expr_fold.hpp` 给出通用样例；GPU 首次执行时由运行期 JIT 现编并写 `.nnk`，无需任何构建期登记。**当时实测（AOT 时代）**：结构集合逐条（key + 指令摘要）与改动前零差异（126 条）；`expr_fold_test` §8 锁代表值契约。② 之一 `dsl::compute` 无形状重载 **✅ 已完成 2026-10-15** | 剩余 ②：GUI 声明式字段表（= P2-6）、CLI/GUI/文档一致性 | ① 验收已达成：新增掩码/组合**只改定义方**，GPU 首次执行由 JIT 现编；结构数不丢（当时逐条对比零差异）；`bench/gui_cli_audit.py` 退出码 0（本机实测 0） | 小–中 | `docs/internal/02`（运行期 JIT）；P2-6 |
+| **P4-5 Model 级融合（试点）** | **做（2026-11-13 用户裁定，撤销"Model 级/全图不做"的否决适用范围；裁定归档 = `docs/history/history.md` 末条，设计 = [`38`](38-model-level-fusion.md)）**。评估坐标：f32 对拍差距（nn 109.2 vs torch 53.5 ms/step）中框架开销 ≈13%、设备算子 ≈87%（`docs/history/history.md`「训练 step 算子 vs 框架开销归因」）——本项吃开销与表达式设备小头，**GEMM 主差距仍归 P4-2** | 捕获模型（用户裁定）：**首次 model forward/backward 时自动捕获，或训练前手动调用一次融合**；此后训练步执行的算子 = 模型级融合计划（除非手动再录）。验收 = 同窗配对 A/B：每步表达式派发数/设备 kernel 数显著下降（基线 ≈475 表达式派发/步）、e2e 提升、融合成员输出与未融合路径逐位一致（沿用 IR-C 验收口径）、torch 对照口径（§4.7）；结构障碍与分期见 38 号 | 大 | [`38`](38-model-level-fusion.md)；IR-C = [`03`](03-ir-optimization.md) + `expr_graph.hpp`；与 P4-2 并行不互斥 |
 
 ### 4.6 RL 训练原语（2026-10-23 立项，当前主线）
 
@@ -290,12 +305,30 @@ go.neuralnet.cpp 或当前内部调用方式限制 schema、objective、buffer�
 扩展面。实现可分批，但接口必须允许消费者绕过高层 preset、增加自定义字段与组件。
 
 **非目标（当前交付）**：MCTS、游戏规则、环境、自对局 worker 池（留在消费者）；
-CUDA、分布式训练；完整动态图/自动微分框架；为 RL 新增引擎原语或 shader。
+CUDA、分布式训练；为 RL 新增引擎原语或 shader。**「自动微分框架」已不再是全项目非目标**
+（2026-11 求导方向立项，见 §4.7）——RL 交付本身仍只依赖现有 forward/backward。
 
 **实施状态（2026-10-23）**：RL-0、RL-1、RL-2 全部完成；实现/门禁清单见
 [`31`](31-rl-training-primitives.md) §11，使用文档见
 [`../usage/06-reinforcement-learning.md`](../usage/06-reinforcement-learning.md)。
-f16（P2-14/P2-15）与训练性能（P4-1/P4-2/P4-3）仍按原裁定暂缓，等待后续优先级重排。
+RL 主线已于 2026-10-23 收口 ⇒ f16（P2-14/P2-15）与训练性能（P4-1/P4-2/P4-3）的暂缓解除；
+执行排序按 [`27`](27-execution-plan.md) 与 §4.7 重排。
+
+### 4.7 2026-11 总方向（用户裁定）
+
+> **总目标**：从实验库 → **能作为 PyTorch 替代品的全功能、高性能机器学习 / 计算库**，
+> 且不失去现有优势（可移植、逐位确定、精度/量化能力、低门槛消费、低层可控）。
+> 下表是当期四项裁定；替代品能力面的逐项缺口（含 §7 重审）按此目标推进。
+
+| 方向 | 裁定 | 落点与验收 | 牵动的既有裁定 |
+|---|---|---|---|
+| **多后端：可插拔架构先行** | **做** | **M7 存储多态** + **IR-D 第二 emitter** 立项：新增后端不改消费方代码与 `compute_tensor.hpp`，表达式代码生成经 emitter 抽象可替换；**具体新后端（含 CUDA）不在本轮**，按 §6 触发条件接入 | §5 M7「条件触发」→ **做**；§6 的 M7/IR-D 触发行移出；CUDA/分布式仍为 §7 非目标 |
+| **求导 = 自动微分** | **做** | 新层可免手写 backward；与现有手写链经 gradcheck 数值对拍；与表达式图/运行期 JIT 的关系由专项设计文档定义（另行立项成文） | 翻案 §4.6 RL 交付与 [`31`](31-rl-training-primitives.md) §9 中的「自动微分框架」非目标 |
+| **性能追 PyTorch** | **做（验收锚）** | 同任务/同数据对拍 PyTorch（先例 `docs/benchmarks/2026-11-12-vulkan-vs-torch.md`、`2026-09-25-vulkan-vs-cuda.md`、`2026-10-06-vulkan-vs-torch.md`）；P4 各项在原「同窗配对 A/B + 字节锚」之上增加 torch 对照口径 | 确立 P4/f16（P2-14/15）为活跃方向（RL 收口后暂缓解除，见 §4.5/§4.6） |
+| **不做实验库，做真实可用的库** | **做（总方向）** | ① `install()`/`find_package` 翻案为做（P0-4 剩余）；② Python/C 绑定（P2-5）翻案为做；③ 门禁/文档/CI 持续保持真跑 | 翻案 E2/P0-4「本轮不做」与 P2-5「条件触发」；HTTP 服务化、ONNX 仍为 §7 非目标 |
+
+> 本节只承载裁定与验收；执行顺序进 [`27`](27-execution-plan.md)。专项设计（自动微分架构、
+> M7/IR-D 实施方案）另行立项成文，不在本文展开。
 
 ## 5. 13 号清单逐条裁定表
 
@@ -320,7 +353,7 @@ f16（P2-14/P2-15）与训练性能（P4-1/P4-2/P4-3）仍按原裁定暂缓，�
 | 13 §9b H4 精度/形状三元组收敛 | **不做** | 尾部 `p_.compute` 实参在各点**可能是刻意不同**（RAPT 残差相加即反例），机械改写有语义风险；收益只是少写一个参数 |
 | 13 §9b H5 掩码/索引构造 | **不做** | 注意力侧已随策略类收敛；剩余（conv 置换、patch 提取）的"CPU 循环 + upload_span"声明式化无正确性问题，且新原语成本高 |
 | 13 §10 句柄指针化 / 存储多态提案 | **不做（已被 17 吸收）** | 13 §10.8 的"不采用句柄指针化"由 17 §3 D2 **维持否决**；其"直接读写"诉求由访问不变量（铁律 #11）承接。存储多态部分改期 M7 |
-| 17 §5 **M7** 存储多态 + `as_cpu/as_gpu` | **条件触发（P3）** | 触发条件：**第三后端出现**。在此之前收益只剩"新增后端不改 `compute_tensor.hpp`"，无调用方 |
+| 17 §5 **M7** 存储多态 + `as_cpu/as_gpu` | **做（2026-11 多后端方向立项，见 §4.7）** | 原触发条件「第三后端出现」已由总目标取代：可插拔架构是 torch 替代品多后端的前提——先做架构（新增后端不改 `compute_tensor.hpp` 与消费方代码），具体后端仍按 §6 触发接入 |
 
 ## 6. 触发式立项清单
 
@@ -329,25 +362,27 @@ f16（P2-14/P2-15）与训练性能（P4-1/P4-2/P4-3）仍按原裁定暂缓，�
 | 项 | 精确触发条件 | 立项时先读 |
 |---|---|---|
 | ~~IR-C 跨表达式图融合~~ **已落地** | **不再是触发项**：`begin_expr/end_expr` 图融合（P1 链 / P2 写穿多输出）已接入 Adam/AdamW step，§3.4 M3 | `docs/internal/03-ir-optimization.md` §5.3、§7；`expr_graph.hpp` |
-| S6 自动窗口（跨 kernel 自动融合） | 同 IR-C 的调用方判据；当前"能融的直接写成单个 `dsl::compute`"已覆盖生产路径 | `docs/internal/02-operator-fusion.md` |
-| M7 存储多态 | **第三后端出现**（CPU/Vulkan 之外的引擎要落地） | `docs/internal/17-unified-tensor-engine.md` §4.2 + §5 M7 |
-| IR-D 第二 emitter | 需要 glsl 之外的代码生成后端，且该后端**必须走 AOT 注册表**（表达式结构须被 `scan_exprs` 覆盖） | `docs/internal/03-ir-optimization.md` 阶段 D；`expr_emitter.hpp` |
+| S6 自动窗口（跨 kernel 自动融合） | 同 IR-C 的调用方判据；当前"能融的直接写成单个 `dsl::compute`"已覆盖生产路径。**与 P4-5 的边界（2026-11-13）**：P4-5 = 模型作用域的**显式捕获**（首跑/手动一次），本行的自动窗口仍维持触发式，试点后再议是否需要 | `docs/internal/02-operator-fusion.md`；P4-5 = [`38`](38-model-level-fusion.md) |
+| ~~M7 存储多态~~ **已立项（2026-11）** | **不再是触发项**：随多后端可插拔架构立项（§4.7、§5 M7 行）；具体新后端接入仍触发 | `docs/internal/17-unified-tensor-engine.md` §4.2 + §5 M7 |
+| ~~IR-D 第二 emitter~~ **已立项（2026-11）** | **不再是触发项**：随多后端可插拔架构立项（§4.7）；现行唯一入口是运行期 JIT，emitter 抽象为第二代码生成后端做准备 | `docs/internal/03-ir-optimization.md` 阶段 D；`expr_emitter.hpp` |
 | ZiPT 恢复 | ① 压缩向量保证**因果**（压缩器只能看当前位置之前）；② 实现质量对齐 RAPT/GPT（`forward_recompute` 梯度检查点 + activation offload + CLI/序列化/测试齐备）；③ 有同参对比数据 | `docs/history/history.md`「ZiPT 移除」条；`legacy/zipt` 分支 |
 | LRLA | 先有与 RLA-2 / RAPT 的**同参对比数据**（质量、显存、吞吐），再决定是否实现 | `docs/development/08-rapt-algorithm.md` |
 | Adafactor 类优化器 | 已排 **P2-2**；条件 = 需要训练超出 Adam m/v 显存预算的模型 | 本文 §4.3；`compute_optimizer.hpp` |
-| CUDA 后端 | **P3**。当前明确不支持（见 §7）；触发 = 目标平台出现真实需求 + 有维护者承诺长期维护 + 愿意补 IR-D 第二 emitter 的 AOT 全链 | `AGENTS.md` §2；本文 §7 |
+| CUDA 后端 | **P3**。当前明确不支持（见 §7）；触发 = 目标平台出现真实需求 + 有维护者承诺长期维护（可插拔架构落地后按新后端接入流程走，无需再等 IR-D/AOT 全链） | `AGENTS.md` §2；本文 §7 |
 | 分布式训练 | **P3**。触发 = 单机单卡能力被真实任务触顶，且有明确的多机部署场景 | 本文 §7 |
 
 ## 7. 非目标（明确不做）
 
 | 非目标 | 理由 |
 |---|---|
-| CUDA 全链 | 项目契约是 CPU / Vulkan 双后端，CLI 无 CUDA 参数；引入 CUDA 等于重走一遍 `import` / 存储多态 / IR-D 全链。仓库中无 CUDA 代码（grep 仅有 Muon 的 URL 注释） |
-| 分布式训练 | 数据并行/张量并行需要先有通信层与容错语义；当前连 CI 都不跑测试（E1），先补门禁 |
+| CUDA 全链 | 当前无真实需求方与长期维护承诺；CLI 无 CUDA 参数，仓库无 CUDA 代码（grep 仅有 Muon 的 URL 注释）。可插拔架构（§4.7 M7/IR-D）落地后接入成本降低，按 §6 触发条件接入 |
+| 分布式训练 | 数据并行/张量并行需要先有通信层与容错语义，当前无明确多机部署需求方（触发条件见 §6） |
 | HTTP 服务化 | 仓库无任何 HTTP/gRPC 代码；推理入口是 CLI + GUI，服务化的部署/鉴权/并发语义无真实需求方 |
-| ONNX 导入导出 | 无 ONNX 依赖与实现；导出需先把动态形状/精度语义固定下来，而 M7 尚未立项 |
+| ONNX 导入导出 | 无 ONNX 依赖与实现；导出需先把动态形状/精度语义固定下来 |
 
 > 列入本表的前提是"当前不做"有证据支持（上表逐条给了证据）。触发条件成熟时经 §6 重新立项。
+> **2026-11 总目标（可作为 PyTorch 替代品的全功能库，见 §0/§4.7）确立后，本表逐条需在总目标下重审；
+> 重审完成前维持原裁定，改判须在本表就地更新。**
 
 ## 8. 门禁与验收口径
 
@@ -457,11 +492,11 @@ f16（P2-14/P2-15）与训练性能（P4-1/P4-2/P4-3）仍按原裁定暂缓，�
 （其余 3 条已由别处覆盖：`dsl::compute` 无形状重载（已完成）见 `AGENTS.md` §7；`max_abs_diff` 计数已入本文 §5 裁定表；
 `gpt_test` 偶发失败已列为本文 P1-4。）
 
-### 9.1 eager → DSL 迁移前必须确认目标表达式结构已被 `scan_exprs` 覆盖（原 13 §9-2）
+### 9.1 eager → DSL 迁移后，GPU 首次执行必经 `.nnk` 缓存 miss（原 13 §9-2；口径随 AOT 链删除已更新）
 
-否则 GPU 注册表运行期 miss（主路径 JIT 兜底）。低成本做法 = 把新表达式写成与已扫描表达式**同构**
-（如 RAPT 除法的 ε 位置对齐 `forward`），即可零成本复用键。
-（对应铁律 #7：AOT 注册表为预热加速；主路径未命中运行期 JIT 兜底。）
+新表达式在 GPU 首次执行时按**纯结构 key** 查 `.nnk`，miss 则运行期 JIT 现编（一次性成本，
+无构建期注册表可查）。部署与测试用 `nn::model_warmup()` 预热；IR-C 融合是否降级经
+`NN_IRC_TRACE=1` 可观测。（对应铁律 #7：运行期 JIT + `.nnk` 是唯一路径。）
 
 ### 9.2 改测试公共头后，聚合器的 `#undef CHECK` 必须同步删除（原 13 §9-3）
 

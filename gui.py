@@ -39,6 +39,8 @@ from cli_controllers import (
     DEFAULT_SYSTEM_PROMPT,
     RunState,
     Metric,
+    EXPERIMENTAL_OPTIONS,
+    child_env_for,
 )
 from train_pkg import pack, PKG_EXT
 
@@ -69,13 +71,17 @@ def cli_help_text(exe_name: str) -> str:
     name = exe_name + (".exe" if os.name == "nt" else "")
     exe = BUILD_DIR / name
     if not exe.exists():
-        # preset 构建（CMakePresets.json）把产物放在 build/<preset>/ 下
-        exe = next((p / name for p in sorted(BUILD_DIR.glob("*")) if (p / name).exists()), None)
+        # preset 构建（CMakePresets.json）把产物放在 build/<preset>/ 下；
+        # 多棵构建树并存时取**最新修改**的一份（与 CLIController 同口径，
+        # 避免 sorted-first 挑中过期 exe）
+        cands = [p / name for p in sorted(BUILD_DIR.glob("*")) if (p / name).exists()]
+        exe = max(cands, key=lambda p: p.stat().st_mtime) if cands else None
         if exe is None:
             return ""
     try:
         proc = subprocess.run([str(exe), "--help"], capture_output=True,
-                              text=True, errors="replace", timeout=15)
+                              text=True, errors="replace", timeout=15,
+                              env=child_env_for(str(exe)))
     except Exception:
         return ""
     return (proc.stdout or "") + (proc.stderr or "")
@@ -925,6 +931,46 @@ class TabBase(ParamsMixin, ctk.CTkFrame):
         self._running = False
         self.pack(fill="both", expand=True)
 
+    # ── 实验性选项面板（cli_controllers.EXPERIMENTAL_OPTIONS 同源）────────
+    # 独立于 fields() 声明体系：这些是**环境变量注入**、不进 CLI 参数，
+    # 因此不参与 collect_args / gui_cli_audit 的 fields→--flag 门禁。
+    # 训练页在建完字段后调用：`self._add_experimental_panel(self._build_fields(p, 0))`
+    def _add_experimental_panel(self, start_row: int) -> None:
+        """在参数面板字段末尾追加"实验性选项"区（勾选 → 子进程 env）。"""
+        p = self.params_frame
+        r = start_row
+        _make_label(p, "── ⚠ 实验性选项（环境变量注入，非 CLI 参数）──", r,
+                    font_size=12, bold=True)
+        r += 1
+        self._exp_vars: Dict[str, Any] = {}
+        for key, opt in EXPERIMENTAL_OPTIONS.items():
+            if opt["kind"] == "int":
+                w = _make_entry_row(p, opt["label"], r, default=opt.get("default", "0"))
+            else:
+                w = _make_checkbox_row(p, opt["label"], r, False)
+            self._exp_vars[key] = w
+            r += 1
+        hint = ctk.CTkLabel(
+            p, anchor="w", text_color="#666",
+            font=ctk.CTkFont(size=11),
+            text="探针类=输出无效仅计时（自动用专用 .nnk）；原子 K 切分破坏运行间确定性。")
+        hint.grid(row=r, column=0, columnspan=2, sticky="w", pady=(2, 8))
+
+    def _experimental_selection(self) -> Dict[str, Any]:
+        """面板取值 → EXPERIMENTAL_OPTIONS key → bool/int（int 越界钳位）。"""
+        sel: Dict[str, Any] = {}
+        for key, w in getattr(self, "_exp_vars", {}).items():
+            opt = EXPERIMENTAL_OPTIONS[key]
+            if opt["kind"] == "int":
+                try:
+                    iv = int(str(w.get()).strip() or "0")
+                except (TypeError, ValueError):
+                    iv = 0
+                sel[key] = max(int(opt.get("min", 0)), min(int(opt.get("max", 64)), iv))
+            else:
+                sel[key] = bool(w.get())
+        return sel
+
     def _on_run(self):
         if self._running:
             return
@@ -940,6 +986,9 @@ class TabBase(ParamsMixin, ctk.CTkFrame):
         if self._running:
             return
         self._running = True
+        # 实验性选项（有面板才注入；无面板 = 控制器保持空 overrides）
+        if getattr(self, "_exp_vars", None):
+            self.controller.set_experimental(self._experimental_selection())
         self.run_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         self.status_lbl.configure(text="运行中...", text_color="#22c55e")
@@ -1067,7 +1116,7 @@ class MnistTrainTab(TabBase):
 
         # 参数行全部来自声明式字段表（P2-6）：加一个 CLI 选项 = 在 fields() 里加一行
         p = self.params_frame
-        self._build_fields(p, 0)
+        r_fields = self._build_fields(p, 0)
 
         # 架构 / 调度 / 预设切换回调（显隐统一由 _apply_groups 按 group 驱动）
         self._w["arch"].trace_add("write", lambda *a: self._apply_groups())
@@ -1075,6 +1124,9 @@ class MnistTrainTab(TabBase):
         self._w["precision_preset"].trace_add("write", self._on_precision_preset_change)
         self._apply_groups()
         self._on_precision_preset_change()
+
+        # 实验性选项（env 注入，独立于 fields() 体系，见 TabBase）
+        self._add_experimental_panel(r_fields)
 
         self._add_export_button()
 
@@ -1787,11 +1839,13 @@ class GptTrainTab(TabBase):
                              {"title": "Perplexity", "metrics": ["perplexity"]},
                          ])
         # 参数行全部来自声明式字段表（P2-6）
-        self._build_fields(self.params_frame, 0)
+        r_fields = self._build_fields(self.params_frame, 0)
         self._w["lr_schedule"].trace_add("write", lambda *a: self._apply_groups())
         self._w["precision_preset"].trace_add("write", self._on_precision_preset_change)
         self._apply_groups()
         self._on_precision_preset_change()
+        # 实验性选项（env 注入，独立于 fields() 体系，见 TabBase）
+        self._add_experimental_panel(r_fields)
         self._add_export_button()
 
     def build_pack_config(self):

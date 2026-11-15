@@ -2192,6 +2192,8 @@ GPU 后端 / GPU 引擎头文件「历史状态类注释」摘录。整改原则
   AOT 键与 KVRecord/日志解析对 `\r` 敏感，见 `docs/contributors/pitfalls.md` 的 CRLF 条）。
 - 验收：`.clang-format` 能被 clang-format 23 解析（`--style=file` 退出码 0）；`.gitattributes`
   落地后 `git status` 无重规范化噪声（工作树本来就全 LF）。
+- **后续**：本条的「整仓重排被否决」已于 2026-10-31 被下条「全仓 clang-format 基线化」**推翻**——
+  现行 = 全仓已按 `.clang-format` 统一格式化（AGENTS §3 亦以“现有代码即基线”为口径）。
 
 ## 全仓 clang-format 基线化（2026-10-31）
 
@@ -6118,3 +6120,198 @@ DSL 完成（与 AdamWQuant 逐位一致）；参数更新用重建值 m̂ = sm�
 - 复测资产：`build/msvc37025` 树（配 13 BMI + engine + 3 测试绿）、微复现/探针脚本
   在 `%TEMP%\msvc_{micro_retest,probe3,bt,37025_flow}.cmd`。工具集铁律不变：
   BMI↔消费方必须同版本；vcvars 默认与钉扎版本可能不一致，须前置 PATH/INCLUDE/LIB。
+
+
+# 2026-11 总目标与四项方向裁定 + 过时裁定集中修复（2026-11-13）
+
+- 类型：演进记录 / 裁定（含一批"过时与冲突"勘误）
+- 背景：用户先要求清点全仓"不做什么"以评估过时项，随后给出新总目标与四项方向裁定，
+  并逐一确认口径（多后端 = 先可插拔架构、求导 = 自动微分、生态翻案 = install + 绑定一起）。
+
+## 总目标与四项方向（用户裁定）
+
+- **总目标**：从实验库 → **能作为 PyTorch 替代品的全功能、高性能机器学习 / 计算库**，
+  同时不失去现有优势（CPU/Vulkan 双后端与可移植性、逐位确定性与字节锚、f16/三值精度与量化、
+  header-only 低门槛消费、低层可控性）。
+- **四项当期裁定**：
+  1. **多后端 = 可插拔架构先行**：M7 存储多态 + IR-D 第二 emitter 立项；具体新后端（含 CUDA）
+     仍按触发条件接入，本轮不开新后端。
+  2. **求导 = 自动微分**立项（专项设计另行成文）；翻案"完整动态图/自动微分框架"旧非目标。
+  3. **性能追 PyTorch**：同任务对拍 torch 为验收锚（先例 `docs/benchmarks/` 两篇 vs-torch/vs-cuda）。
+  4. **不做实验库、做真实可用的库**：`install()`/`find_package`（原"本轮不做"）与
+     Python/C 绑定（原"条件触发"）**一并翻案为做**；HTTP 服务化 / ONNX / 分布式维持非目标，
+     在总目标下逐项待重审（重审完成前维持，18 §7 尾注）。
+
+## 随裁定修复的过时与冲突（落点）
+
+- **18 号**：§0 总目标；§4.0 新增"2026-11 方向"行；新增 §4.7 方向表；§5 M7「条件触发」→ 做；
+  §6 M7/IR-D 移出触发表（CUDA 触发理由去掉已删除的 AOT 全链）；§7 CUDA/分布式/ONNX 陈旧理由
+  修正（分布式原理由引用"E1 CI 不跑测试"——P0-1 已于 2026-10-12 解决）+ 总目标重审尾注；
+  E2/P0-4 install「本轮不做」→ 翻案；P2-5「条件触发」→ 做；**P2-10 native16"已裁定不做"与
+  2026-10-18 真 f16 口径反转的内部矛盾**（§4.5 头注 + P4-2 行）修正；**RL 主线收口后
+  P2-14/P2-15/P4 暂缓已过期**全部解除；§2.1 底座"AOT 注册表现行"与 §9.1 `scan_exprs` 教训
+  改为运行期 JIT 口径。
+- **27 号**：主线由 RL 改为 2026-11 方向；象限三新增方向落项（可插拔架构/自动微分/install/绑定）；
+  P2-14/15、P4-1/2/3 暂缓解除；象限四移除 P2-5 与 M7/IR-D；§7 执行顺序重写；§6 非目标行加
+  "总目标下待重审"。
+- **31 §9**：「自动微分框架」非目标翻案注（RL 交付仍只依赖现有 forward/backward）。
+- **17 §4.2 / §5 M7**：「第三后端出现前不立项」→ 已立项（2026-11）。
+- **21 §4.5**：M7 触发条件引用同步更新。
+- **26 §4 S1/S2**：标题补现状态（S1 恢复为目标 / S2 降为 R4.2 可选，以 §8.B.5 为准；S0 保持不做）。
+- **33 §0.1**："不是 Vulkan 版 torch、单人库追不上也不该追"的 niche 表述由总目标取代。
+- **history**：2026-10-11「整仓 clang-format 重排被否决」补推翻交叉引用（推翻条目 =
+  下文 2026-10-31「全仓 clang-format 基线化」）。
+
+## 未动的裁定（评估后维持）
+
+- 13 号清单七条"不做"（线程池归约统一、f16 双趟、max_abs_diff、H3/H4/H5、句柄指针化）、
+  P2-9 step 内固定 I/O（S0，真 f16 也不依赖）、26 S5 提速形态结论（其反转只对真 f16 R4.1）、
+  `scan_suffix_outer` 刻意不改、#P13 否决、gpt_test 不加 retry、ZiPT/LRLA 触发式、
+  22 号五条设计否决、HTTP/ONNX/分布式非目标（待重审标记）。
+
+
+# Model 级融合撤销否决并裁定试点（2026-11-13）
+
+- 类型：裁定（撤销否决）
+- 背景：性能评估会话（f32 对拍追 torch，先例 `docs/benchmarks/2026-11-12-vulkan-vs-torch.md`）
+  得出归因——nn 109.2 vs torch 53.5 ms/step 的差距中，**框架开销 ≈13%（host 未重叠空闲
+  7.5 ms vs torch ≈0.1）、设备算子 ≈87%**（同 10-06「训练 step 算子 vs 框架开销归因」测量③）；
+  评估同时给出三条并行线（LN/RMSNorm 单 kernel 化、GEMM 病态形状、Model 级融合试点）。
+
+## 裁定内容
+
+- **撤销「Model 级/全图不做」的否决适用范围，做试点**。被撤销的是本文件
+  「IR-C（图 IR + begin_expr/end_expr 融合分析）取舍记录」条目中"重新立项的前提"对
+  **模型作用域**融合的约束（纯逐元素链 / 中间量不必为 backward 保留 / 长到单表达式写不下）；
+  该条目本身保留为历史。**S6 自动窗口不在本次撤销范围**（仍触发式，18 §6 行注）。
+- **捕获模型（用户裁定要点）**：Model 级融合在**首次调用 model forward/backward 时运行**，
+  也可像现有表达式一样**训练前手动调用一次融合**；此后除非手动再录，**训练时生成的算子只有
+  模型级的融合算子**（即训练步执行的是模型级融合计划，而非逐表达式派发）。
+- **三条并行线的落点**：Model 级融合 = 18 §4.5 **P4-5**（新行）+ 设计文档
+  `docs/internal/38-model-level-fusion.md`；LN/RMSNorm 单 kernel 化与 GEMM 病态形状
+  并入 **P4-2** 子项（27 §5 行补）；执行排序进 27 §7 第 3 条。
+- **评估结论存档**（供后续对账）：开销天花板 ≈7%（host）即便归零 e2e 仍慢 ≈1.85×；
+  P4-5 的定位 = 吃开销 + 表达式设备小头（估算覆盖 ≤15% e2e），**GEMM 主差距（61% 设备侧）
+  由 P4-2 承接**——两者不互斥，不因试点而转移主杠杆。
+
+## 落点
+
+- **18 号**：§4.5 新增 P4-5 行；§3.4 M3 补 P4-5 指针（Model 级捕获 ≠ S6）；
+  §6 S6 行补边界注（自动窗口仍触发式）。
+- **27 号**：§5 P4-2 行补两条优先子项（GEMM 病态形状 + LN/RMSNorm 单 kernel 化，
+  含 7/9 段表达式与 ≈144 kernel/步的现状坐标）；§5 新增 P4-5 行；§7 第 3 条重写为三线并行。
+- **38 号**：`docs/internal/38-model-level-fusion.md`（试点设计，状态 TODO），
+  索引登记 = `docs/internal/README.md` + `docs/README.md`。
+
+
+# 池保留阈值：步末 513MB 大块 free/alloc 抖动根治（2026-11-14）
+
+- 类型：性能 A/B + bug 根因（host gap 收割第一刀，P4-1 谱系）
+- 背景：T5 性能会话的 20 步 profile（40HX，text_train 基准配置）显示
+  **`release_idle_pool_blocks` = 199.3 ms/20 步（10.0 ms/步，占墙钟 12.8%）**，
+  是 host 侧第一大项；GPU busy 仅 78.4%（设备 1224 / 墙钟 1563 ms）。
+- **根因（打点实测）**：稳态每步只释放 **1 个 513MB 的整块**（`vkFreeMemory`
+  在 WDDM 下 ≈9.1 ms/步；warmup 首步释放 20 块 965MB / 22.9 ms），而释放后
+  池内空闲只剩 **8MB** → 下一步同一容量必须重新 `vkAllocateMemory`（同样毫秒级）
+  ——**同一工作块每步"步末整块空闲 → 归还 → 下步重建"的纯抖动**。`retain_free_bytes_`
+  默认 0（尽量回收）是抖动开关；`set_retain_free_bytes` 此前无任何调用方。
+- **修复**：`release_idle_pool_blocks`（engine `compute_vk_backend_destroy.inc`）
+  进程内读一次 **`NN_POOL_RETAIN_MB`（默认 256，0 = 旧行为尽量回收）** 并写入
+  两池 retain 阈值；retain>0 分支仅在"释放后总空闲仍 ≥ 阈值"时归还整块
+  （`compute_memory_pool.hpp` 既有逻辑）——稳态工作块留在池内供下步 first-fit
+  复用，工作负载真正收缩时仍归还超出部分（L2 语义保留）。行为开关口径：
+  读一次 + 缓存，不入探针编译门。
+- **同窗 A/B（20 步 NN_PROFILE，同 binary 前后）**：
+  | 口径 | 修复前 | 修复后 |
+  |---|---|---|
+  | 墙钟 | 1562.5 ms（78.1 ms/步） | **1335.3 ms（66.7 ms/步，−14.5%）** |
+  | GPU busy | 78.4% | **91.1%** |
+  | `release_idle_pool_blocks` | 199.3 ms（9.96 ms/步） | **21.4 ms（1.07 ms/步）** |
+  | 设备 kernel 合计 | 1224.3 ms | 1216.8 ms（不变，纯 host 收割） |
+- **e2e（3 epoch 同口径，PDH 采样）**：**65.3–67.3 ms/step**、loss
+  7.345→5.857→5.165（与 11-12 基准曲线重合）、**显存峰 3269 MiB vs 基准
+  3237 MiB 持平**（论证：步内峰值两种情形工作块都在用，只有步间基线抬高
+  ≤ 保留阈值——实测 raw 峰无回退）。对 torch fp32 53.5 ms/step 比值
+  **2.03× → ≈1.22×**（含本轮此前落地的 LN/RMSNorm 单算子化收益；池修复
+  单项干净归因 = release_idle −8.9 ms/步 + busy 提升）。
+- 验证：`training_session_test` / `gpt_test`（CPU+GPU）/ `write_epoch_test` /
+  `gpu_batch_scope_test` 全绿；打点代码已移除（修复保留）。
+- 附带观察（未处置）：① `eval_expr` 等阻塞等待的 profile 归属在修复后迁移
+  （`begin_batch` 6.3→166.3 ms、`copy_from` 17.4→69.4 ms——同 11-12 §4.2 的
+  归属迁移现象，总量以 busy% 为准）；② 残余 host gap ≈5.9 ms/步（zero
+  153 次/步 2.2 ms、create_tensor ~1 ms 为可见项）；③ 本会话 T5 基线 profile
+  的 text_train.exe 是 LN 改造前构建（20:32 时间戳），与修复后对比含两变量——
+  池修复的单项归因以上表 release_idle 行为准。
+
+
+# 去掉 update 起点重复 zero_grad（2026-11-14）
+
+- 类型：性能 A/B（host gap 收割第二刀，P4-1 谱系）
+- 根因：`TrainingSession::train_step`/`train_named_step` 在 `starts_update`
+  时调 `begin_and_zero_()`，而 `finish_update_()` 成功路径末尾已再
+  `model_.zero_grad()`——**每次 update 双重清零**。GPT d64 基准每步
+  forward 内 140 次 `engine.zero`（≈2×70 参数梯度张量），其中 begin 侧
+  一轮在成功路径上恒冗余（构造期 `InitSpec::zero`、上次 finish、
+  `reset_accumulation()` 三处已保证干净；失败路径靠 `accumulation_dirty`
+  拦截到 reset）。
+- 修复：删除 `begin_and_zero_()` 及两处调用；`finish_update_` 末尾的
+  `zero_grad` 保留为唯一清零点。
+- 同窗 profile（20 步，40HX，含环境噪声——对照组同条件下墙钟亦 ~2350 ms，
+  与早先 1335 ms 基线不可比，**单项归因以调用次数为准**）：
+  | 口径 | 修复前 | 修复后 |
+  |---|---|---|
+  | `zero` 调用 | 3065（153/步） | **1665（83/步，−70/步）** |
+  | `begin_batch` 调用 | 81 | **61（−1/步，去掉 begin 侧录制对）** |
+  | forward 内 `zero` | 2800 | ~1420 |
+- 验证：`training_session_test` / `session_checkpoint_test` /
+  `gpt_test --gpu` / `text_trainer_test` / `training_group_session_test`
+  全绿；e2e 30 步 loss 7.67→6.59→6.11 正常下降。
+- 边界：墙钟/ busy% 的 A/B 被当时 GPU 争用（浏览器/桌面进程）污染，
+  未写入收益数字；待空闲窗口用同窗配对复测。
+
+
+# op 级 matmul_tiled 移植 bank swizzle（2026-11-14）
+
+- 类型：性能 A/B（GEMM 线第一刀，P4-2）
+- 背景：T5 对拍（build/t5_gemm_matrix.md）方阵 4096³ nn 4170 vs cuBLAS 7490
+  （1.80×）、head dgrad 3788 vs 6993（1.85×）。融合生成器
+  `generate_glsl_matmul` 已有 P1 bank swizzle，op 级 `matmul_tiled.comp`
+  的标量散布写缺同款 → 同 slot、k 步长 ≡0 (mod 32 bank) 的四写者 4 路冲突。
+- 修复：`matmul_tiled.comp` 加 `SWZ_A/SWZ_B` 宏（物理槽 = 逻辑槽 ^
+  ((k>>2) & 槽位掩码)，与融合 P1 同式），load 写 + compute 读全部套上；
+  对 k 是 involution → 写读同式、K 累加序不变。
+- 同窗 A/B（layer_bench，两轮）：
+  | 形状 | 前 G | 后 G | Δ |
+  |---|---|---|---|
+  | 方阵 4096³ | 4170 | 4298/4292/4286 | **+3.0%** |
+  | head dgrad (64,8208,16384) | 3788 | 3882/3881 | **+2.5%** |
+  | head fwd (8208,64,16384) | 3729 | 3847 | **+3.2%** |
+- 对拍差距收窄：方阵 1.80→**1.74×**、dgrad 1.85→**1.80×**、fwd 1.59→**1.55×**。
+- 验证：`gpt_test --gpu` / `expr_gpu_test` / `bitnet_struct_test --gpu` /
+  `t1_58_test --gpu` / `int8_act_test --gpu` / `training_session_test` 全绿。
+- 边界：`#pragma unroll` 4→8 无增益（噪声内），回退 4；batched_matmul.comp /
+  matmul_q.comp 同配方未移植（后续）；e2e 走融合路径（本已有 swizzle）。
+
+
+# fold v2 注意力 invert_kv：A/B 回退并默认关（2026-11-14）
+
+- 类型：性能 A/B + 否决默认开启（Step A；Step B shared KV tile 未立项）
+- 背景：探针 KVREAD_ZERO 上界 −42.3%、barrier 仅 −13% → 立项「KV shared 预载」，
+  拆 Step A 循环反转（k0 外/ri 内，相邻行背靠背读 K/V）→ Step B shared tile。
+- 实现：`generate_glsl_fold_v2` 注意力形态（`has_mm && vecacc`）`invert_kv`；
+  持久槽用 **main 内 local 数组**（shared 会被 256 线程列分片互覆 → 曾全错）；
+  Ash 按 `Ash[2][cap]` 行预载。genver v4→v5→v6（语义变必须作废缓存）。
+- 同窗 A/B（40HX，fold 4 块均值 + e2e step 3 对）：
+  | 变体 | fold avg_us | step_ms |
+  |---|---|---|
+  | base（关反转） | **2496.7** | **56.0** |
+  | new（开反转） | **5221.9** | **66.9** |
+  fold **+109%**、e2e **+19%** —— 显著回退（busy 更高但更慢 = 访存效率劣化）。
+- 根因：local 持久槽每块 load/store 状态/ob/o 开销 ≫ L2 复用收益；与 P13 同类。
+- 裁定：**默认关**（`NN_FOLD_INVERT=1` 才开；genver **"6"**）。仅反转不成立；
+  Step B 须不反转或轻量反转前提下做 shared tile，先设计再实测。
+- 验证：invert 关路径下 expr_graph / expr_fuse / expr_gpu / gpt_test --gpu /
+  training_session / text_trainer 全绿；e2e loss 正常下降。
+- 产物（已清理）：原 `build/ab/invert/*` 实验树已删；数字以本条为准。
+- 关键文件：`expr_glsl_gen.hpp`（invert_kv）、`kernel_cache.hpp`（genver）、
+  `expr_graph_test.cpp`（Ash 断言）。

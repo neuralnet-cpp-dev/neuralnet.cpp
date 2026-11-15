@@ -1007,6 +1007,168 @@ int run_reduce_postprocess(ComputeEngine& cpu, ComputeEngine& gpu)
     return fail;
 }
 
+// ── 双 ColSum 链 + 全网格尾（LN/RMSNorm 单算子化形态能力对拍）─────────────
+// 形态 = 单个 dsl::compute（vector_out=0 全网格输出），表达式内部含多条同轴
+// ColSum（归约视图 + 归约指令），链式依赖经 Reduce 操作数/归约视图传递，
+// 尾链在全网格上读归约结果。三个用例与 expr_reduce_test 的
+// test_chain_colsum_fullgrid 同构：CPU / GPU 分别对拍宿主独立参考。
+int run_chain_colreduce_fullgrid(ComputeEngine& cpu, ComputeEngine& gpu)
+{
+    int fail = 0;
+    const std::size_t R = 6, C = 5;
+    const float inv_r = 1.0f / static_cast<float>(R);
+    const float eps = 1e-5f;
+    Matrix x(R, C), g(R, C), n(R, C), gamma(R, 1);
+    std::mt19937 rng(4242);
+    std::uniform_real_distribution<Scalar> dist(-1.0f, 1.0f);
+    for (auto& v : x.span()) v = dist(rng);
+    for (auto& v : g.span()) v = dist(rng);
+    for (auto& v : n.span()) v = dist(rng);
+    for (auto& v : gamma.span()) v = dist(rng);
+
+    // ── 宿主参考 A/C：LN forward E1（mean/var/sinv 逐列 → 全网格尾）─────
+    Matrix ref_fwd(R, C);
+    {
+        const auto xs = x.span();
+        auto rs = ref_fwd.span();
+        for (std::size_t c = 0; c < C; ++c)
+        {
+            float mean = 0.0f;
+            for (std::size_t r = 0; r < R; ++r) mean += xs[r * C + c];
+            mean *= inv_r;
+            float var = 0.0f;
+            for (std::size_t r = 0; r < R; ++r)
+            {
+                const float d = xs[r * C + c] - mean;
+                var += d * d;
+            }
+            const float sinv = 1.0f / std::sqrt(var * inv_r + eps);
+            for (std::size_t r = 0; r < R; ++r)
+                rs[r * C + c] = (xs[r * C + c] - mean) * sinv;
+        }
+    }
+    // ── 宿主参考 B：backward grad_x 形态（1 视图 + 3 归约指令）───────────
+    Matrix ref_bwd(R, C);
+    {
+        const auto xs = x.span();
+        const auto gsp = g.span();
+        const auto nsp = n.span();
+        const auto wsp = gamma.span();
+        auto rs = ref_bwd.span();
+        std::vector<float> sinv_c(C), mg_c(C), mgn_c(C);
+        for (std::size_t c = 0; c < C; ++c)
+        {
+            float mean0 = 0.0f, var = 0.0f, s1 = 0.0f, s2 = 0.0f;
+            for (std::size_t r = 0; r < R; ++r) mean0 += xs[r * C + c];
+            mean0 *= inv_r;
+            for (std::size_t r = 0; r < R; ++r)
+            {
+                const float d = xs[r * C + c] - mean0;
+                var += d * d;
+            }
+            sinv_c[c] = 1.0f / std::sqrt(var * inv_r + eps);
+            for (std::size_t r = 0; r < R; ++r)
+            {
+                const float gyv = gsp[r * C + c] * wsp[r];
+                s1 += gyv;
+                s2 += gyv * nsp[r * C + c];
+            }
+            mg_c[c] = s1 * inv_r;
+            mgn_c[c] = s2 * inv_r;
+        }
+        for (std::size_t r = 0; r < R; ++r)
+            for (std::size_t c = 0; c < C; ++c)
+            {
+                const float gyv = gsp[r * C + c] * wsp[r];
+                rs[r * C + c] =
+                    (gyv - mg_c[c] - nsp[r * C + c] * mgn_c[c]) * sinv_c[c];
+            }
+    }
+
+    // builder(e)：向 e 上传输入并求值；compare 对 CPU/GPU 各跑一遍对拍参考
+    const auto compare = [&](const char* tag, auto&& builder, const Matrix& refm) {
+        auto rc = builder(cpu);
+        if (!rc)
+        {
+            std::cerr << "  [" << tag << "] CPU 求值失败: " << rc.error().message << "\n";
+            ++fail;
+            return;
+        }
+        auto rg = builder(gpu);
+        if (!rg)
+        {
+            std::cerr << "  [" << tag << "] GPU 求值失败（JIT/生成器拒该形态？): "
+                      << rg.error().message << "\n";
+            ++fail;
+            return;
+        }
+        const Matrix mc = download(cpu, *rc);
+        const Matrix mg = download(gpu, *rg);
+        const Scalar d_cpu = max_abs_diff(mc, refm);
+        const Scalar d_gpu = max_abs_diff(mg, refm);
+        const bool ok = d_cpu <= 1e-5f && d_gpu <= 1e-5f;
+        if (!ok) std::cerr << "    " << tag << ": cpu_err=" << d_cpu
+                           << " gpu_err=" << d_gpu << "\n";
+        std::cout << "[" << (ok ? "PASS" : "FAIL") << "] 双ColSum链 " << tag
+                  << "  cpu_err=" << std::scientific << std::setprecision(2) << d_cpu
+                  << " gpu_err=" << d_gpu << "\n";
+        if (!ok) ++fail;
+    };
+
+    // A. mean 归约视图 + var 归约指令 + 全网格尾（LayerNorm forward E1）
+    compare(
+        "A 视图mean+指令var 全网格尾",
+        [&](ComputeEngine& e) -> nn::Result<Tensor> {
+            const Tensor xt = upload(e, x);
+            const auto diff =
+                nn::dsl::leaf(xt) - nn::dsl::col_reduce_sum(xt) * nn::dsl::rparam(inv_r);
+            const auto var_raw = nn::dsl::col_reduce_sum(diff * diff);
+            const auto sinv = nn::dsl::rsqrt(var_raw * nn::dsl::rparam(inv_r) +
+                                             nn::dsl::rparam(eps));
+            return nn::dsl::compute(e, diff * sinv, R, C);
+        },
+        ref_fwd);
+
+    // B. backward grad_x 形态：1 视图 + 3 归约指令（var/mean_g/mean_gn）
+    compare(
+        "B backward 1视图+3指令",
+        [&](ComputeEngine& e) -> nn::Result<Tensor> {
+            const Tensor xt = upload(e, x);
+            const Tensor gt = upload(e, g);
+            const Tensor nt = upload(e, n);
+            const Tensor gammat = upload(e, gamma);
+            const auto mean = nn::dsl::col_reduce_sum(xt) * nn::dsl::rparam(inv_r);
+            const auto diff = nn::dsl::leaf(xt) - mean;
+            const auto sinv =
+                nn::dsl::rsqrt(nn::dsl::col_reduce_sum(diff * diff) * nn::dsl::rparam(inv_r) +
+                               nn::dsl::rparam(eps));
+            const auto gy = nn::dsl::leaf(gt) * nn::dsl::row_broadcast(gammat);
+            const auto mean_g = nn::dsl::col_reduce_sum(gy) * nn::dsl::rparam(inv_r);
+            const auto mean_gn = nn::dsl::col_reduce_sum(gy * nn::dsl::leaf(nt)) *
+                                 nn::dsl::rparam(inv_r);
+            return nn::dsl::compute(
+                e, (gy - mean_g - nn::dsl::leaf(nt) * mean_gn) * sinv, R, C);
+        },
+        ref_bwd);
+
+    // C. mean 走归约指令：第二条归约的源经 Reduce 操作数引用第一条归约结果
+    compare(
+        "C 指令链 mean→var Reduce引用",
+        [&](ComputeEngine& e) -> nn::Result<Tensor> {
+            const Tensor xt = upload(e, x);
+            const auto mean_i = nn::dsl::col_reduce_sum(nn::dsl::leaf(xt));
+            const auto diff =
+                nn::dsl::leaf(xt) - mean_i * nn::dsl::rparam(inv_r);
+            const auto var_raw = nn::dsl::col_reduce_sum(diff * diff);
+            const auto sinv = nn::dsl::rsqrt(var_raw * nn::dsl::rparam(inv_r) +
+                                             nn::dsl::rparam(eps));
+            return nn::dsl::compute(e, diff * sinv, R, C);
+        },
+        ref_fwd);
+
+    return fail;
+}
+
 // ── P10-① GPU 对拍：多消费者 matmul 头的分量 kernel（extras 写穿）────────
 // 录制图：mm = matmul(A,B)+bias；y1 = mm+bias2；y2 = mm+bias3（双消费者）。
 // 融合预期 = 单 kernel（members=mm,y1,y2；extras=[mm.out, y1.out] 写穿）。
@@ -1636,6 +1798,7 @@ int main()
     fail += run_norm<nn::LayerNorm>("layernorm", *cpu_engine, *gpu_engine);
     fail += run_reduce_consts(*cpu_engine, *gpu_engine);
     fail += run_reduce_postprocess(*cpu_engine, *gpu_engine);
+    fail += run_chain_colreduce_fullgrid(*cpu_engine, *gpu_engine);
     fail += run_matmul_multiconsumer(*cpu_engine, *gpu_engine);
     fail += run_f16_diamond(*cpu_engine, *gpu_engine);
     fail += run_fold_gpu(*cpu_engine, *gpu_engine);

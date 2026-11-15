@@ -37,7 +37,7 @@ Layer 内联表达式 → to_expr_spec 折叠 → ExprSpec → glsl_gen → GLSL
 
 1. **子表达式重复**导致超输入/寄存器上限（如 `grad*gamma` 出现 3 次即超输入上限、被迫手工拆表达式）→ 现由 **CSE** 消除。
 2. **无死代码消除、无常量折叠、无代数化简**，shader 携带冗余计算 → 现由 canonicalize 链处理。
-3. **无寄存器分配**，`num_regs` 线性增长，受 `EXPR_MAX_REGS=32` 约束 → 现由活跃性分配复用。
+3. **无寄存器分配**，`num_regs` 线性增长，受 `EXPR_MAX_REGS` 约束 → 现由活跃性分配复用。
 4. **后端耦合**：`glsl_gen` 为 GLSL 专用，无法"一份 IR 多后端"（CUDA 后端已整体移除）→ IR-D emitter 抽象，当前注册的只有 GLSL。
 5. **跨表达式融合**：已由 IR-C 落地（`begin_expr/end_expr` + `expr_graph.hpp` 图 IR，P1 链 / P2 分量融合，§5.3）；不需要跨表达式写穿的场景仍可直接写成单个 `dsl::compute`（单个 AOT 融合 kernel）。
 
@@ -145,7 +145,7 @@ expr_spec_key(spec) ≡ expr_spec_key(canonicalize_expr_spec(spec))
 | pass | 说明 |
 |------|------|
 | **CSE（公共子表达式消除）** | 哈希指令 `(op,a,b,c)` → 若已存在等价指令则复用其 dst，消除重复子表达式 → 降低输入/寄存器压力，缓解超限问题 |
-| **寄存器分配** | 活跃性分析（liveness）→ 寄存器复用 → 降低 `num_regs`，让更多表达式落在 `EXPR_MAX_REGS=32` 内 |
+| **寄存器分配** | 活跃性分析（liveness）→ 寄存器复用 → 降低 `num_regs`，让更多表达式落在 `EXPR_MAX_REGS` 内 |
 | **死寄存器回收** | 结合 DCE 回收不再活跃的寄存器 |
 
 CSE 需处理 `Input/Const/Reduce` 操作数的等价性（视图相同 + 输入相同 + 常量相同才等价）。归约指令的 CSE 需保证归约槽语义一致。

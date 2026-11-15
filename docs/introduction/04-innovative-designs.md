@@ -183,7 +183,7 @@ RoPE 的 `RowMod/RotateHalf` 参数如果以**结构常量**折进 key，每个 
 `ExprSpec` 已是事实上的轻量 IR（SSA、扁平、可序列化、确定性 key）；不做优化会直接带来：
 - 子表达式 `grad*gamma` 重复 3 次 → 超 `EXPR_MAX_INPUTS=8`，只能手工拆表达式。
 - 无 DCE/常量折叠，shader 携带冗余计算。
-- 无寄存器分配，`num_regs` 受 `EXPR_MAX_REGS=16` 约束。
+- 无寄存器分配，`num_regs` 受 `EXPR_MAX_REGS` 约束。
 
 ### 6.2 方案
 
