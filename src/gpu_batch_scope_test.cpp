@@ -141,6 +141,7 @@ void set_env_(const char* name, const std::string& value)
 int main(int argc, char** argv)
 {
     (void)argc;
+    (void)argv;   // libc++ -Wunused-parameter（g++/MSVC 不报；矩阵门禁）
     // [1] CPU 透传
     {
         auto eng = nn::create_cpu_engine();

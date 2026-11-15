@@ -63,7 +63,9 @@ EXES = ["mnist_train", "mnist_infer", "text_train", "text_infer",
 #   --t1_58       : 三值预设的**别名**（等价 --precision-param t1_58）；GUI 的
 #                   "精度预设"下拉填的是 precision_param 字段，三条命令在
 #                   docs/internal/21 §4.10 里已声明等价，故此处不算缺口
-INTENTIONAL_GAPS = {"--interactive", "--t1_58"}
+#   --no-warmup   : JIT 预热逃生阀（诊断/排障用）；GUI 正常路径恒预热，
+#                   实验开关走 EXPERIMENTAL_OPTIONS 的 env 注入，不暴露该 flag
+INTENTIONAL_GAPS = {"--interactive", "--t1_58", "--no-warmup"}
 
 
 def exe_path(exe: str) -> Path:
