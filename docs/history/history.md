@@ -6454,3 +6454,34 @@ DSL 完成（与 AdamWQuant 逐位一致）；参数更新用重建值 m̂ = sm�
   `engine/.../backend/compute_vk_backend_ops.inc`（dispatch）、
   `src/layer_bench.cpp`（新 op）、`docs/internal/21-quantized-weights.md` §4.18。
 - 产物：`build/t5_qi8_base.txt`、`build/t5_qi8_hash_tiled.txt`、`build/t5_qi8_ab.txt`。
+
+# 融合 GEMM swizzle 换式 A/B：中性，维持旧式 + layer 模式计时口径勘误（2026-11-15）
+
+- 类型：性能 A/B（GEMM 线复核 §六 项 7；notes「e2e 融合对齐 op 级新式」）+ 基准方法勘误
+- 背景：融合路径 `generate_glsl_matmul` 已有 P1 旧式 swizzle；评估 mm_swz 新式
+  （f=(a&3)<<1，SLOTS≥8，理论 2→1 way）替换。op 级同日 A/B 曾 1024³ +24% 否决，
+  融合路径结构不同（无 fetch/commit、vec4 快路径占比高）→ 单独 A/B。
+- **方法勘误（本轮最重要发现，已入 pitfalls 4.14）**：`layer_bench --layer` 的 GPU
+  计时**无效**——`Model::forward` 的 `InferenceScope` 结束只 submit 不 wait（fence 等在
+  下一次 begin），best-of 挑纯入队迭代（实测 4096×4096×8192 报 0.18~2.3 ms；同形
+  torch 38.6 ms、op 级 56.5 ms）。首轮 layer 模式 A/B（`build/t5_fused_swz_ab.txt`）
+  **作废**。新增 `--op matmul_dsl`（`dsl::compute` 直调，不经 InferenceScope →
+  solo `submit_and_wait` 真等；兼 `--hash` 逐位 oracle）。
+- 逐位：3 形状（130,17,6 / 64,65,67 / 512³）old/new hash 全同
+  （`fa72839e02343dee` / `e23f2af3d1ec444e` / `69ed2e3a38a0bee2`）。
+- 同窗交错 A/B（40HX，kg_old/kg_new 两 kernelgen DLL + **隔离 .nnk 缓存目录**，
+  3 轮轮换顺序，warmup20；ms 中位数）：
+  | 形状 | old | new | Δ |
+  |---|---|---|---|
+  | sq4096 | 32.288 | 32.465 | +0.5% |
+  | sq1024 | 0.718 | 0.705 | −1.8% |
+  | wideN (2048,4096,8192) | 32.321 | 32.401 | +0.2% |
+  **判定：中性**（全部噪声内）→ **维持 P1 旧式、不 bump genver**（换式只作废
+  全量 .nnk 缓存、零收益）。旁证：融合 sq4096 32.3 ms ≈ op 级 matmul_tiled 32.0 ms
+  ——两条 GEMM kernel 已同量级（e2e 缺口主要不在 kernel 本身时再查形状/组合）。
+- 验证：`expr_gpu_test` / `gpt_test --gpu` 0 failure（新旧 kernelgen 各跑一遍）。
+- 关键文件：`src/layer_bench.cpp`（matmul_dsl op + 计时口径注释）、
+  `engine/.../expr_glsl_gen.hpp`（A/B 结论注释，**生成逻辑零改动**）、
+  `docs/contributors/pitfalls.md` §4.14。
+- 产物：`build/t5_fused_dsl_ab.txt`、`build/t5_fused_dsl_hash.txt`；
+  作废 `build/t5_fused_swz_ab.txt`（layer 模式）。

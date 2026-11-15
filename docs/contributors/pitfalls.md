@@ -13,7 +13,7 @@
 |------|------|------|----------|
 | 灾难级 | 5 | 数据损坏 / 设备永久失效 / 训练白费数小时 | GPT 布局混用、GPU-resident 10% 正确率、融合吞持久输出 |
 | 高危 | 6 | 内存爆炸 / 崩溃 / 断言失败 | BPE 60-80GB、reshape 视图断言 |
-| 中危 | 13 | 结果偏差 / 性能退化 / 并行不确定 | BPE 迭代序泄漏、one-hot 3.2GB、scatter_add 非确定性 |
+| 中危 | 14 | 结果偏差 / 性能退化 / 并行不确定 | BPE 迭代序泄漏、one-hot 3.2GB、scatter_add 非确定性 |
 | 低危 | 15+ | 构建失败 / UI 异常 / 兼容性 | CRLF、MSVC 编译器版本、tkinter 保留属性 |
 
 **一句话预警**：本项目最大的两类风险是 **① 布局/索引约定不一致** 和 **② GPU 资源生命周期**，历史上所有灾难级 bug 都出自这两类。改代码前先读第 6 节的根因模式。
@@ -286,6 +286,21 @@
 - **教训**：**"CPU 测试通过"不覆盖 GPU 的校验/分发路径**——凡两条求值路径的校验集合
   不对称（GPU/scan 校验、CPU 模板不校验），测试必须两侧都跑，否则非法结构只会在
   GPU 运行期以莫名其妙的报错现身。
+
+### 4.14 layer_bench --layer 模式 GPU 计时 = 入队时间（InferenceScope 不等 fence）
+
+- **症状**：`layer_bench --gpu --layer linear` 把 4096×4096×8192（275 GFLOP）前向报成
+  0.18~2.3 ms（折算 >100 TFLOPS，物理不可能）；同形 torch 38.6 ms、op 级 56.5 ms。
+  形状差 1000× 的耗时几乎不变——典型的"测到的是启动开销"。
+- **根因**：`Model::forward` 用 `InferenceScope` 包批（`model_container.hpp`，issue #28）
+  ——`end_batch` **只 submit 不 wait**，fence 等在下一次 `begin_batch`（帧环槽复用时）。
+  `bench_layer` 的 best-of 计时会系统性挑到纯入队的迭代 → 测的是 host 录制开销。
+- **正确口径**：GPU 性能 A/B 用 `--op` 路径（`bench_op` 的 run 不进 InferenceScope →
+  `dsl::compute` 直调走 solo `submit_and_wait` 真等；`--op matmul_dsl` 即为此新增，
+  兼作融合 GEMM 的 `--hash` 逐位 oracle）；e2e 用 text_train step（loss 回读排空）。
+  首轮用 --layer 模式做的融合 swizzle A/B 因发作废（history 同日条目）。
+- **教训**：**给 GPU 计时前先确认测点在 fence 之后**；"best-of N" 会挑中不等待的迭代，
+  把异步提交当成性能——数字"好得离谱"（超硬件峰值一个量级）时先怀疑计时口径。
 
 ---
 
