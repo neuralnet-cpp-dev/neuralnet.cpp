@@ -6392,3 +6392,34 @@ DSL 完成（与 AdamWQuant 逐位一致）；参数更新用重建值 m̂ = sm�
   `compute_vk_backend_{hpp,pipelines,frame}.inc`（特化缓存 + 选型）、
   CMake `matmul_tiled_wide` 嵌入。
 - 产物：`build/t5_wide_ab.txt`。
+
+# matmul_q swizzle + 整字解码（2026-11-15）
+
+- 类型：性能 A/B（GEMM 线复核 §六 项 5 前半；notes 1b）
+- 背景：`matmul_q` 的 A/B 分块装载是解码后的**标量散布写、完全无 swizzle**
+  （4-way bank 冲突，比稠密路径更狠——A 侧整条都是解码 STS）；且 4 元素组内
+  对同一打包字读 4 次 + `float(c)-2` 走 I2F。
+- 落地（`matmul_q.comp`，三项均**逐位不变**）：① P1 旧式 swizzle
+  （与 matmul_tiled 现行同式，写读同式 involution）② 整字解码（BK=16 ∧
+  BM%16==0 ⇒ 组内 `(cj>>4)` 恒同，4 次同址 P[] 读 → 1 次 LDG + 4 次移位）
+  ③ `mm_trit`（≡ `float(c)-2.0` 逐位，Sterbenz 精确，避 I2F）。
+  **不含 τ 外提**（复核【D】/TAU_HOIST 改舍入路径：Στ·a·b → τ·Σa·b，须另立
+  A/B 定容差，本刀不碰）。
+- 三方同窗交错 A/B（40HX，none/old/new 三 DLL 轮换顺序，3 轮，warmup20；
+  ms 中位数）：
+  | 形状 | none | old | new | old vs none |
+  |---|---|---|---|---|
+  | sq2048 matmul_q | 5.238 | 4.359 | 4.370 | **−16.8%** |
+  | dec4096 (n=64) | 0.898 | 0.774 | 0.784 | **−13.8%** |
+  | tall (m=64) | 0.884 | 0.831 | 0.809 | −6.0%（离散大） |
+  | wideN (n=8192) | 39.846 | 33.343 | 33.323 | **−16.3%** |
+  | transA matmul_q_t | 9.021 | 8.639 | 8.684 | −4.2% |
+  **swizzle 对 none 全面大赢（−4~−17%）；old vs new 噪声内**（sq 4.359 vs
+  4.370、wideN 33.343 vs 33.323）→ 落 **P1 旧式**（与 tiled 一致；mm_swz
+  新式在 tiled 上 1024³ +24% 曾否决，不因 q 单独破例）。
+- 逐位：12 组 hash（{f32,f16} × 形状 {64,65,67 / 130,273,71 / 256,4096,64}
+  × {matmul_q,matmul_q_t}）三方**全同**（基线 `build/t5_q_hash_base.txt`）。
+- 验证：`ternary_gemm_test --gpu` 全部通过（跨形状/尾形状）、`t1_58_test --gpu`
+  ALL PASSED、`expr_gpu_test` / `gpt_test --gpu` 0 failure。
+- 关键文件：`engine/shaders/matmul_q.comp`。
+- 产物：`build/t5_q_swz_ab.txt`（三方 A/B 原始数据）、`build/ab/nn-gpu_{none,old,new}.dll`。
