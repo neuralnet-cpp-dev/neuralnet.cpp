@@ -6365,3 +6365,30 @@ DSL 完成（与 AdamWQuant 逐位一致）；参数更新用重建值 m̂ = sm�
   ——fine 只适合网格饥饿小形状，勿对 M=8k 滥用。
 - 关键文件：`engine/shaders/matmul_tiled.comp`（fetch/commit + 旧式 SWZ）。
 - 产物：`build/t5_fetchcommit_ab.txt`、`build/t5_swz_new_ab.txt`。
+
+# matmul_tiled WIDE 变体 + 特化常量接线（2026-11-15）
+
+- 类型：性能 A/B + 基础设施（GEMM 线复核 §六 项 3/4）
+- **③ WIDE 128×128（保留）**：`-DNN_MM_WIDE=1`（R=8 / BK=8 / 16×16 线程），
+  共享仍 16KB；KGRP=BK/4 参数化 transB=1 装载（复核坑①）。后端选型：
+  128-tile 网格 WG ≥ EXPR_MATMUL_WIDE_MIN_WGS(64) 且 min(M,N)≥128；
+  逃生阀 `NN_MM_NO_WIDE=1`。
+  同窗交错 3 轮（40HX，vs 64-tile）：
+  | 形状 | wide G | 64-tile G | Δ |
+  |---|---|---|---|
+  | square 4096³ | **4517** | 4295 | **+5.2%** |
+  | square 2048³ | **4185** | 4007 | +4.4% |
+  | square 1024³ | **3112** | 2565 | **+21.3%** |
+  瘦形状（N/M<128）不选 wide（门禁生效，性能平）。逐位 hash 4 组全同；
+  expr_gpu / gpt_test / training_session 全绿。
+- **④ 特化常量（保留）**：SC_TRANS_A/B + K/M/N%4（constant_id 0..4）经
+  VkSpecializationInfo 烘进 pipeline；PC↔SC 守卫防串 key。后端
+  `get_mm_specialized` 按 5 元组懒建缓存（全 0 = init 默认零创建）。
+  **验收口径变更**：f32 SPIR-V 不再与无特化版字节零差异（OpSpecConstant）；
+  **数值仍逐位一致**——6 组历史 hash 基线全匹配（含 trans/非对齐）。
+  expr_gpu / gpt_test --gpu / training_session 全绿。
+- 关键文件：`matmul_tiled.comp`（WIDE + SC_*）、`expr_spec.hpp`
+  （WIDE_MIN_WGS/BLOCK_WIDE）、`compute_vk_device.hpp`（create_generic+spec）、
+  `compute_vk_backend_{hpp,pipelines,frame}.inc`（特化缓存 + 选型）、
+  CMake `matmul_tiled_wide` 嵌入。
+- 产物：`build/t5_wide_ab.txt`。
