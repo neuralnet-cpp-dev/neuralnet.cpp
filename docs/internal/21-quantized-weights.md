@@ -996,9 +996,14 @@ f32 latent**（`build_*_from_spec` → `BitLinear::init` 立即分配，4 B/权�
 （实测 worst 0.19 ≤ 1）；[5] dX 两条路径逐位一致 + dW 与宿主参考 max_rel 3.9e-7；
 [6] MLP 端到端 300 步 loss 0.755 → 0.034（收敛）。ctest **79/79**（GPU 变体 77=skip）。
 
-**边界（如实记录）**：GPU 数值对拍（`--gpu` / 40HX-850M）待有 GPU 环境（shader 编译 +
-后端接线已由 engine 子仓 GPU 构建验证）；`matmul_q_i8` 当前 = 逐输出元素参考内核
-（正确性优先，宽 batch 性能按 §4.16 ② 的"先量后承诺"流程另行 A/B）；激活量化只在线性
+**边界（如实记录）**：`matmul_q_i8` 已从逐输出元素参考内核重写为**分块形态**
+（2026-11-15，与 `matmul_q.comp` 同构：16×16 线程 / 64×64 tile / 双缓冲 / W、Q
+共享解码各一次 / P1 旧式 swizzle；后端 dispatch 改 2D 网格）——同窗交错 A/B
+（40HX，layer_bench `--op matmul_q_i8`，warmup 20，3 轮）：naive ~500 GFLOPS →
+tiled **2800~4200 GFLOPS**（sq2048 29.4→4.40 ms **−85%**、wideN 277→32.8 ms
+**−88%**、dec 3.88→0.76 ms **−80%**、tall 4.31→0.78 ms **−82%**）；6 组 hash
+（{f32,f16} × {130,17,6 / 512,256,8 / 64,65,67}）与 naive **逐位全同**，
+`int8_act_test --gpu` 逐位对拍 + dX + 300 步收敛全绿（40HX）。激活量化只在线性
 投影（BitLinear 内部），与 BitNet b1.58 训练配方 W1.58A8 同口径。训练显存账：激活缓存
 1 B/元素（f16 的 1/2）+ 权重已 0.25 B/权重；优化器状态仍是 8 B/权重（正路 =
 `--optimizer adamwquant` §4.13；int8 优化器状态是下一步）。

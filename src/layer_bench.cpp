@@ -590,6 +590,59 @@ double bytes_packed(const BenchConfig& c)
 double bytes_packed_t(const BenchConfig& c)
 { return c.m * c.k / 4.0 + 4.0 * c.k; }
 
+// ── matmul_q_i8（W1.58A8 训练显存路径；docs 21 §4.16）────────────────────
+// setup：打包三值权重 + τ；x (k,n) → s = per-col absmax/127（生产口径，
+// BitLinear::forward 同款）→ quantize_i8 → 容器。
+// ctx 布局：a=权重容器 aux=τ b=激活容器 extra[0]=s。
+void setup_matmul_q_i8(ComputeEngine& e, const BenchConfig& c, OpCtx& ctx)
+{
+    make_packed(e, c.m, c.k, ctx.a, ctx.aux);
+    Matrix xm(c.k, c.n);
+    std::mt19937 g(1234u);
+    std::uniform_real_distribution<Scalar> d(-1.0f, 1.0f);
+    {
+        auto s = xm.span();
+        for (std::size_t i = 0; i < s.size(); ++i) s[i] = d(g);
+    }
+    Matrix sm(1, c.n);
+    for (std::size_t col = 0; col < c.n; ++col)
+    {
+        float mx = 0.0f;
+        for (std::size_t row = 0; row < c.k; ++row)
+        {
+            const float av = std::fabs(xm.at(row, col));
+            if (av > mx) mx = av;
+        }
+        sm.set_value(0, col, mx / 127.0f);   // 必须除 127（docs 21 §4.16 ③）
+    }
+    auto xt = e.from_matrix(std::move(xm));
+    auto st = e.from_matrix(std::move(sm));
+    if (!xt || !st)
+    {
+        std::printf("matmul_q_i8 setup: 上传失败\n");
+        std::abort();
+    }
+    auto xq = e.quantize_i8(*xt, *st, /*col_scale=*/true);
+    if (!xq)
+    {
+        std::printf("matmul_q_i8 setup: quantize_i8 失败: %s\n", xq.error().message.c_str());
+        std::abort();
+    }
+    ctx.b = std::move(*xq);
+    ctx.extra.push_back(std::move(*st));
+}
+void run_matmul_q_i8(ComputeEngine& e, const BenchConfig& c, OpCtx& ctx)
+{
+    auto r = e.matmul_q_i8(ctx.a, ctx.aux, ctx.b, ctx.extra[0],
+                           c.f16 ? nn::Precision::F16 : nn::Precision::F32);
+    if (!r)
+    {
+        std::printf("matmul_q_i8 error: %s\n", r.error().message.c_str());
+        std::abort();
+    }
+    ctx.c = std::move(*r);
+}
+
 const std::vector<OpSpec>& op_registry()
 {
     static const std::vector<OpSpec> reg = {
@@ -600,6 +653,7 @@ const std::vector<OpSpec>& op_registry()
         {"matmul_q_t", setup_matmul_q_t, run_matmul_q_t, work_matmul, true},
         {"matmul_q_bw", setup_matmul_q, run_matmul_q, bytes_packed, false},
         {"matmul_q_t_bw", setup_matmul_q_t, run_matmul_q_t, bytes_packed_t, false},
+        {"matmul_q_i8", setup_matmul_q_i8, run_matmul_q_i8, work_matmul, true},
         {"batched_matmul", setup_batched, run_batched, work_batched, true},
         {"add_inplace", setup_add, run_add, bytes_add, false},
         {"row_reduce_sum", setup_exp, run_row_reduce, bytes_row_reduce, false},
@@ -771,6 +825,7 @@ void print_help(const char* prog)
     help.text("matmul matmul_bt matmul_at batched_matmul add_inplace");
     help.text("row_reduce_sum col_reduce_sum transpose scale_inplace");
     help.text("matmul_q matmul_q_t (三值打包 GEMM) matmul_q_bw matmul_q_t_bw (权重带宽口径)");
+    help.text("matmul_q_i8 (三值权重×int8 激活，W1.58A8)");
     help.text("scan_prefix scan_suffix (RLA/RAPT 状态扫描；尺寸: --batch/--heads/--dk/--seq)");
 }
 

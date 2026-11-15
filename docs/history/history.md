@@ -6423,3 +6423,34 @@ DSL 完成（与 AdamWQuant 逐位一致）；参数更新用重建值 m̂ = sm�
   ALL PASSED、`expr_gpu_test` / `gpt_test --gpu` 0 failure。
 - 关键文件：`engine/shaders/matmul_q.comp`。
 - 产物：`build/t5_q_swz_ab.txt`（三方 A/B 原始数据）、`build/ab/nn-gpu_{none,old,new}.dll`。
+
+# matmul_q_i8 分块重写（共享解码 + swizzle）（2026-11-15）
+
+- 类型：性能 A/B（GEMM 线复核 §六 项 5 后半 / notes 5；W1.58A8 训练显存路径）
+- 背景：`matmul_q_i8` 此前 = 逐输出元素参考内核（每线程 1 个 (m,n)，热循环逐 k
+  重读两边打包字——同一 W 字被读 N 次、Q 字被读 M 次），~500 GFLOPS 封顶。
+  按 docs 21 §4.16 ②「先量后承诺」流程本轮落分块。
+- 落地（`matmul_q_i8.comp` 重写 + 后端 dispatch 2D）：与 `matmul_q.comp` 同构
+  ——16×16 线程 / BM=BN=64 / BK=16 / 每线程 4×4 / 双缓冲；W 的 trit tile 与 Q 的
+  int8 tile 各**解码一次进共享内存**（每 tile 每打包字 1 次全局读）；P1 旧式
+  swizzle（与 matmul_q/tiled 同式）；`matmul_q_i8_gpu` dispatch 由 1D
+  `(M*N+255)/256` 改 `(ceil(N/64), ceil(M/64))`。
+- **数值口径不变（逐位）**：int32 累加、k 全局升序（tile 升序 × tile 内升序）；
+  oob 贡献 0（x+0≡x）；epilogue 恒 `(τ_m·s_n)·float(acc)` 与宿主参考同序；
+  无 τ/s 外提、无 int8→f32 提前转换。
+- 同窗交错 A/B（40HX，naive/tiled 两 DLL 轮换顺序，3 轮，warmup20；ms 中位数）：
+  | 形状 | naive | tiled | Δ |
+  |---|---|---|---|
+  | sq2048 (2048,2048,2048) | 29.403 | **4.399** | **−85%**（584→3906 G） |
+  | wideN (2048,4096,8192) | 277.180 | **32.780** | **−88%**（496→4193 G） |
+  | dec (4096,4096,64) | 3.879 | **0.761** | **−80%**（554→2824 G） |
+  | tall (64,4096,4096) | 4.311 | **0.781** | **−82%**（498→2824 G） |
+- 逐位：6 组 hash（{f32,f16} × {130,17,6 / 512,256,8 / 64,65,67}）与 naive
+  **全同**（基线 `build/t5_qi8_base.txt`）。
+- 验证：`int8_act_test --gpu` 全部通过（[3] 两形状与宿主整数参考逐位、[5] dX
+  逐位、[6] 300 步收敛）；layer_bench 新增 `--op matmul_q_i8`（setup 走
+  per-col absmax/127 生产口径 + quantize_i8）。
+- 关键文件：`engine/shaders/matmul_q_i8.comp`、
+  `engine/.../backend/compute_vk_backend_ops.inc`（dispatch）、
+  `src/layer_bench.cpp`（新 op）、`docs/internal/21-quantized-weights.md` §4.18。
+- 产物：`build/t5_qi8_base.txt`、`build/t5_qi8_hash_tiled.txt`、`build/t5_qi8_ab.txt`。
