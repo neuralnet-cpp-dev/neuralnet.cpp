@@ -6339,3 +6339,29 @@ DSL 完成（与 AdamWQuant 逐位一致）；参数更新用重建值 m̂ = sm�
 - 关键文件：`engine/shaders/{batched_matmul.comp,mm_swz.glsl}`、`engine/CMakeLists.txt`。
 - 复核包：`build/gemm_review_pkg/shaders_perf_targets_v2/`（v2 源码与检查脚本
   未入仓）；A/B 原始数据 `build/t5_batched_swizzle_ab.txt`。
+
+# matmul_tiled fetch/commit 流水 + mm_swz 新式换式 A/B（2026-11-15）
+
+- 类型：性能 A/B（GEMM 线：wgrad 朝向 / 方阵换式）
+- 背景：外部复核指出 load 内 LDG→STS 相邻、compute(t) 被推到 LDG 之后；
+  wgrad（K=16384，1024 tile）最吃延迟隐藏。另评估 mm_swz 新式
+  （f(a)=(a&3)<<1，理论 2→1 way）替换 P1 旧式。
+- **① fetch/commit 流水（保留）**：拆 fetch（只 LDG 落寄存器）/ commit（STS），
+  compute(t) 与 t+1 LDG 重叠；累加序/共享内容/barrier 不变。
+  同窗交错 3 轮（40HX，warmup20）：
+  | 形状 | base ms | new ms | Δ |
+  |---|---|---|---|
+  | wgrad at (8208,16384,64) | 4.701 | **4.296** | **−8.6%**（+9.4% G） |
+  | wgrad plain | 4.852 | **4.431** | **−8.7%** |
+  | dgrad plain | 4.408 | **4.246** | **−3.7%** |
+  | square 4096³ | 32.233 | 31.967 | −0.8% |
+  | at fwd | 4.463 | 4.421 | −0.9% |
+  逐位：7 组 hash（方/奇/trans）全同；expr_gpu_test / gpt_test --gpu 绿。
+- **② mm_swz 新式换式（否决）**：同为 fetch/commit 前提下 3 轮交错：
+  方阵 4096³ 中性（±0.1%）；**sq1024³ 0.684→0.846 ms（+24% 回退）**；
+  wgrad/dgrad 噪声内。逐位仍一致（involution）。→ **维持 P1 旧式**
+  `(k>>2)&(SLOTS-1)`；`mm_swz.glsl` 仍由 batched_matmul 使用。
+- 实验旁证：强制 fine（MIN_WGS=999999）对大 M wgrad **大退**（3740→1376 G）
+  ——fine 只适合网格饥饿小形状，勿对 M=8k 滥用。
+- 关键文件：`engine/shaders/matmul_tiled.comp`（fetch/commit + 旧式 SWZ）。
+- 产物：`build/t5_fetchcommit_ab.txt`、`build/t5_swz_new_ab.txt`。
