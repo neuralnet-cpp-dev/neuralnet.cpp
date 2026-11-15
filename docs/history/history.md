@@ -6315,3 +6315,27 @@ DSL 完成（与 AdamWQuant 逐位一致）；参数更新用重建值 m̂ = sm�
 - 产物（已清理）：原 `build/ab/invert/*` 实验树已删；数字以本条为准。
 - 关键文件：`expr_glsl_gen.hpp`（invert_kv）、`kernel_cache.hpp`（genver）、
   `expr_graph_test.cpp`（Ash 断言）。
+
+# batched_matmul 移植 bank swizzle（2026-11-15）
+
+- 类型：性能 A/B（GEMM 线 1a；复核包落地第一步）
+- 背景：外部复核（审查报告 + shaders_perf_targets_v2）确认 batched 13 处 shared 写
+  无 swizzle；`mm_swz.glsl` 新式标量散布 4→1 way（BK=16 且 SLOTS≥8）。
+- 落地：`batched_matmul.comp` 纯移植（写读同式 involution，零逻辑改动）+
+  新增 `mm_swz.glsl` + CMake DEPENDS 补 include。
+- 同窗 A/B（40HX，layer_bench --op batched_matmul，warmup 20，3 轮；
+  NEW 剔 b8 冷启动 5.283）：
+  | 形状 | base ms | new ms | Δ |
+  |---|---|---|---|
+  | b1 1024³ | 0.883 | 0.874 | −1.1% |
+  | b8 1024³ | 4.295 | 4.280 | −0.3% |
+  | 小形状 | — | — | 噪声内略负，不采信 |
+  **判定：中性**——未复现 op 级 matmul_tiled 的 +2.5~3.2%（batched 的
+  wall-clock 可能被 submit/batch 索引摊薄）。
+- 逐位：强制删 spv/hpp 重编后 BASE/NEW hash 同为 `814ebdbe14869c4d`。
+- 验证：expr_gpu_test ALL PASS；gpt_test --gpu 0 failure。
+- 处置：**保留**（逐位安全、无回退、与 tiled 同式对齐）；**不据此推
+  q/tiled 换新式**——tiled 现行仍是旧式 `(k>>2)&mask`，升式须单独 A/B。
+- 关键文件：`engine/shaders/{batched_matmul.comp,mm_swz.glsl}`、`engine/CMakeLists.txt`。
+- 复核包：`build/gemm_review_pkg/shaders_perf_targets_v2/`（v2 源码与检查脚本
+  未入仓）；A/B 原始数据 `build/t5_batched_swizzle_ab.txt`。
