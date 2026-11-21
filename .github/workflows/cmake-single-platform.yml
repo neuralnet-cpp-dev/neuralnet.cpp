@@ -50,14 +50,19 @@ jobs:
     # 标准库 ABI 不匹配（std::__cxx11::* 未定义）。编译产物由 ccache 缓存。
 
     # ========== Linux: 安装 LLVM Clang + Ninja ==========
+    # ⚠ 显式装 Clang 23：apt.llvm.org 的 llvm.sh 默认 CURRENT_LLVM_STABLE=22，
+    # 在 modules 实例化 exstl::ThreadPool::parallel_for_samples 时会误报
+    # 「num_samples cannot be implicitly captured in a lambda」（诊断行号落在
+    # lambda 之前的普通语句上；Clang 23 本地不复现）。与本机/Windows 口径对齐。
     - name: Install Clang & Ninja (Linux)
       if: runner.os == 'Linux'
       run: |
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
-        sudo ./llvm.sh all
-        sudo ln -sf $(ls /usr/bin/clang-[0-9]* | sort -V | tail -n1) /usr/bin/clang
-        sudo ln -sf $(ls /usr/bin/clang++-[0-9]* | sort -V | tail -n1) /usr/bin/clang++
+        sudo ./llvm.sh 23
+        sudo ln -sf $(ls /usr/bin/clang-23 | head -n1) /usr/bin/clang
+        sudo ln -sf $(ls /usr/bin/clang++-23 | head -n1) /usr/bin/clang++
+        clang++ --version
         # 不安装/不指定 libc++：标准库一律使用编译器默认（Linux clang/gcc 默认
         # libstdc++）。若编译与链接两侧标准库不一致，链接期会出现大量 std 符号
         # ABI 不匹配（std::__cxx11::* 未定义）。
@@ -334,9 +339,10 @@ jobs:
       run: |
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
-        sudo ./llvm.sh all
-        sudo ln -sf $(ls /usr/bin/clang-[0-9]* | sort -V | tail -n1) /usr/bin/clang
-        sudo ln -sf $(ls /usr/bin/clang++-[0-9]* | sort -V | tail -n1) /usr/bin/clang++
+        sudo ./llvm.sh 23
+        sudo ln -sf /usr/bin/clang-23 /usr/bin/clang
+        sudo ln -sf /usr/bin/clang++-23 /usr/bin/clang++
+        clang++ --version
         sudo apt-get install -y ninja-build
 
     - name: Configure engine (CPU-only, tests ON)
