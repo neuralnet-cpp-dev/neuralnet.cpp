@@ -6,7 +6,7 @@
 >
 > **不覆盖**：引擎内部实现（`*_impl`、shader、内存池算法）、Layer/Loss/Optimizer 的算法语义、IR/代码生成管线细节。这些见 §23"相关文档"。
 >
-> **版本锚**：以 `include/neuralnet.cpp/compute_engine.hpp`（2021 行）、`expr_dsl.hpp`（1655 行）、`compute_tensor.hpp`、`precision.hpp`、`core_config.hpp`、`core_errors.hpp` 的当前实现为准。任何与本手册不符的代码行为以源码为准，并请同步修订本手册。
+> **版本锚**：以 `include/neuralnet.cpp/compute_engine.hpp`（2021 行）、`expr_dsl.hpp`（1655 行）、`compute_tensor.hpp`、`precision.hpp`、`core_config.hpp`、`exstl/errors.hpp` 的当前实现为准。任何与本手册不符的代码行为以源码为准，并请同步修订本手册。
 > **读者**：要用本库跑训练/推理的调用者。总索引见 [`../README.md`](../README.md)；历史归档在 [`../history/history.md`](../history/history.md)。
 > **状态**：现行。
 

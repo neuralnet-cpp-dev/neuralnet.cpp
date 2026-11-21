@@ -23,10 +23,21 @@
 #include <vector>
 
 #include <exstl/errors.hpp>   // 跨仓
-#include <neuralnet.cpp/model_keyvalue_record.hpp>   // 跨仓
+#include <kvrec/kvrecord.hpp>  // kvrec
 
 namespace nn
 {
+// kvrec 实体（扁平 submodule）——裸名解析
+using kvrec::KeyValueRecord;
+using kvrec::kvrec_memory_source;
+namespace detail
+{
+using kvrec::detail::append_u32;
+using kvrec::detail::append_u64;
+using kvrec::detail::take_u32;
+using kvrec::detail::take_u64;
+}  // namespace detail
+
 
 // ── 文件标签 ─────────────────────────────────────────────────────────
 inline constexpr char NNVOCAB_MAGIC[4] = {'N', 'N', 'V', 'C'};

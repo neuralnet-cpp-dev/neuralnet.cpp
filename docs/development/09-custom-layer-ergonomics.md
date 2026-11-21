@@ -64,7 +64,7 @@ out = x + scale · (B · h)      B: (dim, rank)   B 初始化为 0 ⇒ 初始为
 
 | # | 问题 | 严重度 | 坐标 |
 |---|---|---|---|
-| 2.1 | `NN_UNWRAP` 名为 CHECK 实为 unwrap，丢弃返回值还需 `(void)` | 高 | `core_errors.hpp:201` |
+| 2.1 | `NN_UNWRAP` 名为 CHECK 实为 unwrap，丢弃返回值还需 `(void)` | 高 | `exstl/errors.hpp:201` |
 | 2.2 | "造张量"存在两套失败协议（`Tensor`+`valid()` vs `Result<Tensor>`） | 高 | `compute_engine.hpp:298/308/335` |
 | 2.3 | 无"写自定义层"文档，四条契约全靠读源码 | 高 | `docs/usage/` 无对应篇章 |
 | 2.4 | 精度 profile 无自检（C7 类静默失效的成因） | 高 | `compute_layer_base.hpp:212` |
@@ -75,7 +75,7 @@ out = x + scale · (B · h)      B: (dim, rank)   B 初始化为 0 ⇒ 初始为
 ### 2.1 `NN_UNWRAP` 名为 CHECK 实为 unwrap（严重度：高）
 
 **现象**：`NN_UNWRAP(x)` 的定义是"失败即 abort，成功返回**解包后的 `T`**"
-（`core_errors.hpp:201`），不是断言宏。使用者按"断言"直觉写：
+（`exstl/errors.hpp:201`），不是断言宏。使用者按"断言"直觉写：
 
 ```cpp
 auto x = NN_UNWRAP(engine.from_matrix(m));   // x 已经是 Tensor，不是 Result<Tensor>
@@ -83,7 +83,7 @@ x.rows();                                   // OK
 *x;                                         // 编译错误（我实际写的形态）
 ```
 
-一次触发 **12 个编译错误**，报错却指向 `core_errors.hpp` 内部
+一次触发 **12 个编译错误**，报错却指向 `exstl/errors.hpp` 内部
 （`no matching function for call to 'check_value'`、
 `member reference type 'nn::Tensor' is not a pointer`），而不是指向使用者写错的那一行。
 

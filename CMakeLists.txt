@@ -376,6 +376,11 @@ endif()
 # 不再各自嵌套、不再在 abstraction 里存副本。
 add_subdirectory(exstl)
 
+# ── KVRecord（扁平 submodule：自描述键值记录 v1/v2）─────────────────────────
+# 单一真源在 kvrec/；engine kernel_cache 与主仓数据集/模型头都只消费
+# kvrec::kvrec。依赖 exstl（须先 add_subdirectory(exstl)）。
+add_subdirectory(kvrec)
+
 # ── 公共 INTERFACE 库：所有目标共享 include 目录和链接库 ──────────────
 # 通过 INTERFACE 库消除 7 个目标的重复设置
 add_library(nn_core INTERFACE)
@@ -391,13 +396,12 @@ add_library(nn_core INTERFACE)
 # compute_cpu/gpu_engine / expr_emitter / expr_glsl_gen / backend/*，不进本列表）。
 # 消费侧头（层/模型/训练/数据集/分词器/优化器）单一真源在主仓库 include/，
 # 引擎测试也已改为引用该目录。
-# model_keyvalue_record 为 engine kernel_cache 与主仓共用的 MIT 值类型，
-# 单一真源在抽象层（engine/abstraction/include/neuralnet.cpp/）。
+# KVRecord 已迁扁平 submodule kvrec/——闭包路径指向 kvrec/include/kvrec/。
 target_include_directories(nn_core INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-target_link_libraries(nn_core INTERFACE exstl::exstl Threads::Threads)
+target_link_libraries(nn_core INTERFACE exstl::exstl kvrec::kvrec Threads::Threads)
 if(NN_STACKTRACE_LIB)
     target_link_libraries(nn_core INTERFACE ${NN_STACKTRACE_LIB})
 endif()
@@ -530,10 +534,12 @@ endfunction()
 # 重编，少列会在头改动后**静默用旧 BMI**（比编译慢更糟）。
 # ⚠ foundation（原 core_errors/assert/threadpool/parallel/observer_ptr/宏岛）
 #   已迁扁平 submodule exstl/——闭包路径指向 exstl/include/exstl/。
+#   KVRecord 已迁扁平 submodule kvrec/——闭包路径指向 kvrec/include/kvrec/。
 #   其余 abstraction 头仍在 engine/abstraction/include。
 #   nn_add_module 会把 HEADERS 拼到 ${NN_LIB_SOURCE_DIR}/ 前 → 这里用相对路径。
 set(NN_ABST_INC engine/abstraction/include/neuralnet.cpp)
 set(NN_EXSTL_INC exstl/include/exstl)
+set(NN_KVREC_INC kvrec/include/kvrec)
 set(NN_MOD_CORE_HEADERS
     ${NN_EXSTL_INC}/assert.hpp
     ${NN_EXSTL_INC}/observer_ptr.hpp
@@ -547,16 +553,16 @@ set(NN_MOD_CORE_HEADERS
     ${NN_ABST_INC}/precision.hpp
     ${NN_EXSTL_INC}/error_macros.hpp
     ${NN_EXSTL_INC}/env.hpp)
-# kvrecord 闭包 = 自身 + core（model_keyvalue_record → errors）
+# kvrecord 闭包 = 自身 + core（kvrecord.hpp → exstl errors）
 set(NN_MOD_KVRECORD_HEADERS
-    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    ${NN_KVREC_INC}/kvrecord.hpp
     ${NN_MOD_CORE_HEADERS})
 # dataset 闭包 = dataset/dataset_format + kvrecord + core_file/core_sha256/errors
 #   （dataset 不依赖 threadpool/parallel/config/precision/assert，无需全 core）
 set(NN_MOD_DATASET_HEADERS
     include/neuralnet.cpp/dataset.hpp
     include/neuralnet.cpp/dataset_format.hpp
-    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    ${NN_KVREC_INC}/kvrecord.hpp
     ${NN_EXSTL_INC}/errors.hpp
     ${NN_EXSTL_INC}/error_macros.hpp
     include/neuralnet.cpp/core_file.hpp
@@ -576,7 +582,7 @@ set(NN_MOD_TOKENIZER_HEADERS
     ${NN_EXSTL_INC}/assert.hpp
     ${NN_ABST_INC}/precision.hpp
     include/neuralnet.cpp/dataset_format.hpp
-    ${NN_ABST_INC}/model_keyvalue_record.hpp)
+    ${NN_KVREC_INC}/kvrecord.hpp)
 
 # ── P4 新域闭包（35 号）：跨域头改动触发对应 BMI 重编；宁多勿少 ──────────
 # 由头包含图解析生成（expr 22 / engine 25 / layer 22 / loss 10 / opt 12 /
@@ -630,7 +636,7 @@ set(NN_MOD_ENGINE_HEADERS
     engine/abstraction/include/neuralnet.cpp/precision.hpp
     engine/abstraction/include/neuralnet.cpp/ternary_pack.hpp
     exstl/include/exstl/error_macros.hpp
-    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    ${NN_KVREC_INC}/kvrecord.hpp
 )
 set(NN_MOD_LAYER_HEADERS
     exstl/include/exstl/assert.hpp
@@ -651,7 +657,7 @@ set(NN_MOD_LAYER_HEADERS
     include/neuralnet.cpp/compute_layer_softmax.hpp
     include/neuralnet.cpp/compute_layer_transformer.hpp
     include/neuralnet.cpp/compute_position_encoding.hpp
-    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    ${NN_KVREC_INC}/kvrecord.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
     include/neuralnet.cpp/tensor_schema.hpp
@@ -663,7 +669,7 @@ set(NN_MOD_LOSS_HEADERS
     exstl/include/exstl/error_macros.hpp
     include/neuralnet.cpp/compute_layer_base.hpp
     include/neuralnet.cpp/compute_loss.hpp
-    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    ${NN_KVREC_INC}/kvrecord.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
     include/neuralnet.cpp/tensor_schema.hpp
@@ -677,7 +683,7 @@ set(NN_MOD_OPT_HEADERS
     include/neuralnet.cpp/compute_layer_base.hpp
     include/neuralnet.cpp/compute_optimizer.hpp
     include/neuralnet.cpp/lr_scheduler.hpp
-    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    ${NN_KVREC_INC}/kvrecord.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
     include/neuralnet.cpp/tensor_schema.hpp
@@ -706,7 +712,7 @@ set(NN_MOD_MODEL_HEADERS
     include/neuralnet.cpp/core_file.hpp
     include/neuralnet.cpp/core_sha256.hpp
     include/neuralnet.cpp/model_container.hpp
-    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    ${NN_KVREC_INC}/kvrecord.hpp
     include/neuralnet.cpp/model_serialization.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
@@ -751,7 +757,7 @@ set(NN_MOD_TRAIN_HEADERS
     include/neuralnet.cpp/domain_tokenizer_charbpe.hpp
     include/neuralnet.cpp/lr_scheduler.hpp
     include/neuralnet.cpp/model_container.hpp
-    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    ${NN_KVREC_INC}/kvrecord.hpp
     include/neuralnet.cpp/model_serialization.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
@@ -789,7 +795,7 @@ set(NN_MOD_DOMAIN_HEADERS
     include/neuralnet.cpp/domain_mnist.hpp
     include/neuralnet.cpp/domain_rla.hpp
     include/neuralnet.cpp/model_container.hpp
-    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    ${NN_KVREC_INC}/kvrecord.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
     include/neuralnet.cpp/tensor_schema.hpp
@@ -860,7 +866,7 @@ set(NN_MOD_CLI_HEADERS
     include/neuralnet.cpp/domain_tokenizer_charbpe.hpp
     include/neuralnet.cpp/lr_scheduler.hpp
     include/neuralnet.cpp/model_container.hpp
-    ${NN_ABST_INC}/model_keyvalue_record.hpp
+    ${NN_KVREC_INC}/kvrecord.hpp
     include/neuralnet.cpp/model_serialization.hpp
     include/neuralnet.cpp/model_spec.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
@@ -986,6 +992,7 @@ function(nn_bmi_compile_flags out_var)
     list(APPEND _flags "$<$<TARGET_EXISTS:nn_gpu>:-DNN_GPU_ENGINE=1>")
     list(APPEND _flags
         -I "${NN_LIB_SOURCE_DIR}/exstl/include"
+        -I "${NN_LIB_SOURCE_DIR}/kvrec/include"
         -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp"
         -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include"
         -I "${NN_LIB_SOURCE_DIR}/include")
@@ -1124,7 +1131,8 @@ endfunction()
 # src/*.cpp（含测试聚合体）一律经 `import nn.*` 取声明（P5/D8）；残留
 # `#include <neuralnet.cpp/…>` 会绕过模块边界（GMF 文本包含 + import 同实体
 # 的 ODR 隐患），且自 D8 起已无任何必要。合法例外：`<exstl/error_macros.hpp>`
-#（宏岛头，宏不可导出）与 STL）。
+#（宏岛头，宏不可导出）、`<kvrec/kvrecord.hpp>`（独立库头，可直接 include）
+# 与 STL）。
 if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     file(GLOB _nn_src_files CONFIGURE_DEPENDS src/*.cpp)
     foreach(_f IN LISTS _nn_src_files)
@@ -1133,7 +1141,7 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
             message(FATAL_ERROR
                 "[nn-gate] ${_f} 残留文本 include 库头：src/ 已全量 import 化"
                 "（35 号 D8，P5），请改用 `import nn.*`（合法 include 仅"
-                " `<exstl/...>` 与 STL）")
+                " `<exstl/...>`、`<kvrec/...>` 与 STL）")
         endif()
     endforeach()
 endif()

@@ -13,6 +13,10 @@ module;
 #include <neuralnet.cpp/kernel_cache.hpp>
 export module nn.engine;
 export import nn.core;
+// kernel_cache 公开 API 用到的 KVRecord 类型（实体在 kvrec submodule）
+export using kvrec::KeyValueRecord;
+export using kvrec::KvReadAt;
+export using kvrec::kvrec_memory_source;
 export namespace nn {
     namespace trit_pack {
         using nn::trit_pack::code_of;
@@ -37,13 +41,10 @@ export namespace nn {
     using nn::ExprSegment;
     using nn::InferenceScope;
     using nn::InitSpec;
-    using nn::KeyValueRecord;
     using nn::create_gpu_engine;
     using nn::download_span;
     using nn::download_vector;
     using nn::kInitSeed;
-    using nn::KvReadAt;
-    using nn::kvrec_memory_source;
     using nn::last_error;
     using nn::upload_span;
     namespace fused {

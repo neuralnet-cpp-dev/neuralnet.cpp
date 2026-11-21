@@ -20,11 +20,14 @@
 #include <utility>
 #include <vector>
 
-#include <neuralnet.cpp/model_keyvalue_record.hpp>
+#include <kvrec/kvrecord.hpp>
 #include "rl_experience.hpp"
 
 namespace nn
 {
+// kvrec 实体（扁平 submodule）——裸名解析
+using kvrec::KeyValueRecord;
+
 
 class DeterministicRng
 {

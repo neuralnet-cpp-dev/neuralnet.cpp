@@ -45,11 +45,14 @@
 
 #include <neuralnet.cpp/core_config.hpp>           // nn::Scalar
 #include <exstl/errors.hpp>           // exstl::Result / EX_FAIL / EX_TRY
-#include <neuralnet.cpp/model_keyvalue_record.hpp> // nn::KeyValueRecord
+#include <kvrec/kvrecord.hpp> // kvrec::KeyValueRecord
 #include <neuralnet.cpp/precision.hpp>             // nn::Precision / nn::PrecisionProfile
 
 namespace nn
 {
+// kvrec 实体（扁平 submodule）——裸名解析
+using kvrec::KeyValueRecord;
+
 // ── 浮点字段的落盘编码（double 位模式装进 u64）──────────────────────────
 [[nodiscard]] inline std::uint64_t frac_to_bits(double v) noexcept
 { return std::bit_cast<std::uint64_t>(v); }

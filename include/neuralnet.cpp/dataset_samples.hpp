@@ -37,6 +37,9 @@
 
 namespace nn
 {
+// kvrec 实体（扁平 submodule）——裸名解析
+using kvrec::KeyValueRecord;
+
 
 // 窗口化策略（训练策略，留在数据装配层；不进入 `.nndataset` 文件格式）。
 struct TextWindowConfig

@@ -11,12 +11,13 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <kvrec/kvrecord.hpp>
 
 import nn.kvrecord;
 import nn.engine;
-using nn::detail::append_u64;
-using nn::detail::append_u32;
-using nn::KeyValueRecord;
+using kvrec::detail::append_u64;
+using kvrec::detail::append_u32;
+using kvrec::KeyValueRecord;
 
 namespace
 {
@@ -68,18 +69,18 @@ void test_v1_unknown_type_skipped()
 {
     std::printf("v1 未知类型跳过:\n");
     std::string bytes;
-    nn::detail::append_u32(bytes, 2);            // field_count
+    kvrec::detail::append_u32(bytes, 2);            // field_count
     // field 0: "keep", UInt(0) = 7
-    nn::detail::append_u32(bytes, 4);
+    kvrec::detail::append_u32(bytes, 4);
     bytes.append("keep");
     bytes.push_back(0);
-    nn::detail::append_u32(bytes, 8);
-    nn::detail::append_u64(bytes, 7);
+    kvrec::detail::append_u32(bytes, 8);
+    kvrec::detail::append_u64(bytes, 7);
     // field 1: "future", type=9（未知），value_len=5
-    nn::detail::append_u32(bytes, 6);
+    kvrec::detail::append_u32(bytes, 6);
     bytes.append("future");
     bytes.push_back(9);
-    nn::detail::append_u32(bytes, 5);
+    kvrec::detail::append_u32(bytes, 5);
     bytes.append("12345");
 
     auto rec_r = KeyValueRecord::parse(bytes);
@@ -130,7 +131,7 @@ void test_v2_roundtrip()
 
     // base = 8（模拟 .nnvocab：标签 8 字节后才是记录）
     const std::string file = std::string("NNVCxxxx") + root.serialize_v2(8);
-    auto p8_r = KeyValueRecord::parse_at(nn::kvrec_memory_source(file), 8);
+    auto p8_r = KeyValueRecord::parse_at(kvrec::kvrec_memory_source(file), 8);
     expect(static_cast<bool>(p8_r), "v2 base=8（带文件标签）parse 成功");
     if (p8_r)
     {
@@ -154,27 +155,27 @@ void test_v2_unknown_type_skipped()
     const std::uint32_t field_count = 3;
     // 字段表 = field_count(4) + 哨兵(30) + "keep" 头(4+4+1+8) + "future" 头(4+6+1+8)
     const std::uint64_t table = 4 + 30 + (4 + 4 + 1 + 8) + (4 + 6 + 1 + 8);
-    nn::detail::append_u32(bytes, field_count);
+    kvrec::detail::append_u32(bytes, field_count);
     // 哨兵（v1 内联）
-    nn::detail::append_u32(bytes, 13);
+    kvrec::detail::append_u32(bytes, 13);
     bytes.append("kvrec_version");
     bytes.push_back(0);
-    nn::detail::append_u32(bytes, 8);
-    nn::detail::append_u64(bytes, 2);
+    kvrec::detail::append_u32(bytes, 8);
+    kvrec::detail::append_u64(bytes, 2);
     // field 1: "keep" UInt，addr = table
-    nn::detail::append_u32(bytes, 4);
+    kvrec::detail::append_u32(bytes, 4);
     bytes.append("keep");
     bytes.push_back(0);
-    nn::detail::append_u64(bytes, table);
+    kvrec::detail::append_u64(bytes, table);
     // field 2: "future" type=7（未知），addr = table + 16
-    nn::detail::append_u32(bytes, 6);
+    kvrec::detail::append_u32(bytes, 6);
     bytes.append("future");
     bytes.push_back(7);
-    nn::detail::append_u64(bytes, table + 16);
+    kvrec::detail::append_u64(bytes, table + 16);
     // 数据块（连续）
-    nn::detail::append_u64(bytes, 8);
-    nn::detail::append_u64(bytes, 123);
-    nn::detail::append_u64(bytes, 3);
+    kvrec::detail::append_u64(bytes, 8);
+    kvrec::detail::append_u64(bytes, 123);
+    kvrec::detail::append_u64(bytes, 3);
     bytes.append("abc");
 
     auto rec_r = KeyValueRecord::parse(bytes);
@@ -200,7 +201,7 @@ void test_v2_relocation_rejected()
 
     // 原地（base=8 且按文件解析）依然成功——排除"解析器本身坏了"的误报
     const std::string file = std::string("NNVCxxxx") + at8;
-    auto ok_r = KeyValueRecord::parse_at(nn::kvrec_memory_source(file), 8);
+    auto ok_r = KeyValueRecord::parse_at(kvrec::kvrec_memory_source(file), 8);
     expect(static_cast<bool>(ok_r), "正确基址下同一字节解析成功");
 }
 

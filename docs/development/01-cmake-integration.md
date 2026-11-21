@@ -249,7 +249,7 @@ src/ 全量 import 化。动机与实测结论见 `research/modules-import-nn/RE
   BMI 挂进每个源文件编译边**（真实依赖，见 §8 第 4 条）+ 绕开 ccache launcher。
   残留 `#include <neuralnet.cpp/…>` 由 configure 期 `nn-gate` 门禁拦截（P6-2）。
 - **硬约束**：宏（`NN_TRY` / `NN_UNWRAP` 等）不可导出 → 消费方显式 include **宏岛头**
-  `nn_error_macros.hpp`（P2/D3 拆出，`core_errors.hpp`/`core_assert.hpp` 经它提供宏）；
+  `exstl/error_macros.hpp`（P2/D3 拆出，`exstl/errors.hpp`/`exstl/assert.hpp` 经它提供宏）；
   STL 留在全局片段 → 消费方自带用到的 STL 头（缺了会报 "missing '#include'"）。`NN_EXPR_SCAN`
   宏收集链已随 P3 拆除（AOT 收集由运行期 JIT 预热替代，35 号 D4），无域再依赖该宏。
 - **嵌入消费方**：`add_subdirectory` 后 `neuralnet::nn` 门面照常（`#include <nn.hpp>` 文本

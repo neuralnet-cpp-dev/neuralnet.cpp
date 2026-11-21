@@ -77,10 +77,10 @@ f32↔f16 的转换一律 **round-half-to-even**；`static_cast<float>(nn::f16)`
 
 ### 1.3 错误处理宏（唯一一族，无异常）
 
-> **宏来源**（P2/D3 起）：宏段唯一真源 = 宏岛头 **`nn_error_macros.hpp`**（`engine/abstraction/
-> include/` 下、不带 `neuralnet.cpp/` 前缀）；`core_errors.hpp` / `core_assert.hpp` 均 include
+> **宏来源**（P2/D3 起）：宏段唯一真源 = 宏岛头 **`exstl/error_macros.hpp`**（`engine/abstraction/
+> include/` 下、不带 `neuralnet.cpp/` 前缀）；`exstl/errors.hpp` / `exstl/assert.hpp` 均 include
 > 它提供宏。宏不可随 C++ 模块导出（预处理器无模块边界）——`import nn.*` 的消费方必须显式
-> `#include <nn_error_macros.hpp>`（`src/` 已全量如此；它是唯一被允许文本 include 的库件）。
+> `#include <exstl/error_macros.hpp>`（`src/` 已全量如此；它是唯一被允许文本 include 的库件）。
 
 ```cpp
 nn::Result<T>  = std::expected<T, nn::Error>;   // Error 含 .message
@@ -858,7 +858,7 @@ nn::TextCorpus test  = NN_UNWRAP(ds.load_text(nn::DatasetSubset::Test));   // te
 std::uint64_t n_docs = ds.doc_count(nn::DatasetSubset::Train);   // 存储单位 = doc
 nn::TextDoc doc0 = NN_UNWRAP(ds.text_doc(nn::DatasetSubset::Train, 0));  // 单 doc（检查/调试）
 
-const nn::KeyValueRecord& vocab = ds.vocab_kvrec();      // 词表（模型 v6 内嵌词表来源）
+const kvrec::KeyValueRecord& vocab = ds.vocab_kvrec();      // 词表（模型 v6 内嵌词表来源）
 ```
 
 `nn::TextCorpus { token_flow, doc_ids, loss_mask }`——三者都是扁平数组，
@@ -1063,12 +1063,12 @@ nn::prof::dump(stdout);       // 进程结束前打表（stage / op / GPU / per-
 
 - `NN_UNWRAP` = **解包 + 失败终止**（不是断言）；`NN_TRY` = **声明 + 传播**。
 - 断言后仍会**使用被校验对象**（解引用 / 索引 / 除零）的点位，一律用 `NN_ASSERT_ALWAYS` /
-  `NN_FATAL`（`core_assert.hpp`，与构建类型无关）；`NN_ASSERT` 是"可选诊断"（NDEBUG 展开为空），
+  `NN_FATAL`（`exstl/assert.hpp`，与构建类型无关）；`NN_ASSERT` 是"可选诊断"（NDEBUG 展开为空），
   只留给失败也不影响后续正确性的检查。
-- **宏来源**（P2/D3 起）：宏段唯一真源 = 宏岛头 **`nn_error_macros.hpp`**（`engine/abstraction/
-  include/` 下、**不带 `neuralnet.cpp/` 前缀**）；`core_errors.hpp` / `core_assert.hpp` 均
+- **宏来源**（P2/D3 起）：宏段唯一真源 = 宏岛头 **`exstl/error_macros.hpp`**（`engine/abstraction/
+  include/` 下、**不带 `neuralnet.cpp/` 前缀**）；`exstl/errors.hpp` / `exstl/assert.hpp` 均
   include 它提供宏。宏不可随 C++ 模块导出（预处理器无模块边界）——`import nn.*` 的消费方
-  必须显式 `#include <nn_error_macros.hpp>`（`src/` 已全量如此；仅该头合法文本 include 库件）。
+  必须显式 `#include <exstl/error_macros.hpp>`（`src/` 已全量如此；仅该头合法文本 include 库件）。
 
 失败协议要记牢（与 `create_tensor` 的"无效张量"不同）：
 `from_matrix` / `clone` / `cast` / `reshape` / 各类运算 / `model.forward` / `backward` 返回
@@ -1120,7 +1120,7 @@ nn::prof::dump(stdout);       // 进程结束前打表（stage / op / GPU / per-
 nn::load_text_file(path);          // 读整个文本文件（Result<std::string>）
 nn::sha256_hex(data);              // SHA-256 十六进制摘要（数据集 source.sha256 用它）
 nn::parse_number<int>("123");      // 字符串 → 数值（Result<T>）
-nn::KeyValueRecord rec;            // 自描述键值记录（模型 spec 头 / .nnvocab 的容器）
+kvrec::KeyValueRecord rec;            // 自描述键值记录（模型 spec 头 / .nnvocab 的容器）
 rec.set("key", uint64_t{1});
 rec.set("name", std::string("x"));
 uint64_t v = 0;

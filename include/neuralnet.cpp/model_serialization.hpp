@@ -27,13 +27,16 @@
 #include "ternary_pack.hpp"               // 三值打包编解码（引擎 .so 化后不再传递包含）
 #include <neuralnet.cpp/core_sha256.hpp>  // 整文件校验和（P2-1）
 #include "model_spec.hpp"
-#include <neuralnet.cpp/model_keyvalue_record.hpp>
+#include <kvrec/kvrecord.hpp>
 #include "train_state.hpp"  // 训练状态段（P1-2）
 #include "compute_layer.hpp"
 #include "model_container.hpp"
 
 namespace nn
 {
+// kvrec 实体（扁平 submodule）——裸名解析
+using kvrec::KeyValueRecord;
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  二进制文件格式（v8，自描述规格头）

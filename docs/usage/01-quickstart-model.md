@@ -208,7 +208,7 @@ int main() {
 }
 ```
 
-> **三种错误处理语义怎么选**（完整定义见 `core_errors.hpp` 宏注释 / AGENTS.md 铁律 #1）：
+> **三种错误处理语义怎么选**（完整定义见 `exstl/errors.hpp` 宏注释 / AGENTS.md 铁律 #1）：
 > - 函数**返回 `Result<T>`** 要往上传 → `NN_TRY(decl, expr)`（展开与手写逐字等价）；
 >   要把调用点语境也带上去 → `NN_TRY_MSG(decl, "语境", expr)`；
 > - **任意上下文**（`main` / `void` / 测试）解包并继续，失败即终止 → `NN_UNWRAP(expr[, "语境"])`

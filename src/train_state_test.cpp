@@ -1,4 +1,4 @@
-﻿// ── train_state_test — v8 训练状态段 + 尾部校验和（P1-2 / P2-1）回归 ─────────
+// ── train_state_test — v8 训练状态段 + 尾部校验和（P1-2 / P2-1）回归 ─────────
 //
 // 验收（docs/internal/18-roadmap.md §4.2 P1-2 + §4.3 P2-1、§8.2 门禁 7）：
 //   老文件缺段 = 冷启动语义；save→load→save 逐字节一致；截断/损坏文件明确报错。
@@ -35,6 +35,7 @@
 #define NN_TEST_COUNTER g_fail
 #include "test_common.hpp"
 #include <exstl/errors.hpp>
+#include <kvrec/kvrecord.hpp>
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -208,7 +209,7 @@ void test_kvrec_roundtrip()
     std::cout << "\n── [1] TrainState ⇄ kvrec 往返 ──\n";
     const nn::TextTrainState s = sample_state();
     const std::string bytes = nn::train_state_to_kv(s).serialize();
-    auto kv = nn::KeyValueRecord::parse(bytes);
+    auto kv = kvrec::KeyValueRecord::parse(bytes);
     CHECK(kv.has_value(), "kvrec 解析成功");
     if (!kv) return;
     auto back = nn::train_state_from_kv(*kv);
@@ -218,14 +219,14 @@ void test_kvrec_roundtrip()
           "全字段逐项一致（含精度四槽 / lr_per_epoch / 数据集身份）");
 
     // 缺键 → 默认值（老文件兜底口径）
-    nn::KeyValueRecord empty;
+    kvrec::KeyValueRecord empty;
     auto def = nn::train_state_from_kv(empty);
     CHECK(def.has_value() && (*def)->counters.global_step == 0 &&
               (*def)->recipe.precision.param == nn::Precision::F32 &&
               (*def)->recipe.optimizer == "adam",
           "空 kvrec → 默认值（冷启动语义的兜底）");
     // 非法精度值（BF16 保留位）→ 明确报错
-    nn::KeyValueRecord bad;
+    kvrec::KeyValueRecord bad;
     bad.set("precision_param", static_cast<std::uint64_t>(nn::Precision::BF16));
     auto bad_r = nn::train_state_from_kv(bad);
     CHECK(!bad_r.has_value(), "精度槽为保留值（BF16）→ 报错而不是静默接受");

@@ -125,7 +125,7 @@ export namespace nn { using nn::Tokenizer; using nn::make_tokenizer; /* … */ }
 
 | 约束 | 落地形态 |
 |------|---------|
-| 宏不可导出 | `NN_TRY`/`NN_UNWRAP`/`NN_ASSERT_*` 等经**宏岛头** `engine/abstraction/include/nn_error_macros.hpp`（P2/D3 拆出，`core_errors`/`core_assert` include 它）；消费方显式 include 该头（无 `neuralnet.cpp/` 前缀） |
+| 宏不可导出 | `NN_TRY`/`NN_UNWRAP`/`NN_ASSERT_*` 等经**宏岛头** `exstl/include/exstl/error_macros.hpp`（P2/D3 拆出，`core_errors`/`core_assert` include 它）；消费方显式 include 该头（无 `neuralnet.cpp/` 前缀） |
 | STL 可见性缺口 | 消费方自带用到的 STL 头——实测 `tokenizer_infer` 此前靠 nn.hpp 传递拿到 `<memory>`，切换后需显式补 |
 | 头自包含缺口 | 模块单元按任意顺序包含域头，暴露了 `core_file.hpp` 缺 `<vector>` 的潜在 bug（正常构建靠 include 顺序侥幸通过），已修 |
 

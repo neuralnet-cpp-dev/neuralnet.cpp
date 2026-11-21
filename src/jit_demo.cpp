@@ -17,6 +17,7 @@
 #include <fstream>
 #include <random>
 #include <sstream>
+#include <kvrec/kvrecord.hpp>
 
 import nn.cli;
 import nn.core;
@@ -120,7 +121,7 @@ int main()
         {
             std::ostringstream ss;
             ss << f.rdbuf();
-            auto rec = nn::KeyValueRecord::parse(ss.str());
+            auto rec = kvrec::KeyValueRecord::parse(ss.str());
             if (rec)
             {
                 auto keys = rec->string_keys_with_prefix("kernel.");

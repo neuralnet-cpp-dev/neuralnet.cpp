@@ -28,10 +28,10 @@
 
 | 审查主张 | 复核结论 | 依据 |
 |---|---|---|
-| **P2**：`NN_ASSERT` 在 Release 为空展开 → 断言后继续解引用 = UB | ✅ **成立**（且本仓已有"修法先例"，见 RV-01） | `core_assert.hpp` 的 `NDEBUG` 分支 = `((void)0)`；8 类"断言后继续用"点，见 RV-01 |
+| **P2**：`NN_ASSERT` 在 Release 为空展开 → 断言后继续解引用 = UB | ✅ **成立**（且本仓已有"修法先例"，见 RV-01） | `exstl/assert.hpp` 的 `NDEBUG` 分支 = `((void)0)`；8 类"断言后继续用"点，见 RV-01 |
 | **P1**：`create_tensor` 失败返回**空 Tensor + stderr**，不是 `Result<Tensor>` | ✅ **成立**（代码注释自陈这是契约；同族 `from_matrix` 已是 `Result`） | `compute_engine.hpp::ComputeEngine::create_tensor`；调用面 **115** 处 |
 | **P3**：`GpuBackend` 故意泄漏单例、缺显式 `shutdown()` | ✅ **已修复（2026-10-18，引擎所有权 v2）**：`shared_ptr` keepalive 取代故意泄漏；`GpuBuffer` 持 backend 强引用，`reduce_partial_` 改裸 `VkBuffer` 切断环；进程退出时静态 `shared_ptr` 正常析构并执行 `vkDestroy*` | `backend/compute_vk_backend.hpp`、`backend/compute_gpu_storage.hpp`、`src/layer_lifetime_test.cpp`；history「引擎所有权 v2」 |
-| **P3**：`Tensor` 析构不探测引擎存活 → 悬垂观察者 | ⚠ **部分成立**：当前应用栈安全（引擎严于 Tensor 析构），嵌入场景是风险；`observer_ptr` 无 Debug 校验 | `core_observer_ptr.hpp`（明确"不提供 RAII"） |
+| **P3**：`Tensor` 析构不探测引擎存活 → 悬垂观察者 | ⚠ **部分成立**：当前应用栈安全（引擎严于 Tensor 析构），嵌入场景是风险；`observer_ptr` 无 Debug 校验 | `exstl/observer_ptr.hpp`（明确"不提供 RAII"） |
 | **P4**：绑定不变量靠人肉维护、`NN_BIND_DEBUG` 默认关不可靠 | ✅ 作为"不变量强度"问题**成立**；但**"`NN_BIND_DEBUG` 未走统一探针门 = 违例"标签不当**——AGENTS §2 明确把它列入探针门的**例外**（初始化期读一次并缓存的**行为开关**） | AGENTS §2；`compute_engine.hpp::bind_check_` |
 | AdamW 的 decay / update **顺序依赖**（无数据依赖边） | ✅ **成立**（代码注释自陈"同目标两次 `compute_into`、无数据依赖边"） | `compute_optimizer.hpp::AdamW::step` |
 | 稀疏 CE 原地覆写依赖派发顺序 | ✅ **成立**（注释自陈"派发序：lse → loss_sum → grad"） | `compute_loss.hpp::fused_forward_sparse_` |
@@ -76,7 +76,7 @@
 
 **方案**（三步，可分期）：
 
-1. `core_assert.hpp` 增补 `NN_ASSERT_ALWAYS(cond, msg)`（`NDEBUG` 下**也** `fprintf(file:line) + std::abort()`；
+1. `exstl/assert.hpp` 增补 `NN_ASSERT_ALWAYS(cond, msg)`（`NDEBUG` 下**也** `fprintf(file:line) + std::abort()`；
    Debug 下与 `NN_ASSERT` 同形），并把与 `NN_FATAL(msg)`（无条件终止）配套使用。
 2. 逐点替换：**凡是断言后继续用该条件的点位**一律换 `NN_ASSERT_ALWAYS`；纯诊断（不影响后续正确性）保留 `NN_ASSERT`。
    顺手把 `require_same_shape` 的三段式收敛成宏，避免再抄一遍。
@@ -89,7 +89,7 @@
 **影响面/风险**：只碰错误路径，热路径零成本（与 `require_same_shape` 同价：两次 `size_t` 比较）。
 
 **验收证据（RV-01，2026-10-11）**：
-① `core_assert.hpp` 新增 `NN_ASSERT_ALWAYS(cond, msg)` 与 `NN_FATAL(msg)`（两者
+① `exstl/assert.hpp` 新增 `NN_ASSERT_ALWAYS(cond, msg)` 与 `NN_FATAL(msg)`（两者
 **无条件**终止，格式统一为 `<tag> failed at <file>:<line>: <msg>`，终止走既有
 `detail::fail_abort`——Windows 下 CRT 弹窗/WER 已静音）；`require_same_shape` 的三段式
 收敛成 `snprintf` + `NN_FATAL`（顺带修掉 `std::string_view::data()` 当 NUL 结尾串的隐患）。

@@ -159,14 +159,25 @@ clang-format -i path/to/new_file.hpp
    ③ **发布版本号必须由人提出并明确给出**，agent（AI 编码助手）不得自行决定版本号或执行发布动作（`git tag` / `gh release` 等）。
 2. **一次 PR 一件事**。大改动请先在 issue/讨论里对齐设计——本仓有「先写设计稿进 `docs/internal/`，
    裁定后再实施」的习惯（`docs/internal/` 就是项目开发者的工作区）。
-3. **不再拆分子仓库**（2026-11-01 治理裁定）。此前拆出的 core / threadpool / kvrecord /
-   dataset / tokenizer 五个子仓已合并回本仓单仓库（头文件在 `include/neuralnet.cpp/`、
-   测试在 `src/`），根因是嵌套 submodule 依赖导致"B 被存好几遍"、一次底层改动要在
-   多仓级联 bump。**如未来确需再拆，前置条件是先出现真实的外部独立消费方**，且在
-   issue 里对齐供货方式（不再用嵌套 submodule）后再动手。
+3. **拆子仓 = 高复用叶子库 + 扁平顶层 pin，禁止嵌套 submodule**（2026-11-21 治理更新；
+   承接 2026-11-01「合并回主仓」裁定的前置条件）。已按此拆出并接入：
+   - [`exstl`](https://github.com/neuralnet-cpp-dev/exstl)（foundation：错误宏 / 线程池 / 并行 / `observer_ptr` / env）
+   - [`kvrec`](https://github.com/neuralnet-cpp-dev/kvrec)（KVRecord v1/v2 自描述键值记录）
+   - [`compute.neuralnet.cpp`](https://github.com/neuralnet-cpp-dev/compute.neuralnet.cpp)（引擎，LGPL；原 engine 子仓）
+
+   规则：
+   - **顶层只 pin 这些叶子**（`.gitmodules` 平铺 `engine` / `exstl` / `kvrec`…），**子仓不得再
+     git submodule 别的子仓**——嵌套依赖是 2026-10-30 五仓级联 bump 事故的根因；子仓 CMake
+     只 `add_subdirectory(../sibling)` 或 `find_package` 消费**已存在目标**，不 git pin。
+   - **拆出前提**：出现真实的外部独立消费方（或明确的跨仓复用边界），且在 issue 里对齐
+     供货方式后再动手；dataset / tokenizer 等**仍留主仓**，不为拆而拆。
+   - **无转发头**：迁移用一次性脚本全仓替换（`nn::Result` → `exstl::Result`、
+     `nn::KeyValueRecord` → `kvrec::KeyValueRecord` 同理），不留 `using` 别名层。
+   - 2026-11-01 合并回主仓的 core / threadpool / kvrecord / dataset / tokenizer 五仓中，
+     **kvrecord 已按本规则重新拆出**；dataset / tokenizer 合并结论不变。
 4. 提交前自查：
    ```bash
-   cmake --preset dev && cmake --build --preset dev && ctest --preset dev   # 测试必须绿（当前口径：无 Vulkan 62 项 / 开 GPU 64 项）
+   cmake --preset dev && cmake --build --preset dev && ctest --preset dev   # 测试必须绿（当前口径：Release + tests ON 共 81 项（本机含 GPU 用例））
    python bench/gui_cli_audit.py         # 改了 gui.py / cli_controllers.py / 任一 CLI 选项后必跑（七节：声明式字段表 ↔ Controller 闭包、断点续训禁列、多轮对话闭环；当前 exit 0）
    python bench/gui_draw_logic_audit.py    # 改了画板绘制路径后必跑（桩替换 customtkinter，无需 GUI）
    python bench/gui_draw_runtime_audit.py  # 同上（真机：功能闭环 + 拖动开销对照；无显示时 77 = SKIP）

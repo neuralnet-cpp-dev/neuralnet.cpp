@@ -4,3 +4,6 @@
 [submodule "exstl"]
 	path = exstl
 	url = git@github.com:neuralnet-cpp-dev/exstl.git
+[submodule "kvrec"]
+	path = kvrec
+	url = git@github.com:neuralnet-cpp-dev/kvrec.git

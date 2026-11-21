@@ -28,6 +28,7 @@
 int g_fail = 0;
 
 #include "test_common.hpp"
+#include <kvrec/kvrecord.hpp>
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -115,9 +116,9 @@ constexpr std::size_t kAsstBegin = 101;
 constexpr std::size_t kAsstEnd = 102;
 
 // 手工构造的词表 kvrec（dataset 层不解释词表内容，只要求字节稳定）
-nn::KeyValueRecord make_vocab()
+kvrec::KeyValueRecord make_vocab()
 {
-    nn::KeyValueRecord vocab;
+    kvrec::KeyValueRecord vocab;
     vocab.set("kind", std::string{"bpe"});
     vocab.set("vocab_size", std::uint64_t{320});
     vocab.set("ids", std::vector<std::uint64_t>{0, 1, 2, 3, kAsstBegin, kAsstEnd});

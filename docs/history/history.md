@@ -6520,3 +6520,27 @@ DSL 完成（与 AdamWQuant 逐位一致）；参数更新用重建值 m̂ = sm�
   `build/t5_pool_ab.txt`（修复 A/B）、`build/t5_trace_gaps.py`（trace 分析脚本）。
 - 关联：P2-9（18 号台账，已评估-不做）的"无收益"前提是忙率 95.9%——本轮复测
   忙率仍 ~92%，结论维持；host 线立项可关。
+
+
+# foundation / KVRecord 拆独立库并扁平接入（2026-11-21）
+
+- 类型：架构拆分（治理更新，见 CONTRIBUTING §4.3）
+- **背景**：2026-11-01 五子仓合并回主仓的前置条件是"出现真实外部独立消费方"；
+  exSTL 与 KVRecord 满足该条件后按**扁平顶层 pin、禁止嵌套 submodule** 规则再拆。
+- **exSTL**（`neuralnet-cpp-dev/exstl`，commit f54267c）：foundation 单一真源迁出——
+  `error_macros` / `errors` / `assert` / `threadpool` / `parallel` / `observer_ptr` /
+  `env`；主仓与 engine 全仓 `nn::Result→exstl::Result`、`NN_*→EX_*`、include→
+  `<exstl/...>` 一次性脚本替换，无转发头。`PARALLEL_THRESHOLD` 随 parallel 迁出；
+  `core_env` 只留探针门薄壳（`NN_PROBES_ENABLED` 留主仓）。
+- **kvrec**（`neuralnet-cpp-dev/kvrec`，commit 421cd65）：`model_keyvalue_record.hpp`
+  迁出为 `<kvrec/kvrecord.hpp>`，namespace `nn` → `kvrec`；依赖 exstl。主仓与 engine
+  全仓 `nn::KeyValueRecord→kvrec::KeyValueRecord`、include 切换；engine abstraction
+  删副本，`kernel_cache` 改 include kvrec。CMake：主仓 `add_subdirectory(exstl)` +
+  `add_subdirectory(kvrec)`，`nn_core` 链 `exstl::exstl kvrec::kvrec`；BMI 旗标加
+  `-I kvrec/include`；engine 独立构建从 sibling `../exstl` / `../kvrec` 拉目标。
+- **验收**：kvrec standalone ctest 1/1；主仓 Release + `NN_ENABLE_TESTS=ON` 构建 OK、
+  **ctest 81/81 全绿**；残留 `nn::KeyValueRecord` / 旧 include 扫描 = 0。
+- **关联**：CONTRIBUTING §4.3 由"不再拆分子仓库"改写为"高复用叶子 + 扁平 pin"；
+  旧嵌套仓 `kvrecord.neuralnet.cpp`（依赖 base submodule）不再使用。
+- 关键文件：`kvrec/include/kvrec/kvrecord.hpp`、主仓 `CMakeLists.txt`、
+  `engine/CMakeLists.txt`、`modules/nn.kvrecord.cpp`、`tools/migrate_kvrec.py`。

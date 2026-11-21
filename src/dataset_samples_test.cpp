@@ -26,6 +26,7 @@
 
 #define NN_TEST_COUNTER g_failures
 #include "test_common.hpp"
+#include <kvrec/kvrecord.hpp>
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -235,7 +236,7 @@ void test_missing_test_subset()
 void test_legacy_train_state_key()
 {
     // rc0 断点只有 dataset_windows（同一语义：窗口数 = 样本数）→ 仍可读
-    nn::KeyValueRecord kv;
+    kvrec::KeyValueRecord kv;
     kv.set("dataset_tokens", static_cast<std::uint64_t>(100));
     kv.set("dataset_docs", static_cast<std::uint64_t>(4));
     kv.set("dataset_windows", static_cast<std::uint64_t>(9));

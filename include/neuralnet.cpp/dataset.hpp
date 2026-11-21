@@ -43,10 +43,17 @@
 #include <neuralnet.cpp/core_file.hpp>   // 跨仓
 #include <neuralnet.cpp/core_sha256.hpp>   // 跨仓
 #include "dataset_format.hpp"
-#include <neuralnet.cpp/model_keyvalue_record.hpp>   // 跨仓
+#include <kvrec/kvrecord.hpp>  // kvrec
 
 namespace nn
 {
+// kvrec 实体（扁平 submodule）——裸名解析
+using kvrec::KeyValueRecord;
+namespace detail
+{
+using kvrec::detail::append_u64;
+}  // namespace detail
+
 
 enum class DatasetKind : std::uint64_t
 {

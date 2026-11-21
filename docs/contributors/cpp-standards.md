@@ -264,7 +264,7 @@ graph TB
 | **L3 实现层** | `model_container.hpp`, `model_spec.hpp`, `model_serialization.hpp` | 模型容器 + 序列化 |
 | **L2 计算层** | `compute_layer.hpp`, `compute_loss.hpp`, `compute_optimizer.hpp` | 层/损失/优化器定义（**算法所在层**） |
 | **L1 代数层** | `algebra_matrix.hpp`, `algebra_ops/span.hpp` | 矩阵运算原语（**不含任何算法**） |
-| **L0 硬件层** | `core_config.hpp`, `core_threadpool.hpp` | 并行策略 |
+| **L0 硬件层** | `core_config.hpp`, `exstl/threadpool.hpp` | 并行策略 |
 
 > 层级仅供参考，不强制限制调用方向。**唯一硬约束：Matrix 不得包含任何神经网络算法**（ReLU/GeLU/Softmax/LayerNorm/CrossEntropy/Adam/SGD 等必须放在 L2 计算层）。
 

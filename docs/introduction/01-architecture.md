@@ -246,9 +246,9 @@ class Tensor {
 | 文件 | 职责 |
 |------|------|
 | `core_config.hpp` | `Scalar` 类型定义、`BLOCK_SIZE=64`、`PARALLEL_THRESHOLD`、自适应并行策略 |
-| `core_threadpool.hpp` | 全局线程池，latch 零分配设计，`parallel_for_each` / `parallel_transform` |
-| `core_errors.hpp` | `struct Error { std::string message; }` + `using Result<T> = std::expected<T, Error>` |
-| `core_assert.hpp` | `NN_ASSERT` 宏（L1 层形状校验使用，L2+ 层使用 Result） |
+| `exstl/threadpool.hpp` | 全局线程池，latch 零分配设计，`parallel_for_each` / `parallel_transform` |
+| `exstl/errors.hpp` | `struct Error { std::string message; }` + `using Result<T> = std::expected<T, Error>` |
+| `exstl/assert.hpp` | `NN_ASSERT` 宏（L1 层形状校验使用，L2+ 层使用 Result） |
 | `core_file.hpp` | 文件加载工具 |
 
 ### L1 代数层

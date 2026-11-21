@@ -32,6 +32,9 @@
 
 namespace nn
 {
+// kvrec 实体（扁平 submodule）——裸名解析
+using kvrec::KeyValueRecord;
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  CharBPETokenizer — 字符级 BPE（支持 UTF-8/中文）

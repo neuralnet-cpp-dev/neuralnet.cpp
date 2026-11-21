@@ -27,12 +27,15 @@
 #include <vector>
 
 #include <exstl/errors.hpp>      // exstl::Result（read_kv）
-#include <neuralnet.cpp/model_keyvalue_record.hpp>  // nn::KeyValueRecord（write_kv/read_kv）
+#include <kvrec/kvrecord.hpp>  // kvrec::KeyValueRecord（write_kv/read_kv）
 
 #include "tensor_schema.hpp"
 
 namespace nn
 {
+// kvrec 实体（扁平 submodule）——裸名解析
+using kvrec::KeyValueRecord;
+
 
 // ── 位置编码类型 ─────────────────────────────────────────────────────────
 enum class PosEncodingType : uint32_t

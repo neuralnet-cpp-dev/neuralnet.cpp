@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "test_common.hpp"
+#include <kvrec/kvrecord.hpp>
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -301,7 +302,7 @@ void test_model_spec_roundtrip()
     spec.output_packing = {"policy", "value"};
 
     const std::string bytes = nn::detail::spec_to_kv(spec).serialize();
-    auto kv = nn::KeyValueRecord::parse(bytes);
+    auto kv = kvrec::KeyValueRecord::parse(bytes);
     CHECK(kv.has_value(), "output schema spec kv parses");
     if (!kv) return;
     auto loaded = nn::detail::spec_from_kv(*kv);
@@ -315,13 +316,13 @@ void test_model_spec_roundtrip()
     nn::ModelSpec duplicate_packing = spec;
     duplicate_packing.output_packing = {"policy", "policy"};
     auto malformed = nn::detail::spec_from_kv(
-        *nn::KeyValueRecord::parse(nn::detail::spec_to_kv(duplicate_packing).serialize()));
+        *kvrec::KeyValueRecord::parse(nn::detail::spec_to_kv(duplicate_packing).serialize()));
     CHECK(!malformed, "spec decode rejects duplicate output packing");
 
     nn::ModelSpec old;
     old.emplace<nn::MlpSpec>().layer_dims = {8, 4};
     auto old_loaded = nn::detail::spec_from_kv(
-        *nn::KeyValueRecord::parse(nn::detail::spec_to_kv(old).serialize()));
+        *kvrec::KeyValueRecord::parse(nn::detail::spec_to_kv(old).serialize()));
     CHECK(old_loaded && !old_loaded->output_schema && old_loaded->output_packing.empty(),
           "legacy single-output spec stays schema-free");
 }

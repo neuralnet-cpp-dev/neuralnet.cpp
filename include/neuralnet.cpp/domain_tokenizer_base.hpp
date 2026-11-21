@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <algorithm>
 #include <atomic>
@@ -33,6 +33,9 @@
 
 namespace nn
 {
+// kvrec 实体（扁平 submodule）——裸名解析
+using kvrec::KeyValueRecord;
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  控制台进度条共享构件（tokenizer 训练 / 逐 doc 并行 encode 共用）

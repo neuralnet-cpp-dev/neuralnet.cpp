@@ -1,4 +1,4 @@
-﻿// ── model_spec_validation_test.cpp — ModelSpec 架构校验一致性测试 ──────────
+// ── model_spec_validation_test.cpp — ModelSpec 架构校验一致性测试 ──────────
 //
 // 目的：验证 ModelSpec 架构校验逻辑（load_model 时文件头与模型自身规格比对）。
 //
@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 #include <exstl/errors.hpp>
+#include <kvrec/kvrecord.hpp>
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -310,7 +311,7 @@ int run_test()
     // （而非含糊的 "Unknown" 或静默误解）。见 docs/history/history.md「ZiPT 移除」。
     std::cout << "\n── 已移除模型类型（type=6）拒绝 ──\n";
     {
-        nn::KeyValueRecord kv;
+        kvrec::KeyValueRecord kv;
         kv.set("type", static_cast<uint64_t>(6));
         auto r = nn::detail::spec_from_kv(kv);
         if (r) { expect(false, "type=6（ZiPT）应被拒绝（但解析成功了）", all); }
@@ -335,7 +336,7 @@ int run_test()
         //（**不**回落到新默认 CNN=BatchNorm@Conv、ViT=LayerNorm@Final——
         //  否则旧 checkpoint 的参数布局会错位，加载必败）
         {
-            nn::KeyValueRecord kv;
+            kvrec::KeyValueRecord kv;
             kv.set("type", static_cast<uint64_t>(nn::ModelType::CNN));
             auto r = nn::detail::spec_from_kv(kv);
             expect(bool(r) && r->as<nn::CnnSpec>()->norm_place == nn::NormPlace::None &&
@@ -489,9 +490,9 @@ int run_test()
             }
             [[nodiscard]] std::string summary(const nn::ModelSpec&) const override
             { return "MyNet(hidden=" + std::to_string(hidden) + ")"; }
-            void write_kv(nn::KeyValueRecord& kv) const override
+            void write_kv(kvrec::KeyValueRecord& kv) const override
             { kv.set("hidden", static_cast<std::uint64_t>(hidden)); }
-            [[nodiscard]] exstl::Result<void> read_kv(const nn::KeyValueRecord& kv) override
+            [[nodiscard]] exstl::Result<void> read_kv(const kvrec::KeyValueRecord& kv) override
             {
                 std::uint64_t v = 0;
                 if (kv.get("hidden", v)) hidden = static_cast<std::size_t>(v);
@@ -505,7 +506,7 @@ int run_test()
         nn::ModelSpec mine;
         mine.emplace<MyNetSpec>().hidden = 42;
         const std::string bytes = nn::detail::spec_to_kv(mine).serialize();
-        auto kv = nn::KeyValueRecord::parse(bytes);
+        auto kv = kvrec::KeyValueRecord::parse(bytes);
         expect(bool(kv), "自定义类型 spec kv 可解析", all);
         auto back = kv ? nn::detail::spec_from_kv(*kv) : exstl::Result<nn::ModelSpec>{};
         expect(bool(back) && back->as<MyNetSpec>() != nullptr &&
@@ -516,7 +517,7 @@ int run_test()
         expect(back && nn::spec_summary(*back).find("MyNet(hidden=42)") != std::string::npos,
                "自定义类型 spec_summary 走 summary 虚分发", all);
         // 未知类型名（未注册）→ 明确报错
-        nn::KeyValueRecord bad_kv;
+        kvrec::KeyValueRecord bad_kv;
         bad_kv.set("type", std::string("NoSuchNet"));
         auto bad_r = nn::detail::spec_from_kv(bad_kv);
         expect(!bad_r && bad_r.error().message.find("NoSuchNet") != std::string::npos,

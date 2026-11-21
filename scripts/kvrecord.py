@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """kvrecord.py — KVRecord v1/v2 参考实现（单文件、仅标准库）。
 
-格式规范见 docs/kvrec-format-spec.md；权威实现为 C++ model_keyvalue_record.hpp。
+格式规范见 docs/development/10-kvrecord-format-spec.md；权威实现为 C++ kvrec submodule 的 kvrec/kvrecord.hpp。
 合规口径：dumps_v2() 与 C++ serialize_v2() 逐字节一致；loads() 版本自举
 （哨兵判别 v1/v2）。本实现供纯 Python 数据管线原生读写 .nnvocab/.nngames，
 不再需要 subprocess 桥接 C++ CLI（neuralnet.cpp issue #35）。
