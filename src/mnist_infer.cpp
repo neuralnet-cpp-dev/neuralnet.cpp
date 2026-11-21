@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 #include <cmath>
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -77,7 +77,7 @@ struct InferConfig
     bool jit_warmup = true;      // --no-warmup：跳过 JIT 预热（P3/D5）
 };
 
-nn::Result<InferConfig> parse_args(int argc, char* argv[])
+exstl::Result<InferConfig> parse_args(int argc, char* argv[])
 {
     InferConfig cfg;
     bool has_input = false;
@@ -93,11 +93,11 @@ nn::Result<InferConfig> parse_args(int argc, char* argv[])
         else if (arg == "--model" && i + 1 < argc) { cfg.model_path = argv[++i]; }
         else if (arg == "--topk" && i + 1 < argc)
         {
-            auto v = nn::parse_number<int>(argv[++i]);
-            NN_TRY_CHECK(v);
-            if (*v <= 0) NN_FAIL("--topk 必须为正整数");
+            auto v = exstl::parse_number<int>(argv[++i]);
+            EX_TRY_CHECK(v);
+            if (*v <= 0) EX_FAIL("--topk 必须为正整数");
             if (*v > static_cast<int>(nn::MNIST_NUM_CLASSES))
-                NN_FAIL("--topk 不能超过类别数 " + std::to_string(nn::MNIST_NUM_CLASSES));
+                EX_FAIL("--topk 不能超过类别数 " + std::to_string(nn::MNIST_NUM_CLASSES));
             cfg.topk = *v;
         }
         else if (arg == "--no-warmup")
@@ -117,11 +117,11 @@ nn::Result<InferConfig> parse_args(int argc, char* argv[])
         }
         else
         {
-            NN_FAIL("未知参数: " + arg + "，使用 --help 查看用法");
+            EX_FAIL("未知参数: " + arg + "，使用 --help 查看用法");
         }
     }
 
-    if (!has_input) NN_FAIL("请指定图片文件或目录，使用 --help 查看用法");
+    if (!has_input) EX_FAIL("请指定图片文件或目录，使用 --help 查看用法");
     return cfg;
 }
 
@@ -134,16 +134,16 @@ struct Prediction
 
 // 前向：Matrix → engine.from_matrix → model.forward → engine.to_matrix
 // 后续 softmax / top-k 在 CPU 上完成（单张图片，开销可忽略）
-nn::Result<std::vector<Prediction>> predict_with_confidence(nn::Model& model,
+exstl::Result<std::vector<Prediction>> predict_with_confidence(nn::Model& model,
                                                             nn::ComputeEngine& engine,
                                                             const nn::Matrix& img, int topk)
 {
     auto x_tensor_r = engine.from_matrix(img);
-    NN_TRY_CHECK(x_tensor_r);
+    EX_TRY_CHECK(x_tensor_r);
     auto logits_tensor_r = model.forward(*x_tensor_r);
-    NN_TRY_CHECK(logits_tensor_r);
+    EX_TRY_CHECK(logits_tensor_r);
     auto logits_r = engine.to_matrix(*logits_tensor_r);
-    NN_TRY_CHECK(logits_r);
+    EX_TRY_CHECK(logits_r);
     const auto& logits = *logits_r;
 
     // Softmax 计算概率
@@ -201,15 +201,15 @@ void show_pixels(const nn::Matrix& img)
 }
 
 // ==================== 推理单张图片 ====================
-nn::Result<void> infer_single(nn::Model& model, nn::ComputeEngine& engine,
+exstl::Result<void> infer_single(nn::Model& model, nn::ComputeEngine& engine,
                               const std::string& filepath, const InferConfig& cfg)
 {
     std::ifstream file(filepath);
-    if (!file) NN_FAIL("无法打开文件: " + filepath);
+    if (!file) EX_FAIL("无法打开文件: " + filepath);
     std::string line;
     std::getline(file, line);
     auto img_result = nn::load_image_from_csv_line(line);
-    NN_TRY_CHECK(img_result);
+    EX_TRY_CHECK(img_result);
     auto img = std::move(*img_result);
 
     if (cfg.show_pixels)
@@ -220,7 +220,7 @@ nn::Result<void> infer_single(nn::Model& model, nn::ComputeEngine& engine,
     }
 
     auto results = predict_with_confidence(model, engine, img, cfg.topk);
-    NN_TRY_CHECK(results);
+    EX_TRY_CHECK(results);
     std::cout << fs::path(filepath).filename().string() << " -> ";
     for (std::size_t k = 0; k < results->size(); ++k)
     {
@@ -236,15 +236,15 @@ nn::Result<void> infer_single(nn::Model& model, nn::ComputeEngine& engine,
 int main(int argc, char* argv[])
 {
     auto cfg_result = parse_args(argc, argv);
-    NN_EXIT(cfg_result, 1, "参数错误: ");
+    EX_EXIT(cfg_result, 1, "参数错误: ");
     InferConfig cfg = std::move(*cfg_result);
 
     // ── 从模型文件读取规格（v5/v6/v7 同一 magic，自动按版本分流）──────────
     auto spec_result = nn::peek_any_model_spec(cfg.model_path);
-    NN_EXIT(spec_result, 1, "读取模型文件失败: ");
+    EX_EXIT(spec_result, 1, "读取模型文件失败: ");
     nn::ModelSpec spec = spec_result.value();
     auto role_r = nn::peek_model_role(cfg.model_path);
-    NN_EXIT(role_r, 1, "读取模型文件失败: ");
+    EX_EXIT(role_r, 1, "读取模型文件失败: ");
 
     // 支持的模型类型：MLP、Transformer（ViT）、CNN
     if (spec.is_mlp()) { std::cout << "从模型文件读取规格: MLP\n"; }
@@ -262,7 +262,7 @@ int main(int argc, char* argv[])
     eng_cfg.use_gpu = cfg.gpu_enabled;
     eng_cfg.gpu_device = cfg.gpu_device;
     auto engine_res = nn::cli::create_engine(eng_cfg, std::cout);
-    NN_EXIT(engine_res, 1, "引擎创建失败: ");
+    EX_EXIT(engine_res, 1, "引擎创建失败: ");
     auto engine = std::move(*engine_res);
 
     // ── 构建模型（绑定引擎） ─────────────────────────────────
@@ -272,24 +272,24 @@ int main(int argc, char* argv[])
     const bool inference_only = (*role_r == nn::ModelRole::Model);
     auto build_result = nn::build_mnist_model_from_spec(*engine, spec, nn::PrecisionProfile{},
                                                        inference_only);
-    NN_EXIT(build_result, 1, "构建模型失败: ");
+    EX_EXIT(build_result, 1, "构建模型失败: ");
     auto model = std::move(*build_result);
 
     {
         auto load_result = nn::load_any_model(cfg.model_path, model, nullptr, nullptr);
-        NN_EXIT(load_result, 1, "加载模型失败: ");
+        EX_EXIT(load_result, 1, "加载模型失败: ");
         std::cout << "模型已加载（角色: " << nn::model_role_name(*role_r)
                   << "）: " << cfg.model_path << "\n"
                   << std::endl;
         // 载入期的解码/中转底材已无活跃引用 → 归还整块空闲池底材
-        NN_EXIT(engine->release_idle_pool_blocks(), 1, "显存回收失败: ");
+        EX_EXIT(engine->release_idle_pool_blocks(), 1, "显存回收失败: ");
     }
 
     // ── JIT 预热（P3/D5）：GPU 上 (784,1) 全零 forward → .nnk ─────────────
     {
         nn::Tensor warm_x = engine->create_tensor(784, 1, nn::Precision::F32,
                                                   nn::InitSpec::zero());
-        NN_EXIT(nn::cli::jit_warmup(model, *engine, warm_x, cfg.jit_warmup), 1, "预热失败: ");
+        EX_EXIT(nn::cli::jit_warmup(model, *engine, warm_x, cfg.jit_warmup), 1, "预热失败: ");
     }
 
     // 推理模式：BatchNorm 使用保存的 running 统计量（batch 可能为 1，不能算 batch 统计）
@@ -331,7 +331,7 @@ int main(int argc, char* argv[])
     {
         // 单张推理
         auto result = infer_single(model, *engine, input.string(), cfg);
-        NN_EXIT(result, 1, "推理失败: ");
+        EX_EXIT(result, 1, "推理失败: ");
     }
     else
     {

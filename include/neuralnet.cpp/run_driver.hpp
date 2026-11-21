@@ -17,12 +17,12 @@
 //     断点 `on_checkpoint`、相位 `on_phase` —— 空 = 该能力不启用。
 //
 // 用法（域只写 do_update，不碰外层循环）：
-//     auto driver = NN_UNWRAP(nn::RunDriver::create(session, source, state, cfg));
+//     auto driver = EX_UNWRAP(nn::RunDriver::create(session, source, state, cfg));
 //     driver.set_hooks({.do_update = [&](nn::TrainingSession& s, const nn::UpdateRequest& r) {
 //         ... 取批 / micro 切分 / s.train_step(...) ...
 //         return nn::UpdateOutcome{...};
 //     }});
-//     auto report = NN_UNWRAP(driver.fit());
+//     auto report = EX_UNWRAP(driver.fit());
 // ─────────────────────────────────────────────────────────────────────────
 
 #include <chrono>
@@ -34,7 +34,7 @@
 #include <utility>
 #include <vector>
 
-#include <neuralnet.cpp/core_errors.hpp>      // nn::Result / NN_FAIL / NN_TRY
+#include <exstl/errors.hpp>      // exstl::Result / EX_FAIL / EX_TRY
 #include "batch_source.hpp"                   // nn::BatchSource / BatchAt
 #include "compute_engine.hpp"                 // nn::ComputeEngine
 #include "lr_scheduler.hpp"                   // compute_epoch_lr / compute_step_lr
@@ -86,16 +86,16 @@ struct RunHooks
 {
     // 必选：执行一步 optimizer update（取批 + micro 切分 + train_step）。
     // 域在这里拥有 batch 类型与 loss 回读时机；driver 只给 lr/步号/final 标记。
-    std::function<Result<UpdateOutcome>(TrainingSession&, const UpdateRequest&)> do_update;
+    std::function<exstl::Result<UpdateOutcome>(TrainingSession&, const UpdateRequest&)> do_update;
 
     // 可选：一个 epoch 结束时的评估（返回标量指标，如 test loss）。
-    std::function<Result<Scalar>(TrainingSession&, std::size_t epoch)> evaluate;
+    std::function<exstl::Result<Scalar>(TrainingSession&, std::size_t epoch)> evaluate;
     // 可选：一个 epoch 结束（指标/落盘）。返回错误 = 中止训练并传播
     // （epoch 末 drain 等失败必须能终止，与旧 TextTrainer 口径一致）。
-    std::function<Result<void>(const RunReport&, std::size_t epoch)> on_epoch_end;
+    std::function<exstl::Result<void>(const RunReport&, std::size_t epoch)> on_epoch_end;
     // 可选：断点请求（"何时/状态是什么"由 driver 决定；路径与格式由域落地）。
     // 返回错误 = 本次断点未落盘（driver 计数，训练继续）。
-    std::function<Result<void>(TrainingSession&, const TrainState&)> on_checkpoint;
+    std::function<exstl::Result<void>(TrainingSession&, const TrainState&)> on_checkpoint;
     // 可选：显存/阶段标记探针。
     std::function<void(const char*)> on_phase;
 };
@@ -130,15 +130,15 @@ struct RunDriverConfig
 class RunDriver
 {
 public:
-    [[nodiscard]] static Result<RunDriver> create(TrainingSession& session, BatchSource& source,
+    [[nodiscard]] static exstl::Result<RunDriver> create(TrainingSession& session, BatchSource& source,
                                                   std::unique_ptr<TrainState> state,
                                                   RunDriverConfig cfg)
     {
-        if (!state) NN_FAIL("RunDriver::create: state 不能为空（域需提供其 TrainState 子类）");
-        if (cfg.epochs < 0) NN_FAIL("RunDriver::create: epochs 不能为负");
-        if (cfg.stop_after_epoch < 0) NN_FAIL("RunDriver::create: stop_after_epoch 不能为负");
+        if (!state) EX_FAIL("RunDriver::create: state 不能为空（域需提供其 TrainState 子类）");
+        if (cfg.epochs < 0) EX_FAIL("RunDriver::create: epochs 不能为负");
+        if (cfg.stop_after_epoch < 0) EX_FAIL("RunDriver::create: stop_after_epoch 不能为负");
         if (cfg.stop_after_epoch > cfg.epochs && cfg.epochs > 0)
-            NN_FAIL("RunDriver::create: stop_after_epoch 超出 epochs");
+            EX_FAIL("RunDriver::create: stop_after_epoch 超出 epochs");
         return RunDriver(session, source, std::move(state), std::move(cfg));
     }
 
@@ -146,9 +146,9 @@ public:
     void set_hooks(RunHooks hooks) { hooks_ = std::move(hooks); }
 
     // 驱动：epoch×step 循环 + lr 接线 + 断点节奏 + 报告。
-    [[nodiscard]] Result<RunReport> fit()
+    [[nodiscard]] exstl::Result<RunReport> fit()
     {
-        if (!hooks_.do_update) NN_FAIL("RunDriver::fit: do_update 钩子必选（域的单步更新逻辑）");
+        if (!hooks_.do_update) EX_FAIL("RunDriver::fit: do_update 钩子必选（域的单步更新逻辑）");
 
         const auto t0 = std::chrono::steady_clock::now();
         RunReport report;
@@ -161,7 +161,7 @@ public:
         const std::size_t start_epoch = static_cast<std::size_t>(state_->counters.epoch);
         const std::size_t start_step = static_cast<std::size_t>(state_->counters.step_in_epoch);
         if (epoch_mode && start_epoch > static_cast<std::size_t>(cfg_.epochs))
-            NN_FAIL("RunDriver::fit: 断点 epoch 超出本次配方 epochs");
+            EX_FAIL("RunDriver::fit: 断点 epoch 超出本次配方 epochs");
 
         // lr 调度配置（epoch 级）
         LrScheduleConfig epoch_lr_cfg;
@@ -205,7 +205,7 @@ public:
         int abort_code = 0;
 
         // 定位数据源（断点续训：把游标移到起始位置）
-        NN_TRY(rw, source_.rewind(start_epoch, start_step));
+        EX_TRY(rw, source_.rewind(start_epoch, start_step));
 
         // 绝对步号 = epoch·steps_per_epoch + step（与 step 级调度同定义；
         // 跨续训累计，进程无关）。步进驱动退化为 step 本身。
@@ -216,7 +216,7 @@ public:
                    static_cast<std::uint64_t>(step);
         };
 
-        auto do_checkpoint = [&](std::size_t epoch, std::size_t step_done) -> Result<void>
+        auto do_checkpoint = [&](std::size_t epoch, std::size_t step_done) -> exstl::Result<void>
         {
             if (!cfg_.enable_checkpoint || !hooks_.on_checkpoint) return {};
             // 计数器记"下一步的位置"，epoch 边界归一化（step_done >= steps_per_epoch
@@ -252,7 +252,7 @@ public:
 
                 const std::size_t epoch_first_step =
                     (static_cast<std::size_t>(epoch) == start_epoch) ? start_step : 0;
-                NN_TRY(rw2, source_.rewind(static_cast<std::size_t>(epoch), epoch_first_step));
+                EX_TRY(rw2, source_.rewind(static_cast<std::size_t>(epoch), epoch_first_step));
 
                 for (std::size_t step = epoch_first_step; step < steps_per_epoch; ++step)
                 {
@@ -282,7 +282,7 @@ public:
                     req.is_final_step = is_final;
                     req.steps_per_epoch = steps_per_epoch;
 
-                    NN_TRY(outcome, hooks_.do_update(session_, req));
+                    EX_TRY(outcome, hooks_.do_update(session_, req));
                     samples_executed += outcome->samples;
 
                     if (outcome->aborted)
@@ -298,7 +298,7 @@ public:
                     if (cfg_.save_interval > 0 &&
                         ((step + 1) % cfg_.save_interval == 0 || step + 1 == steps_per_epoch))
                     {
-                        NN_TRY(ck, do_checkpoint(static_cast<std::size_t>(epoch), step + 1));
+                        EX_TRY(ck, do_checkpoint(static_cast<std::size_t>(epoch), step + 1));
                     }
 
                     last_epoch = static_cast<std::size_t>(epoch);
@@ -318,7 +318,7 @@ public:
                 // 末步（step+1==steps_per_epoch）已覆盖 epoch 末，这里不再双写。
                 if (cfg_.save_interval == 0)
                 {
-                    NN_TRY(ck, do_checkpoint(static_cast<std::size_t>(epoch) + 1, 0));
+                    EX_TRY(ck, do_checkpoint(static_cast<std::size_t>(epoch) + 1, 0));
                 }
 
                 if (cfg_.enable_eval && hooks_.evaluate)
@@ -335,7 +335,7 @@ public:
                     snapshot.final_lr = current_lr;
                     snapshot.final_epoch = static_cast<std::size_t>(epoch) + 1;
                     snapshot.final_step_in_epoch = 0;
-                    NN_TRY_MSG(hk, "on_epoch_end 失败",
+                    EX_TRY_MSG(hk, "on_epoch_end 失败",
                                hooks_.on_epoch_end(snapshot, static_cast<std::size_t>(epoch)));
                 }
 
@@ -383,7 +383,7 @@ public:
                 req.is_final_step = is_final;
                 req.steps_per_epoch = 0;
 
-                NN_TRY(outcome, hooks_.do_update(session_, req));
+                EX_TRY(outcome, hooks_.do_update(session_, req));
                 samples_executed += outcome->samples;
 
                 if (outcome->aborted)
@@ -396,7 +396,7 @@ public:
 
                 if (cfg_.save_interval > 0 && (step + 1) % cfg_.save_interval == 0)
                 {
-                    NN_TRY(ck, do_checkpoint(0, step + 1));
+                    EX_TRY(ck, do_checkpoint(0, step + 1));
                 }
 
                 last_step_done = step + 1;

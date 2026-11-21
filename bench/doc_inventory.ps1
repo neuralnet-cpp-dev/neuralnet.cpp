@@ -85,12 +85,12 @@ if ($bridge.Count -gt 0) { Write-Output ("  bridge sites: " + ($bridge -join ', 
 Write-Output ("  L2-VIOLATIONS: {0}" -f ($violType.Count + $violVerb.Count))
 
 # 5) 错误处理宏族手写残留审计（AGENTS.md 铁律 #1 / §12 错误处理宏族）
-#    A 批（传播/错误源 → NN_TRY/NN_TRY_CHECK/NN_FAIL）与 B 批（src/ 退出样板 → NN_EXIT）
+#    A 批（传播/错误源 → EX_TRY/EX_TRY_CHECK/EX_FAIL）与 B 批（src/ 退出样板 → EX_EXIT）
 #    迁移后的**手写 `return std::unexpected` 残留**计数。
-#    剔除：注释、字符串字面量内出现、以及 core_assert.hpp 的宏定义体（NN_ASSERT 实现，
-#    其中 `return std::unexpected(nn::Error{(msg)})` 是宏展开目标，必须保留）。
+#    剔除：注释、字符串字面量内出现、以及 core_assert.hpp 的宏定义体（EX_ASSERT 实现，
+#    其中 `return std::unexpected(exstl::Error{(msg)})` 是宏展开目标，必须保留）。
 #    验收口径：残留数不高于基线（基线 = 0，2 阶段边缘形态已清零），
-#    且**不随新代码增长**——新增错误检查一律用宏族（NN_TRY/NN_EXIT/NN_FAIL），
+#    且**不随新代码增长**——新增错误检查一律用宏族（EX_TRY/EX_EXIT/EX_FAIL），
 #    不应再出现裸 unexpected。
 #    当前基线：0（两批迁移 + 2 阶段 36 处边缘形态清零后实测）。
 $baseline = 0
@@ -102,9 +102,9 @@ foreach ($d in $scanDirs) {
     foreach ($f in (Get-ChildItem $dd -Recurse -Include *.hpp, *.cpp -File)) {
         if ($f.Name -eq 'core_assert.hpp') { continue }   # 宏定义体，豁免
         # error_macro_test.cpp 是宏族测试：其 `return std::unexpected` 是**被测夹具**
-        # （构造错误值喂给 NN_TRY/NN_UNWRAP 断言宏行为），非手写残留 → 整文件豁免。
+        # （构造错误值喂给 EX_TRY/EX_UNWRAP 断言宏行为），非手写残留 → 整文件豁免。
         if ($f.Name -eq 'error_macro_test.cpp') { continue }
-        # core_errors.hpp 的 NN_TRY/NN_FAIL 宏定义体（`return std::unexpected(...)` 是
+        # core_errors.hpp 的 EX_TRY/EX_FAIL 宏定义体（`return std::unexpected(...)` 是
         # 展开目标，必须保留）——逐行豁免见下。
         $isCoreErr = ($f.Name -eq 'core_errors.hpp')
         $inDefine = $false   # core_errors.hpp：#define 宏体（续行以 \ 结尾，末行收尾）
@@ -134,7 +134,7 @@ foreach ($d in $scanDirs) {
     }
 }
 Write-Output ''
-Write-Output '=== [5] 错误处理宏族手写残留（铁律 #1；NN_TRY/NN_EXIT/NN_FAIL 迁移后）==='
+Write-Output '=== [5] 错误处理宏族手写残留（铁律 #1；EX_TRY/EX_EXIT/EX_FAIL 迁移后）==='
 foreach ($r in $residue) { Write-Output ("  [residue] {0}" -f $r) }
 Write-Output ("  HANDWRITTEN-RESIDUE: {0}   (baseline {1})" -f $residue.Count, $baseline)
 if ($residue.Count -gt $baseline) {
@@ -152,9 +152,9 @@ Write-Output "  [GATE] PASS — 残留未超基线（新增检查须用宏族）
 #      include/neuralnet.cpp/cli/text_train_checkpoint.hpp（断点/推理模型产出）
 #      src/text_train.cpp                                （入口：接线 + 唯一出口 main）
 #    判据（剥行注释与字符串字面量后）：**除参数解析层外**不得出现 std::exit /
-#    NN_EXIT / NN_UNWRAP —— 三者都会直接终止进程（NN_UNWRAP = abort 语义），
+#    EX_EXIT / EX_UNWRAP —— 三者都会直接终止进程（EX_UNWRAP = abort 语义），
 #    与"错误经 Result 上抛、进程只有一个出口"冲突。基线 0；新增错误检查请用
-#    NN_TRY / NN_TRY_MSG / NN_FAIL（loop 内返回 Result）。
+#    EX_TRY / EX_TRY_MSG / EX_FAIL（loop 内返回 Result）。
 $exitScan = @(
     'include\neuralnet.cpp\cli\text_train_loop.hpp',
     'include\neuralnet.cpp\cli\text_train_recovery.hpp',
@@ -181,7 +181,7 @@ Write-Output '=== [6] text_train 模块的进程终止审计（P1-1：模块只�
 foreach ($h in $exitHits) { Write-Output ("  [exit] {0}" -f $h) }
 Write-Output ("  TERMINATING-CALLS: {0}   (baseline 0)" -f $exitHits.Count)
 if ($exitHits.Count -gt 0) {
-    Write-Output "  [GATE] FAIL — text_train 的循环/恢复/断点模块与入口不得直接终止进程（std::exit / NN_EXIT / NN_UNWRAP）；请改 Result 上抛（NN_TRY / NN_TRY_MSG / NN_FAIL）。"
+    Write-Output "  [GATE] FAIL — text_train 的循环/恢复/断点模块与入口不得直接终止进程（std::exit / EX_EXIT / EX_UNWRAP）；请改 Result 上抛（EX_TRY / EX_TRY_MSG / EX_FAIL）。"
     exit 1
 }
 Write-Output "  [GATE] PASS — 无终止调用（CLI 参数解析层是唯一例外：cli/text_train_config.hpp）。"

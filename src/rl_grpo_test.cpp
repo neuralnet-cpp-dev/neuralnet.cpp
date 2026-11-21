@@ -7,7 +7,7 @@
 //   [4] 单组、少样本组与缺少 old_log_prob 的失败路径。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>
@@ -40,7 +40,7 @@ nn::Tensor matrix_tensor(nn::ComputeEngine& engine, std::size_t rows, std::size_
                          std::initializer_list<float> values)
 {
     nn::Matrix m(rows, cols);
-    NN_ASSERT_ALWAYS(values.size() == m.size(), "matrix_tensor size");
+    EX_ASSERT_ALWAYS(values.size() == m.size(), "matrix_tensor size");
     auto span = m.span();
     std::size_t i = 0;
     for (float v : values)
@@ -66,11 +66,11 @@ bool near_values(const std::vector<float>& got, const std::vector<float>& want, 
     return true;
 }
 
-nn::Result<nn::TensorRecord> grpo_record(nn::Tensor actions, nn::Tensor mask, nn::Tensor returns,
+exstl::Result<nn::TensorRecord> grpo_record(nn::Tensor actions, nn::Tensor mask, nn::Tensor returns,
                                          nn::Tensor old_log_prob, nn::Tensor advantage = {})
 {
     auto schema = nn::ExperienceSchema::create({"action", "action_mask", "return", "old_log_prob"});
-    NN_TRY_CHECK(schema);
+    EX_TRY_CHECK(schema);
     std::vector<nn::NamedTensor> values{
         nn::NamedTensor{.name = "action", .value = actions},
         nn::NamedTensor{.name = "action_mask", .value = mask},
@@ -116,7 +116,7 @@ void test_grpo_multiple_groups()
     auto grouped = group.apply(*owner, returns, spans);
     CHECK(grouped.has_value(), "GRPO group advantage");
     if (!grouped) return;
-    auto grouped_row = NN_UNWRAP(owner->reshape(*grouped, 1, 6));
+    auto grouped_row = EX_UNWRAP(owner->reshape(*grouped, 1, 6));
     auto manual_record = grpo_record(actions, mask, returns, old_logp, grouped_row);
     CHECK(manual_record.has_value(), "manual GRPO record with advantage");
     if (!manual_record) return;
@@ -138,8 +138,8 @@ void test_grpo_multiple_groups()
     if (!p || !e) return;
     CHECK(std::fabs(report->loss - (p->loss + e->loss)) < 1e-5f,
           "GRPO preset loss equals manual composition");
-    auto expected_grad = NN_UNWRAP(owner->clone(p->gradient));
-    NN_UNWRAP(owner->accumulate(expected_grad, e->gradient));
+    auto expected_grad = EX_UNWRAP(owner->clone(p->gradient));
+    EX_UNWRAP(owner->accumulate(expected_grad, e->gradient));
     auto gh = report->gradients.field("policy");
     CHECK(gh.has_value(), "GRPO gradient field");
     if (!gh) return;

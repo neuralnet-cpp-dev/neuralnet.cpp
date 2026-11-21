@@ -1,5 +1,5 @@
 # apply_fail_multiline.ps1 — 多行 new-nonstd：return std::unexpected(Error{\n ... \n});
-#   → NN_FAIL(<joined-content>);   内容拼成单行（原文是 + 拼接的字符串/表达式）。
+#   → EX_FAIL(<joined-content>);   内容拼成单行（原文是 + 拼接的字符串/表达式）。
 # 护栏：若拼接内容含顶层逗号（不在字符串内、不在括号内）→ 跳过（人工审）。
 # 简化护栏：直接检查拼接后是否含 ", " 且不在引号里 —— 用括号深度扫描判断顶层逗号。
 param([switch]$DryRun)
@@ -50,7 +50,7 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
                     if ($topComma) {
                         $out.Add($ln); $i++; $skipped++; continue   # 保留原样
                     }
-                    $out.Add($ind + 'NN_FAIL(' + $inner + ');')
+                    $out.Add($ind + 'EX_FAIL(' + $inner + ');')
                     $changed = $true; $n++
                     $i = $j + 1; continue
                 } else {
@@ -67,4 +67,4 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         }
     }
 }
-Write-Output ("TOTAL multiline-Error -> NN_FAIL = {0} files={1} skipped(top-comma)={2} (DryRun={3})" -f $tot, $tf, $skipped, $DryRun)
+Write-Output ("TOTAL multiline-Error -> EX_FAIL = {0} files={1} skipped(top-comma)={2} (DryRun={3})" -f $tot, $tf, $skipped, $DryRun)

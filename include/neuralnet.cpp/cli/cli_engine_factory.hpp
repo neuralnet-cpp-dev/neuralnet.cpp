@@ -24,7 +24,7 @@
 #include <string>
 
 #include "neuralnet.cpp/compute_engine.hpp"
-#include "neuralnet.cpp/core_errors.hpp"
+#include <exstl/errors.hpp>
 
 namespace nn::cli
 {
@@ -45,7 +45,7 @@ struct EngineConfig
 // libnn-gpu.so 即可。
 // 返回 Result：显式请求的后端不可用（初始化失败/未编译）时返回错误，
 // **不回退 CPU**；成功返回引擎并打印选择信息到 log。
-[[nodiscard]] inline nn::Result<std::shared_ptr<nn::ComputeEngine>>
+[[nodiscard]] inline exstl::Result<std::shared_ptr<nn::ComputeEngine>>
 create_engine(const EngineConfig& cfg, [[maybe_unused]] std::ostream& log = std::cerr)
 {
     if (cfg.use_gpu)
@@ -58,11 +58,11 @@ create_engine(const EngineConfig& cfg, [[maybe_unused]] std::ostream& log = std:
             return e;
         }
         const char* err = nn::last_error();
-        NN_FAIL("请求 --gpu 但 GPU 初始化失败: " +
+        EX_FAIL("请求 --gpu 但 GPU 初始化失败: " +
                 std::string(err ? err : "(无错误信息)") +
                 "（不回退 CPU；请移除 --gpu 或改用 CPU 模式）");
 #else
-        NN_FAIL("请求 --gpu 但本构建未链接 GPU 引擎（NN_ENABLE_GPU=OFF 或 "
+        EX_FAIL("请求 --gpu 但本构建未链接 GPU 引擎（NN_ENABLE_GPU=OFF 或 "
                 "未找到 Vulkan/glslc）；不回退 CPU");
 #endif
     }
@@ -71,7 +71,7 @@ create_engine(const EngineConfig& cfg, [[maybe_unused]] std::ostream& log = std:
     if (!e)
     {
         const char* err = nn::last_error();
-        NN_FAIL("CPU 引擎创建失败: " + std::string(err ? err : "(无错误信息)"));
+        EX_FAIL("CPU 引擎创建失败: " + std::string(err ? err : "(无错误信息)"));
     }
     return e;
 }

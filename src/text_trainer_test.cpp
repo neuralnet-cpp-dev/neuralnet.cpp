@@ -10,7 +10,7 @@
 //   [5] 前置条件：batch=0 / log_interval=0 / 配方与 Session 不一致 → Result 错误
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -92,7 +92,7 @@ std::string make_dataset(const nn::BPETokenizer& tok, const std::string& path,
     }
     std::ostringstream oss;
     const auto wr = nn::write_nndataset(oss, b);
-    NN_ASSERT_ALWAYS(wr, "text_trainer_test: write_nndataset 失败");
+    EX_ASSERT_ALWAYS(wr, "text_trainer_test: write_nndataset 失败");
     write_file(path,
                nn::write_file_label(nn::NNDATASET_MAGIC, nn::NNDATASET_FILE_VERSION) + oss.str());
     (void)vocab_size;
@@ -105,7 +105,7 @@ std::string make_dataset(const nn::BPETokenizer& tok, const std::string& path,
     for (auto& t : model.parameters())
     {
         auto m = eng.to_matrix(t.get(), nn::Precision::F32);
-        NN_ASSERT_ALWAYS(m, "params_snapshot: to_matrix failed");
+        EX_ASSERT_ALWAYS(m, "params_snapshot: to_matrix failed");
         for (auto v : m->span())
             out.push_back(v);
     }
@@ -138,7 +138,7 @@ struct Fixture
     tcfg.log = [](std::string_view) {};
     nn::BPETokenizer tok;
     const auto tr = tok.train(kCorpus, tcfg);
-    NN_ASSERT_ALWAYS(tr, "text_trainer_test: tokenizer 训练失败");
+    EX_ASSERT_ALWAYS(tr, "text_trainer_test: tokenizer 训练失败");
     f.dataset_path = make_dataset(tok, dir + "/trainer.nndataset", tcfg.vocab_size);
     f.spec = nn::make_gpt_spec(tok.vocab_size(), /*d_model=*/16, /*seq_len=*/8,
                                /*heads=*/2, /*d_ff=*/32, /*layers=*/1);
@@ -149,7 +149,7 @@ struct Fixture
                                                nn::Scalar clip = 0, std::size_t accum_steps = 1)
 {
     auto built = nn::build_gpt_model_from_spec(*f.engine, f.spec);
-    NN_ASSERT_ALWAYS(built, "text_trainer_test: 构建小 GPT 失败");
+    EX_ASSERT_ALWAYS(built, "text_trainer_test: 构建小 GPT 失败");
     nn::TrainingConfig tcfg;
     tcfg.optimizer = "adam";
     tcfg.lr = lr;
@@ -157,7 +157,7 @@ struct Fixture
     tcfg.clip_grad_norm = clip;
     tcfg.grad_accum_steps = accum_steps;
     auto s = nn::TrainingSession::create(std::move(*built), tcfg);
-    NN_ASSERT_ALWAYS(s, "text_trainer_test: TrainingSession::create 失败");
+    EX_ASSERT_ALWAYS(s, "text_trainer_test: TrainingSession::create 失败");
     return std::move(*s);
 }
 
@@ -409,12 +409,12 @@ void test_checkpoint_hook(const std::string& dir)
     std::ostringstream out;
     hooks.out = &out;
     hooks.on_checkpoint = [&states, &ckpt,
-                           &f](const nn::TextCheckpointRequest& req) -> nn::Result<void>
+                           &f](const nn::TextCheckpointRequest& req) -> exstl::Result<void>
     {
         states.push_back(req.state);
         std::vector<nn::Tensor> blobs;
         const auto sr = req.session.optimizer().save_state(blobs);
-        if (!sr) NN_FAIL("保存优化器状态失败");
+        if (!sr) EX_FAIL("保存优化器状态失败");
         const nn::CheckpointState ck{&req.state, blobs};
         return nn::save_model(ckpt, req.session.model(), f.spec, "tok-bytes",
                               nn::ModelRole::Checkpoint, ck);

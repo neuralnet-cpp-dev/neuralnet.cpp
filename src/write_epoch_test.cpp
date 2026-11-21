@@ -17,7 +17,7 @@
 // 退出码：0 = 通过，1 = 失败，77 = 跳过（--gpu 且无设备）
 // ───────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <iostream>
@@ -57,7 +57,7 @@ int g_failures = 0;
 nn::Tensor zeros(nn::ComputeEngine& eng, std::size_t rows, std::size_t cols)
 {
     nn::Tensor t = eng.create_tensor(rows, cols, nn::Precision::F32, nn::InitSpec::zero());
-    NN_ASSERT_ALWAYS(t.valid(), "create_tensor(zero) failed");
+    EX_ASSERT_ALWAYS(t.valid(), "create_tensor(zero) failed");
     return t;
 }
 
@@ -190,9 +190,9 @@ nn::BitLinear make_bitlinear(nn::ComputeEngine& eng, std::size_t in, std::size_t
     prof.param = nn::Precision::T1_58;
     bl.set_precision_profile(prof);
     auto r = bl.init(eng);
-    NN_ASSERT_ALWAYS(r, "BitLinear init failed");
+    EX_ASSERT_ALWAYS(r, "BitLinear init failed");
     auto wr = eng.copy_from(bl.parameters()[0].get(), w);
-    NN_ASSERT_ALWAYS(wr, "BitLinear 权重写入失败");
+    EX_ASSERT_ALWAYS(wr, "BitLinear 权重写入失败");
     // 本节测的是**缓存**（与缓冲形态正交）：默认强制 f16 稠密路径，好让
     // `quantized_weights()` 直接可读；打包路径的缓存另有 [7b] 一段。
     bl.set_ternary_pack_enabled(packed);
@@ -415,7 +415,7 @@ int main(int argc, char* argv[])
         nn::cli::EngineConfig ec;
         ec.use_gpu = true;
         auto eng_r = nn::cli::create_engine(ec);
-        NN_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
+        EX_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
         test_write_entries(**eng_r, "GPU");
         test_bitlinear_cache(**eng_r, "GPU");
         test_lazy_grads(**eng_r, "GPU");

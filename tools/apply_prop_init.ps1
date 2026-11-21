@@ -1,6 +1,6 @@
 # apply_prop_init.ps1 — A 批 prop init-statement 守卫：
 #   if (auto r = <expr>; !r)\n return std::unexpected(r.error());
-#   → NN_TRY(r, <expr>);
+#   → EX_TRY(r, <expr>);
 # 仅当 return 的变量 == init 声明的变量时替换（否则不动）。
 param([switch]$DryRun)
 $ErrorActionPreference = 'Stop'
@@ -17,7 +17,7 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         $script:n = 0
         $text = $re.Replace($orig, { param($m)
             $script:n++
-            $m.Groups[1].Value + 'NN_TRY(' + $m.Groups[2].Value + ', ' + $m.Groups[3].Value + ');'
+            $m.Groups[1].Value + 'EX_TRY(' + $m.Groups[2].Value + ', ' + $m.Groups[3].Value + ');'
         })
         if ($text -ne $orig) {
             $tf++
@@ -28,4 +28,4 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         }
     }
 }
-Write-Output ("TOTAL init-guard -> NN_TRY = {0} files={1} (DryRun={2})" -f $tot, $tf, $DryRun)
+Write-Output ("TOTAL init-guard -> EX_TRY = {0} files={1} (DryRun={2})" -f $tot, $tf, $DryRun)

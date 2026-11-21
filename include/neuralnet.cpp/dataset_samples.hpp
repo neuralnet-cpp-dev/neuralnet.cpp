@@ -30,9 +30,9 @@
 #include <vector>
 
 #include "algebra_matrix.hpp"   // nn::Matrix（I/O 层允许；窗口装配是数据 I/O）
-#include <neuralnet.cpp/core_assert.hpp>      // NN_ASSERT_ALWAYS（样本下标前置条件）
+#include <exstl/assert.hpp>      // EX_ASSERT_ALWAYS（样本下标前置条件）
 #include <neuralnet.cpp/core_config.hpp>      // nn::Scalar
-#include <neuralnet.cpp/core_errors.hpp>      // nn::Result / NN_FAIL
+#include <exstl/errors.hpp>      // exstl::Result / EX_FAIL
 #include <neuralnet.cpp/dataset.hpp>          // nn::Dataset / DatasetSubset / TextCorpus
 
 namespace nn
@@ -81,12 +81,12 @@ public:
     // 从数据集子集切窗。失败语义：seq_len=0 / 无 test 子集 → Result 错误；
     // 空子集允许存在（sample_count=0，训练集为空由 TextTrainer fail-fast，
     // 测试集为空 = 跳过评估，与旧 CLI 语义一致）。
-    [[nodiscard]] static Result<TextSampleSet> create(const Dataset& dataset, DatasetSubset subset,
+    [[nodiscard]] static exstl::Result<TextSampleSet> create(const Dataset& dataset, DatasetSubset subset,
                                                       TextWindowConfig cfg)
     {
-        if (cfg.seq_len == 0) NN_FAIL("TextSampleSet::create: seq_len 必须 > 0（窗口 = 训练样本）");
+        if (cfg.seq_len == 0) EX_FAIL("TextSampleSet::create: seq_len 必须 > 0（窗口 = 训练样本）");
         if (dataset.info().kind != DatasetKind::Text)
-            NN_FAIL("TextSampleSet::create: 只支持 text 数据集");
+            EX_FAIL("TextSampleSet::create: 只支持 text 数据集");
 
         TextSampleSet out;
         out.cfg_ = cfg;
@@ -94,11 +94,11 @@ public:
         out.subset_ = subset;
         out.path_ = dataset.path();
         out.vocab_ = dataset.vocab_kvrec();
-        NN_TRY(corpus_r, dataset.load_text(subset));
+        EX_TRY(corpus_r, dataset.load_text(subset));
         out.corpus_ = std::move(*corpus_r);
         if (out.corpus_.doc_ids.size() != out.corpus_.token_flow.size() ||
             out.corpus_.loss_mask.size() != out.corpus_.token_flow.size())
-            NN_FAIL("TextSampleSet::create: 语料三元组长度不一致（内部错误）");
+            EX_FAIL("TextSampleSet::create: 语料三元组长度不一致（内部错误）");
 
         out.stride_ = (cfg.stride == 0) ? cfg.seq_len : cfg.stride;
         out.offsets_.reserve(out.corpus_.token_flow.size() / out.stride_ + 1);
@@ -127,7 +127,7 @@ public:
 
     [[nodiscard]] TextSample sample(std::size_t index) const
     {
-        NN_ASSERT_ALWAYS(index < offsets_.size(), "TextSampleSet::sample: 样本下标越界");
+        EX_ASSERT_ALWAYS(index < offsets_.size(), "TextSampleSet::sample: 样本下标越界");
         const std::size_t offset = offsets_[index];
         const std::size_t valid_len = std::min(cfg_.seq_len, corpus_.token_flow.size() - offset);
         TextSample s;
@@ -142,7 +142,7 @@ public:
 
     // 按样本下标装配一个 batch（indices 长度 = 本批实际 batch；末批可不满）。
     // 输出矩阵/数组按需 resize（复用内存）；返回本批参与 loss 的位置数。
-    [[nodiscard]] Result<std::size_t> make_batch(std::span<const std::size_t> indices,
+    [[nodiscard]] exstl::Result<std::size_t> make_batch(std::span<const std::size_t> indices,
                                                  TextSampleBatch& out) const
     {
         const std::size_t seq = cfg_.seq_len;
@@ -167,7 +167,7 @@ public:
         {
             const std::size_t idx = indices[b];
             if (idx >= offsets_.size())
-                NN_FAIL("TextSampleSet::make_batch: 样本下标越界（" + std::to_string(idx) +
+                EX_FAIL("TextSampleSet::make_batch: 样本下标越界（" + std::to_string(idx) +
                         " >= " + std::to_string(offsets_.size()) + "）");
             const std::size_t offset = offsets_[idx];
             const std::size_t valid_len = std::min(seq, corpus_.token_flow.size() - offset);
@@ -197,13 +197,13 @@ public:
 
     // 只统计目标位置的 loss 有效数，不物化 batch。
     // Global-batch 训练需要先知道整个 update 的归一化单位，再拆分 micro-batch。
-    [[nodiscard]] Result<std::size_t> valid_target_count(std::span<const std::size_t> indices) const
+    [[nodiscard]] exstl::Result<std::size_t> valid_target_count(std::span<const std::size_t> indices) const
     {
         std::size_t valid = 0;
         for (std::size_t idx : indices)
         {
             if (idx >= offsets_.size())
-                NN_FAIL("TextSampleSet::valid_target_count: 样本下标越界（" + std::to_string(idx) +
+                EX_FAIL("TextSampleSet::valid_target_count: 样本下标越界（" + std::to_string(idx) +
                         " >= " + std::to_string(offsets_.size()) + "）");
             const std::size_t offset = offsets_[idx];
             const std::size_t valid_len =

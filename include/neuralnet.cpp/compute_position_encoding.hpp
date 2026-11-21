@@ -81,14 +81,14 @@ private:
 
     // 重建全表 (d_k, seq)：cos/sin 按维度对交错重复；位置 = pos + pos_offset_
     // （绝对位置偏移：滑动窗生成时，输入被截断到窗口，但位置应从真实起点算起）
-    [[nodiscard]] Result<void> rebuild(ComputeEngine& engine, std::size_t seq)
+    [[nodiscard]] exstl::Result<void> rebuild(ComputeEngine& engine, std::size_t seq)
     {
         std::vector<Scalar> c(d_k_ * seq), s(d_k_ * seq);
         for (std::size_t pos = 0; pos < seq; ++pos)
             fill_pos_column_(c, s, seq, pos + pos_offset_, pos);
-        NN_TRY(cr, nn::upload_span(engine, d_k_, seq, Precision::F32, std::span(c)));
+        EX_TRY(cr, nn::upload_span(engine, d_k_, seq, Precision::F32, std::span(c)));
         cos_cache_ = std::move(*cr);
-        NN_TRY(sr, nn::upload_span(engine, d_k_, seq, Precision::F32, std::span(s)));
+        EX_TRY(sr, nn::upload_span(engine, d_k_, seq, Precision::F32, std::span(s)));
         sin_cache_ = std::move(*sr);
         seq_cached_ = seq;
         return {};
@@ -102,7 +102,7 @@ public:
     RotaryEmbedding() = default;
     explicit RotaryEmbedding(std::size_t d_k) : d_k_(d_k) {}
 
-    [[nodiscard]] Result<void> init(ComputeEngine& /*engine*/) { return {}; }
+    [[nodiscard]] exstl::Result<void> init(ComputeEngine& /*engine*/) { return {}; }
 
     // 多精度（§9.2）：RoPE 是辅助对象（非 Layer），由持有它的位置编码器下传
     // profile（否则 RoPE 的 DSL 求值退回 F32，f16 配置下 Q/K 存储不减半）
@@ -123,12 +123,12 @@ public:
     }
 
     // 全表应用：q 为 (batch*H*d_k, seq)，cos/sin 为 (d_k, seq) 短表
-    [[nodiscard]] Result<Tensor> apply(ComputeEngine& engine, const Tensor& q, std::size_t seq,
+    [[nodiscard]] exstl::Result<Tensor> apply(ComputeEngine& engine, const Tensor& q, std::size_t seq,
                                        bool backward)
     {
         if (d_k_ == 0 || d_k_ % 2 != 0)
-            NN_FAIL("RotaryEmbedding::apply: d_k must be positive and even");
-        if (seq != seq_cached_) { NN_TRY(r, rebuild(engine, seq)); }
+            EX_FAIL("RotaryEmbedding::apply: d_k must be positive and even");
+        if (seq != seq_cached_) { EX_TRY(r, rebuild(engine, seq)); }
         const std::uint32_t dk = static_cast<std::uint32_t>(d_k_);
         // 内联 RoPE 表达式（LLaMA half-swap；backward 为旋转正交，逆 = 反角）：
         //   forward:  out = q·cos + rotate_half(q)·sin
@@ -146,15 +146,15 @@ public:
 
     // 增量推理：q 为 (H*d_k, 1)，位置 = pos（cur_len）
     // 直接生成 (d_k,1) 位置表，避免对全表切片取列。
-    [[nodiscard]] Result<Tensor> apply_step(ComputeEngine& engine, const Tensor& q, std::size_t pos,
+    [[nodiscard]] exstl::Result<Tensor> apply_step(ComputeEngine& engine, const Tensor& q, std::size_t pos,
                                             bool backward)
     {
         if (d_k_ == 0 || d_k_ % 2 != 0)
-            NN_FAIL("RotaryEmbedding::apply_step: d_k must be positive and even");
+            EX_FAIL("RotaryEmbedding::apply_step: d_k must be positive and even");
         std::vector<Scalar> c(d_k_), s(d_k_);       // 宿主桥（17 §3 D11）
         fill_pos_column_(c, s, 1, pos, 0);
-        NN_TRY(cr, nn::upload_span(engine, d_k_, 1, Precision::F32, std::span(c)));
-        NN_TRY(sr, nn::upload_span(engine, d_k_, 1, Precision::F32, std::span(s)));
+        EX_TRY(cr, nn::upload_span(engine, d_k_, 1, Precision::F32, std::span(c)));
+        EX_TRY(sr, nn::upload_span(engine, d_k_, 1, Precision::F32, std::span(s)));
         const std::uint32_t dk = static_cast<std::uint32_t>(d_k_);
         if (backward)
             return dsl::compute(engine,
@@ -197,21 +197,21 @@ public:
     [[nodiscard]] const PrecisionProfile& precision_profile() const noexcept { return p_; }
 
     // 引擎相关初始化（创建张量等）
-    [[nodiscard]] virtual Result<void> init(ComputeEngine& /*engine*/) { return {}; }
+    [[nodiscard]] virtual exstl::Result<void> init(ComputeEngine& /*engine*/) { return {}; }
 
     // ── 嵌入侧注入（Learned / Sinusoidal 覆写；其余 no-op）──────────────
     // apply：token_emb_T 为 (d_model, batch*seq)，返回 x = token_emb_T (+ pos_emb)
-    [[nodiscard]] virtual Result<Tensor> apply(ComputeEngine& /*engine*/, const Tensor& token_emb_T,
+    [[nodiscard]] virtual exstl::Result<Tensor> apply(ComputeEngine& /*engine*/, const Tensor& token_emb_T,
                                                std::size_t /*batch*/, std::size_t /*seq*/)
     { return token_emb_T; }
 
     // 增量前向：x 为 (d_model, 1)，返回 x + pos_emb[pos]
-    [[nodiscard]] virtual Result<Tensor> apply_step(ComputeEngine& /*engine*/, const Tensor& x,
+    [[nodiscard]] virtual exstl::Result<Tensor> apply_step(ComputeEngine& /*engine*/, const Tensor& x,
                                                     std::size_t /*pos*/)
     { return x; }
 
     // 反向：累计位置梯度到 grad_pos_emb_（默认 no-op）
-    [[nodiscard]] virtual Result<void> backward(ComputeEngine& /*engine*/, const Tensor& /*grad_T*/,
+    [[nodiscard]] virtual exstl::Result<void> backward(ComputeEngine& /*engine*/, const Tensor& /*grad_T*/,
                                                 std::size_t /*batch*/, std::size_t /*seq*/)
     { return {}; }
 
@@ -220,12 +220,12 @@ public:
 
     // ── 注意力 Q/K 侧（RoPE 覆写；其余 no-op）─────────────────────────
     // 全表：qk 为 (batch*H*d_k, seq)，列 = position；**原地替换**
-    [[nodiscard]] virtual Result<void> apply_qk(ComputeEngine& /*engine*/, Tensor& /*qk*/,
+    [[nodiscard]] virtual exstl::Result<void> apply_qk(ComputeEngine& /*engine*/, Tensor& /*qk*/,
                                                 std::size_t /*seq*/, bool /*backward*/)
     { return {}; }
 
     // 增量：qk 为 (H*d_k, 1)，位置 = pos
-    [[nodiscard]] virtual Result<void> apply_qk_step(ComputeEngine& /*engine*/, Tensor& /*qk*/,
+    [[nodiscard]] virtual exstl::Result<void> apply_qk_step(ComputeEngine& /*engine*/, Tensor& /*qk*/,
                                                      std::size_t /*pos*/, bool /*backward*/)
     { return {}; }
 
@@ -239,7 +239,7 @@ public:
     [[nodiscard]] virtual bool has_score_bias() const noexcept { return false; }
 
     // 每步准备分数偏置表（batch/seq 变化时重建）
-    [[nodiscard]] virtual Result<void>
+    [[nodiscard]] virtual exstl::Result<void>
     prepare_score_bias(ComputeEngine& /*engine*/, std::size_t /*batch*/, std::size_t /*seq*/)
     { return {}; }
 
@@ -255,13 +255,13 @@ public:
     //   掩码与偏置是两件事，融成一条 select 会让掩码策略知道位置编码的存在。
     //   两种写法数值等价（被屏蔽处 -inf 加有限值仍是 -inf；未屏蔽处 s+0 精确），
     //   代价是反向多一个逐元素原地 kernel。
-    [[nodiscard]] virtual Result<void> apply_score_bias(ComputeEngine& /*engine*/,
+    [[nodiscard]] virtual exstl::Result<void> apply_score_bias(ComputeEngine& /*engine*/,
                                                         Tensor& /*score*/, std::size_t /*BH*/,
                                                         std::size_t /*seq*/)
     { return {}; }
 
     // 增量推理的分数偏置（scores 为 (H, new_len)）
-    [[nodiscard]] virtual Result<Tensor> apply_bias_step(ComputeEngine& /*engine*/, Tensor&& scores,
+    [[nodiscard]] virtual exstl::Result<Tensor> apply_bias_step(ComputeEngine& /*engine*/, Tensor&& scores,
                                                          std::size_t /*cur_len*/,
                                                          const PrecisionProfile& /*p*/) const
     { return std::move(scores); }
@@ -285,23 +285,23 @@ protected:
     // 用给定的位置编码张量初始化 pos_emb_（learnable 时额外分配梯度）。
     // M2：入参为 Tensor——调用方经引擎创建（InitSpec 填数或宿主公式 + span 上传），
     // 本函数只负责装配与梯度缓冲。
-    [[nodiscard]] Result<void> init_(ComputeEngine& engine, Tensor&& pe, bool learnable)
+    [[nodiscard]] exstl::Result<void> init_(ComputeEngine& engine, Tensor&& pe, bool learnable)
     {
         const std::size_t rows = pe.rows();
         const std::size_t cols = pe.cols();
         learnable_ = learnable;
         pos_emb_ = std::move(pe);
-        if (!pos_emb_.valid()) NN_FAIL("PositionEncoder: 位置编码创建失败");
+        if (!pos_emb_.valid()) EX_FAIL("PositionEncoder: 位置编码创建失败");
         if (learnable_)
         {
             grad_pos_emb_ = engine.create_tensor(rows, cols, p_.param, InitSpec::zero());
-            if (!grad_pos_emb_.valid()) NN_FAIL("PositionEncoder: 梯度缓冲初始化失败");
+            if (!grad_pos_emb_.valid()) EX_FAIL("PositionEncoder: 梯度缓冲初始化失败");
         }
         return {};
     }
 
     // 确保 pos_indices 缓存有效（batch-major：i = b*seq + t → position=t）
-    [[nodiscard]] Result<void> ensure_pos_indices_(ComputeEngine& engine, std::size_t batch,
+    [[nodiscard]] exstl::Result<void> ensure_pos_indices_(ComputeEngine& engine, std::size_t batch,
                                                    std::size_t seq)
     {
         if (pos_indices_batch_ == batch && pos_indices_seq_ == seq) return {};
@@ -310,7 +310,7 @@ protected:
             for (std::size_t t = 0; t < seq; ++t)
                 pidx[b * seq + t] = static_cast<Scalar>(t);
         auto pidx_t = nn::upload_span(engine, batch * seq, 1, Precision::F32, std::span(pidx));
-        NN_TRY_CHECK(pidx_t);
+        EX_TRY_CHECK(pidx_t);
         pos_indices_cache_ = std::move(*pidx_t);
         pos_indices_batch_ = batch;
         pos_indices_seq_ = seq;
@@ -322,38 +322,38 @@ public:
 
     [[nodiscard]] bool learnable() const noexcept { return learnable_; }
 
-    [[nodiscard]] Result<Tensor> apply(ComputeEngine& engine, const Tensor& token_emb_T,
+    [[nodiscard]] exstl::Result<Tensor> apply(ComputeEngine& engine, const Tensor& token_emb_T,
                                        std::size_t batch, std::size_t seq) override
     {
-        NN_TRY(ci, ensure_pos_indices_(engine, batch, seq));
-        NN_TRY(pos_gathered, engine.gather_rows(pos_emb_, pos_indices_cache_));
-        NN_TRY(pos_T, engine.transpose(*pos_gathered));
+        EX_TRY(ci, ensure_pos_indices_(engine, batch, seq));
+        EX_TRY(pos_gathered, engine.gather_rows(pos_emb_, pos_indices_cache_));
+        EX_TRY(pos_T, engine.transpose(*pos_gathered));
         auto x_with_pos = dsl::compute(engine, dsl::leaf(token_emb_T) + dsl::leaf(*pos_T),
                                        token_emb_T.rows(), token_emb_T.cols(), p_.compute);
-        NN_TRY_CHECK(x_with_pos);
+        EX_TRY_CHECK(x_with_pos);
         return std::move(*x_with_pos);
     }
 
-    [[nodiscard]] Result<Tensor> apply_step(ComputeEngine& engine, const Tensor& x,
+    [[nodiscard]] exstl::Result<Tensor> apply_step(ComputeEngine& engine, const Tensor& x,
                                             std::size_t pos) override
     {
         std::vector<Scalar> pos_v(1);                 // 宿主桥（17 §3 D11）
         pos_v[0] = static_cast<Scalar>(pos);
-        NN_TRY(pos_t, nn::upload_span(engine, 1, 1, Precision::F32, std::span(pos_v)));
-        NN_TRY(pos_emb_g, engine.gather_rows(pos_emb_, *pos_t));
-        NN_TRY(pos_T, engine.transpose(*pos_emb_g));
+        EX_TRY(pos_t, nn::upload_span(engine, 1, 1, Precision::F32, std::span(pos_v)));
+        EX_TRY(pos_emb_g, engine.gather_rows(pos_emb_, *pos_t));
+        EX_TRY(pos_T, engine.transpose(*pos_emb_g));
         auto x_wp =
             dsl::compute(engine, dsl::leaf(x) + dsl::leaf(*pos_T), x.rows(), x.cols(), p_.compute);
-        NN_TRY_CHECK(x_wp);
+        EX_TRY_CHECK(x_wp);
         return std::move(*x_wp);
     }
 
-    [[nodiscard]] Result<void> backward(ComputeEngine& engine, const Tensor& grad_T,
+    [[nodiscard]] exstl::Result<void> backward(ComputeEngine& engine, const Tensor& grad_T,
                                         std::size_t /*batch*/, std::size_t /*seq*/) override
     {
         if (!learnable_) return {};
         // pos_indices 缓存由 apply() 建立，backward 直接复用（batch/seq 一致）。
-        NN_TRY(pr, engine.scatter_add_rows(grad_pos_emb_, pos_indices_cache_, grad_T));
+        EX_TRY(pr, engine.scatter_add_rows(grad_pos_emb_, pos_indices_cache_, grad_T));
         return {};
     }
 
@@ -381,13 +381,13 @@ public:
     {
     }
 
-    [[nodiscard]] Result<void> init(ComputeEngine& engine) override
+    [[nodiscard]] exstl::Result<void> init(ComputeEngine& engine) override
     {
         // N(0, 0.02) 随机初始化——M2 声明式：层算分布参数、引擎填数，
         // 分布 seed 显式传（U1）；不再自持 RNG。
         auto pe = engine.create_tensor(seq_len_, d_model_, p_.param,
                                        InitSpec::normal(0, 0.02, kInitSeed));
-        if (!pe.valid()) NN_FAIL("LearnedPositionEncoder: 初始化失败");
+        if (!pe.valid()) EX_FAIL("LearnedPositionEncoder: 初始化失败");
         return init_(engine, std::move(pe), /*learnable=*/true);
     }
 };
@@ -405,7 +405,7 @@ public:
     {
     }
 
-    [[nodiscard]] Result<void> init(ComputeEngine& engine) override
+    [[nodiscard]] exstl::Result<void> init(ComputeEngine& engine) override
     {
         std::vector<Scalar> pe(seq_len_ * d_model_);   // 宿主桥（17 §3 D11）
         for (std::size_t pos = 0; pos < seq_len_; ++pos)
@@ -419,7 +419,7 @@ public:
         // 闭式公式（非分布/常数）仍宿主计算 → span 上传进引擎（M2 裁定：InitSpec
         // 只收分布与常数初始化；公式数据自 M4 起经 nn::upload_span，不经 Matrix）
         auto pe_t = nn::upload_span(engine, seq_len_, d_model_, p_.param, std::span(pe));
-        NN_TRY_CHECK(pe_t);
+        EX_TRY_CHECK(pe_t);
         return init_(engine, std::move(*pe_t), /*learnable=*/false);
     }
 };
@@ -440,7 +440,7 @@ private:
 public:
     explicit RopePositionEncoder(std::size_t d_k) : rope_(d_k) {}
 
-    [[nodiscard]] Result<void> init(ComputeEngine& engine) override { return rope_.init(engine); }
+    [[nodiscard]] exstl::Result<void> init(ComputeEngine& engine) override { return rope_.init(engine); }
 
     void set_precision_profile(const PrecisionProfile& p) override
     {
@@ -448,18 +448,18 @@ public:
         rope_.set_precision_profile(p);
     }
 
-    [[nodiscard]] Result<void> apply_qk(ComputeEngine& engine, Tensor& qk, std::size_t seq,
+    [[nodiscard]] exstl::Result<void> apply_qk(ComputeEngine& engine, Tensor& qk, std::size_t seq,
                                         bool backward) override
     {
-        NN_TRY(r, rope_.apply(engine, qk, seq, backward));
+        EX_TRY(r, rope_.apply(engine, qk, seq, backward));
         qk = std::move(*r);
         return {};
     }
 
-    [[nodiscard]] Result<void> apply_qk_step(ComputeEngine& engine, Tensor& qk, std::size_t pos,
+    [[nodiscard]] exstl::Result<void> apply_qk_step(ComputeEngine& engine, Tensor& qk, std::size_t pos,
                                              bool backward) override
     {
-        NN_TRY(r, rope_.apply_step(engine, qk, pos, backward));
+        EX_TRY(r, rope_.apply_step(engine, qk, pos, backward));
         qk = std::move(*r);
         return {};
     }
@@ -495,7 +495,7 @@ public:
     [[nodiscard]] std::size_t num_heads() const noexcept { return num_heads_; }
     [[nodiscard]] bool has_score_bias() const noexcept override { return true; }
 
-    [[nodiscard]] Result<void> prepare_score_bias(ComputeEngine& engine, std::size_t batch,
+    [[nodiscard]] exstl::Result<void> prepare_score_bias(ComputeEngine& engine, std::size_t batch,
                                                   std::size_t seq) override
     {
         if (slopes_cache_.valid() && cached_batch_ == batch && cached_seq_ == seq) return {};
@@ -506,7 +506,7 @@ public:
         for (std::size_t b = 0; b < batch; ++b)
             for (std::size_t h = 0; h < num_heads_; ++h)
                 s[b * num_heads_ + h] = slopes_[h];
-        NN_TRY(t, nn::upload_span(engine, 1, BH, Precision::F32, std::span(s)));
+        EX_TRY(t, nn::upload_span(engine, 1, BH, Precision::F32, std::span(s)));
         slopes_cache_ = std::move(*t);
         // ② 反向行表 (rows,1)：row_broadcast 按全局行号直读 → 不需要 grid 的
         //    batch 分解（不能依赖 matmul 段，见 apply_score_bias 注释）
@@ -516,9 +516,9 @@ public:
             sr[r] = slopes_[(r / seq) % num_heads_];
             pr[r] = static_cast<Scalar>(r % seq);
         }
-        NN_TRY(tr, nn::upload_span(engine, rows, 1, Precision::F32, std::span(sr)));
+        EX_TRY(tr, nn::upload_span(engine, rows, 1, Precision::F32, std::span(sr)));
         slope_row_cache_ = std::move(*tr);
-        NN_TRY(tp, nn::upload_span(engine, rows, 1, Precision::F32, std::span(pr)));
+        EX_TRY(tp, nn::upload_span(engine, rows, 1, Precision::F32, std::span(pr)));
         pos_row_cache_ = std::move(*tp);
         cached_batch_ = batch;
         cached_seq_ = seq;
@@ -542,13 +542,13 @@ public:
     //   （实测 |bias| 达 27，而理论界为 (seq−1)·m_0≈7，alibi gradcheck 直接失败）。
     //   (rows,1) 行表 + row_broadcast 按**全局行号**直读，语义与网格分解无关，
     //   因而独立成步也正确。表长 O(B·H·seq)，与掩码的 doc 缓存同量级。
-    [[nodiscard]] Result<void> apply_score_bias(ComputeEngine& engine, Tensor& score,
+    [[nodiscard]] exstl::Result<void> apply_score_bias(ComputeEngine& engine, Tensor& score,
                                                 std::size_t /*BH*/, std::size_t /*seq*/) override
     {
         // RV-01：缓存未准备时下面的 row_broadcast 会读空张量 → 无条件终止
-        NN_ASSERT_ALWAYS(slope_row_cache_.valid() && pos_row_cache_.valid(),
+        EX_ASSERT_ALWAYS(slope_row_cache_.valid() && pos_row_cache_.valid(),
                          "AlibiPositionEncoder: prepare_score_bias 未被调用");
-        NN_TRY(res, dsl::compute(engine,
+        EX_TRY(res, dsl::compute(engine,
                                  dsl::leaf(score) +
                                      dsl::row_broadcast(slope_row_cache_) *
                                          (dsl::col() - dsl::row_broadcast(pos_row_cache_)),
@@ -559,7 +559,7 @@ public:
 
     // 增量推理：scores 布局 (H, new_len)，new_len = cur_len + 1；
     // query 在位置 cur_len，key 在位置 j → 偏置 = −slope[h] · (cur_len − j)
-    [[nodiscard]] Result<Tensor> apply_bias_step(ComputeEngine& engine, Tensor&& scores,
+    [[nodiscard]] exstl::Result<Tensor> apply_bias_step(ComputeEngine& engine, Tensor&& scores,
                                                  std::size_t cur_len,
                                                  const PrecisionProfile& p) const override
     {
@@ -576,7 +576,7 @@ public:
         }
         auto bias_t =
             nn::upload_span(engine, num_heads_, new_len, Precision::F32, std::span(bias));
-        NN_TRY_CHECK(bias_t);
+        EX_TRY_CHECK(bias_t);
         return dsl::compute(engine, dsl::leaf(scores) + dsl::leaf(*bias_t), scores.rows(),
                             scores.cols(), p.compute);
     }

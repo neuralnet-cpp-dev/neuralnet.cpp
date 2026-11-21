@@ -1,4 +1,4 @@
-// ── threadpool_test — core_threadpool.hpp：ThreadPool 本体 ──────────────────
+﻿// ── threadpool_test — core_threadpool.hpp：exstl::ThreadPool 本体 ──────────────────
 // 覆盖：
 //   1. 构造（指定线程数 / 0 → 回落 1）与析构（任务排空后线程退出）
 //   2. parallel_for_each：全覆盖（每元素恰好访问一次）、空区间、单元素
@@ -19,6 +19,7 @@
 int g_fail = 0;
 
 #include "test_common.hpp"
+#include <exstl/threadpool.hpp>
 import nn.core;
 
 namespace
@@ -28,7 +29,7 @@ void test_construction()
 {
     std::printf("构造/析构:\n");
     {
-        nn::ThreadPool pool(4);
+        exstl::ThreadPool pool(4);
         CHECK(pool.size() == 4, "指定 4 线程构造 → size()==4");
         // 构造出的线程真实可用：并行区 4 样本恰好各执行一次
         std::atomic<int> done{0};
@@ -36,14 +37,14 @@ void test_construction()
         CHECK(done.load() == 4, "指定线程池并行区 4 样本全覆盖");
     }
     {
-        nn::ThreadPool pool(0);
+        exstl::ThreadPool pool(0);
         CHECK(pool.size() == 1, "0 线程回落 1 → size()==1");
     }
     // 析构（持锁置 stop_ + notify + join）无残留：随后新建的池仍能走完整
     // 并行路径（latch/cv/队列）并全覆盖 —— 上一轮 join 若吞线程/死锁，
     // 本段会失败或挂住。
     {
-        nn::ThreadPool pool(2);
+        exstl::ThreadPool pool(2);
         std::vector<int> hits(4096, 0);
         pool.parallel_for_each(hits.begin(), hits.end(), [](int& v) { ++v; });
         bool full = true;
@@ -56,7 +57,7 @@ void test_construction()
 void test_parallel_for_each_full_coverage()
 {
     std::printf("parallel_for_each 全覆盖:\n");
-    nn::ThreadPool pool(4);
+    exstl::ThreadPool pool(4);
     // 200k 元素 > MIN_CHUNK(1024)*2 → 必然分多块
     constexpr std::size_t kN = 200000;
     std::vector<int> hits(kN, 0);
@@ -90,7 +91,7 @@ void test_parallel_for_each_full_coverage()
 void test_parallel_for_each_indexed()
 {
     std::printf("parallel_for_each_indexed worker 索引:\n");
-    nn::ThreadPool pool(4);
+    exstl::ThreadPool pool(4);
     constexpr std::size_t kN = 200000;
     constexpr std::size_t kThreads = 4;
     std::vector<int> hits(kN, 0);
@@ -110,7 +111,7 @@ void test_parallel_for_each_indexed()
 
     // 单线程回落：index 恒 0
     std::vector<int> one_hits(100, 0);
-    nn::ThreadPool single(1);
+    exstl::ThreadPool single(1);
     std::atomic<std::size_t> nonzero{0};
     single.parallel_for_each_indexed(one_hits.begin(), one_hits.end(),
                                      [&](int&, std::size_t wi)
@@ -123,7 +124,7 @@ void test_parallel_for_each_indexed()
 void test_parallel_for_blocks_and_samples()
 {
     std::printf("parallel_for_blocks / parallel_for_samples:\n");
-    nn::ThreadPool pool(4);
+    exstl::ThreadPool pool(4);
 
     // blocks：块数 <= 线程数，但每块仍完整覆盖
     std::vector<int> hits(64, 0);
@@ -158,7 +159,7 @@ void test_parallel_for_blocks_and_samples()
 void test_transform_and_reduce()
 {
     std::printf("parallel transform / transform_reduce:\n");
-    nn::ThreadPool pool(4);
+    exstl::ThreadPool pool(4);
     // 200k 触发并行路径（chunk_count 多块）
     constexpr std::size_t kN = 200000;
     std::vector<float> in(kN), out(kN, 0.0f);
@@ -200,7 +201,7 @@ void test_repeated_small_regions()
     // 历史回归：latch 归零 + notify 不持 queue_mutex_ 会丢唤醒 → 必死锁。
     // 小并行区压测（持锁 notify 修复后应稳定通过）；回调计数断言全部执行。
     std::printf("重复小并行区压测（latch/cv 回归）:\n");
-    nn::ThreadPool pool(4);
+    exstl::ThreadPool pool(4);
     std::atomic<int> calls{0};
     for (int iter = 0; iter < 10000; ++iter)
     {

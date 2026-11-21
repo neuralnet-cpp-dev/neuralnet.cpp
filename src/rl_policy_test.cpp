@@ -8,7 +8,7 @@
 //   [5] objective 的无上下文 Loss 入口明确报错。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>
@@ -42,7 +42,7 @@ nn::Tensor matrix_tensor(nn::ComputeEngine& engine, std::size_t rows, std::size_
                          std::initializer_list<float> values)
 {
     nn::Matrix m(rows, cols);
-    NN_ASSERT_ALWAYS(values.size() == m.size(), "matrix_tensor size");
+    EX_ASSERT_ALWAYS(values.size() == m.size(), "matrix_tensor size");
     auto span = m.span();
     std::size_t i = 0;
     for (float v : values)
@@ -66,26 +66,26 @@ private:
     nn::CategoricalDistribution inner_;
 
 public:
-    [[nodiscard]] nn::Result<nn::Tensor> log_prob(nn::ComputeEngine& engine,
+    [[nodiscard]] exstl::Result<nn::Tensor> log_prob(nn::ComputeEngine& engine,
                                                   const nn::Tensor& parameters,
                                                   const nn::Tensor& actions) const override
     { return inner_.log_prob(engine, parameters, actions); }
 
-    [[nodiscard]] nn::Result<nn::Tensor> entropy(nn::ComputeEngine& engine,
+    [[nodiscard]] exstl::Result<nn::Tensor> entropy(nn::ComputeEngine& engine,
                                                  const nn::Tensor& parameters) const override
     { return inner_.entropy(engine, parameters); }
 
-    [[nodiscard]] nn::Result<Evaluation>
+    [[nodiscard]] exstl::Result<Evaluation>
     log_prob_with_gradient(nn::ComputeEngine& engine, const nn::Tensor& parameters,
                            const nn::Tensor& actions, const nn::Tensor& upstream) const override
     { return inner_.log_prob_with_gradient(engine, parameters, actions, upstream); }
 
-    [[nodiscard]] nn::Result<Evaluation>
+    [[nodiscard]] exstl::Result<Evaluation>
     entropy_with_gradient(nn::ComputeEngine& engine, const nn::Tensor& parameters,
                           const nn::Tensor& upstream) const override
     { return inner_.entropy_with_gradient(engine, parameters, upstream); }
 
-    [[nodiscard]] nn::Result<SampleResult> sample(nn::ComputeEngine& engine,
+    [[nodiscard]] exstl::Result<SampleResult> sample(nn::ComputeEngine& engine,
                                                   const nn::Tensor& parameter_mesh,
                                                   std::uint64_t seed) const override
     { return inner_.sample(engine, parameter_mesh, seed); }
@@ -122,7 +122,7 @@ nn::TensorSchema fixture_schema()
 {
     auto r = nn::ExperienceSchema::create(
         {"action", "action_mask", "advantage", "return", "old_value", "old_log_prob"});
-    NN_ASSERT_ALWAYS(r, "fixture schema");
+    EX_ASSERT_ALWAYS(r, "fixture schema");
     return r->schema();
 }
 
@@ -133,12 +133,12 @@ struct Fixture
     nn::PolicyBatchView view;
 };
 
-nn::Result<Fixture> make_fixture(nn::ComputeEngine& engine, nn::Tensor logits, nn::Tensor actions,
+exstl::Result<Fixture> make_fixture(nn::ComputeEngine& engine, nn::Tensor logits, nn::Tensor actions,
                                  nn::Tensor mask, nn::Tensor advantage, nn::Tensor returns,
                                  nn::Tensor old_value, nn::Tensor old_log_prob)
 {
     (void)engine;
-    NN_TRY(record,
+    EX_TRY(record,
            nn::TensorRecord::create(
                fixture_schema(), {nn::NamedTensor{.name = "action", .value = actions},
                                   nn::NamedTensor{.name = "action_mask", .value = mask},
@@ -150,7 +150,7 @@ nn::Result<Fixture> make_fixture(nn::ComputeEngine& engine, nn::Tensor logits, n
     Fixture out;
     out.logits = std::move(logits);
     out.record = std::make_unique<nn::TensorRecord>(std::move(*record));
-    NN_TRY(stable_view, nn::PolicyBatchView::create(*out.record));
+    EX_TRY(stable_view, nn::PolicyBatchView::create(*out.record));
     out.view = std::move(*stable_view);
     return out;
 }

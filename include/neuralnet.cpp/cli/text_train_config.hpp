@@ -27,7 +27,7 @@
 #include <vector>
 
 #include "neuralnet.cpp/core_config.hpp"        // nn::Scalar
-#include "neuralnet.cpp/core_errors.hpp"        // nn::parse_number
+#include <exstl/errors.hpp>        // exstl::parse_number
 #include "neuralnet.cpp/compute_optimizer.hpp"  // nn::find_optimizer / optimizer_names
 #include "neuralnet.cpp/domain_gpt.hpp"         // GPT_* 默认形状
 #include "neuralnet.cpp/model_spec.hpp"         // PosEncodingType / ActivationType / NormType
@@ -275,7 +275,7 @@ inline constexpr std::string_view kForbiddenResumeFlags[] = {
 // **必须在两处校验**：① argparse 结束；② `--resume` 的 adopt_resume_state 之后
 // （adopt 会用断点状态段覆盖 cfg.precision，只看解析后的默认值会被绕开 ⇒ 变成
 // 运行期才在首个 block 失败）。返回空 = 合法；否则返回用户可见文案，由调用方
-// 决定出口（argparse 层 `std::exit`；`run_text_train` 经 `NN_FAIL` 走 `Result`，
+// 决定出口（argparse 层 `std::exit`；`run_text_train` 经 `EX_FAIL` 走 `Result`，
 // 保持"三模块不终止进程"不变量）。
 [[nodiscard]] inline std::optional<std::string>
 precision_offload_combo_error(const TrainConfig& cfg)
@@ -317,7 +317,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--resume-epoch" && i + 1 < argc)
         {
-            auto v = nn::parse_number<int>(argv[++i]);
+            auto v = exstl::parse_number<int>(argv[++i]);
             if (!v || *v < 0)
             {
                 std::cerr << "无效 --resume-epoch: " << argv[i] << "\n";
@@ -327,7 +327,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--resume-step" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --resume-step: " << argv[i] << "\n";
@@ -337,7 +337,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--epochs" && i + 1 < argc)
         {
-            auto v = nn::parse_number<int>(argv[++i]);
+            auto v = exstl::parse_number<int>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --epochs: " << v.error().message << "\n";
@@ -347,7 +347,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--lr" && i + 1 < argc)
         {
-            auto v = nn::parse_number<Scalar>(argv[++i]);
+            auto v = exstl::parse_number<Scalar>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --lr: " << v.error().message << "\n";
@@ -357,7 +357,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--batch-size" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --batch-size: " << v.error().message << "\n";
@@ -372,7 +372,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--accum-steps" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --accum-steps: " << v.error().message << "\n";
@@ -387,7 +387,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--seq-len" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --seq-len: " << v.error().message << "\n";
@@ -397,7 +397,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--stride" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --stride: " << v.error().message << "\n";
@@ -418,7 +418,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--weight-decay" && i + 1 < argc)
         {
-            auto v = nn::parse_number<Scalar>(argv[++i]);
+            auto v = exstl::parse_number<Scalar>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --weight-decay: " << v.error().message << "\n";
@@ -428,7 +428,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--beta1" && i + 1 < argc)
         {
-            auto v = nn::parse_number<Scalar>(argv[++i]);
+            auto v = exstl::parse_number<Scalar>(argv[++i]);
             if (!v || *v <= 0 || *v >= 1)
             {
                 std::cerr << "--beta1 须在 (0, 1) 区间内\n";
@@ -438,7 +438,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--beta2" && i + 1 < argc)
         {
-            auto v = nn::parse_number<Scalar>(argv[++i]);
+            auto v = exstl::parse_number<Scalar>(argv[++i]);
             if (!v || *v <= 0 || *v >= 1)
             {
                 std::cerr << "--beta2 须在 (0, 1) 区间内\n";
@@ -448,7 +448,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--d-model" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --d-model: " << v.error().message << "\n";
@@ -458,7 +458,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--num-heads" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --num-heads: " << v.error().message << "\n";
@@ -468,7 +468,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--num-layers" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --num-layers: " << v.error().message << "\n";
@@ -478,7 +478,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--d-ff" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --d-ff: " << v.error().message << "\n";
@@ -500,7 +500,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--log-interval" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --log-interval: " << v.error().message << "\n";
@@ -510,7 +510,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--save-interval" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --save-interval: " << v.error().message << "\n";
@@ -520,7 +520,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--max-steps" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --max-steps: " << v.error().message << "\n";
@@ -590,7 +590,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--warmup-epochs" && i + 1 < argc)
         {
-            auto v = nn::parse_number<int>(argv[++i]);
+            auto v = exstl::parse_number<int>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --warmup-epochs: " << v.error().message << "\n";
@@ -600,7 +600,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--warmup-steps" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --warmup-steps: " << v.error().message << "\n";
@@ -610,7 +610,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--min-lr" && i + 1 < argc)
         {
-            auto v = nn::parse_number<Scalar>(argv[++i]);
+            auto v = exstl::parse_number<Scalar>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --min-lr: " << v.error().message << "\n";
@@ -625,7 +625,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
             std::string token;
             while (std::getline(ss, token, ','))
             {
-                auto v = nn::parse_number<Scalar>(token);
+                auto v = exstl::parse_number<Scalar>(token);
                 if (!v)
                 {
                     std::cerr << "无效 --lr-per-epoch 值: " << v.error().message << "\n";
@@ -636,7 +636,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--max-norm" && i + 1 < argc)
         {
-            auto v = nn::parse_number<Scalar>(argv[++i]);
+            auto v = exstl::parse_number<Scalar>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --max-norm: " << v.error().message << "\n";
@@ -683,7 +683,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--flush-interval" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --flush-interval: " << v.error().message << "\n";
@@ -693,7 +693,7 @@ inline TrainConfig parse_text_train_args(int argc, char* argv[])  // inline：�
         }
         else if (arg == "--checkpoint-every" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --checkpoint-every: " << v.error().message << "\n";

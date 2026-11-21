@@ -11,7 +11,7 @@
 //   [6] 断点状态段的旧键 `dataset_windows` 兼容读（rc0 → rc0.1）
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -75,7 +75,7 @@ std::string make_dataset_file(const std::string& path,
     if (!wr)
     {
         std::printf("[debug] write_nndataset: %s\n", wr.error().message.c_str());
-        NN_ASSERT_ALWAYS(wr, "dataset_samples_test: write_nndataset 失败");
+        EX_ASSERT_ALWAYS(wr, "dataset_samples_test: write_nndataset 失败");
     }
     write_file(path,
                nn::write_file_label(nn::NNDATASET_MAGIC, nn::NNDATASET_FILE_VERSION) + oss.str());

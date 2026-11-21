@@ -25,7 +25,7 @@
 #include <string>
 #include <vector>
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 // P5：聚合头 → 域导入（import 面 = nn.hpp 覆盖的全部域，宁多勿少）
 
 #include "test_common.hpp"
@@ -307,13 +307,13 @@ void test_gpt_model_generate()
     const std::size_t vocab = 32, d_model = 16, seq = 8, heads = 2, d_ff = 32;
     nn::GPTModel model(vocab, d_model, seq, heads, d_ff, /*layers=*/1, nn::PosEncodingType::Learned,
                        nn::ActivationType::SwiGLU, nn::NormType::RMSNorm);
-    NN_EXIT(model.init(eng), 1, "GPTModel init 失败: ");
+    EX_EXIT(model.init(eng), 1, "GPTModel init 失败: ");
 
     const std::vector<std::size_t> prompt = {1, 2, 3};
     auto run = [&](const SamplingConfig& cfg)
     {
         auto r = model.generate(eng, prompt, /*max_new_tokens=*/5, cfg);
-        NN_EXIT(r, 1, "GPTModel::generate 失败: ");
+        EX_EXIT(r, 1, "GPTModel::generate 失败: ");
         return *r;
     };
 

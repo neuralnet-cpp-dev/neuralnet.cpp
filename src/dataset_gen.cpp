@@ -10,7 +10,7 @@
 //              [--license <file>] [--source <name>]
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <chrono>
 #include <fstream>
@@ -119,7 +119,7 @@ struct SubsetBuild
     std::size_t asst_tokens = 0;
 };
 
-nn::Result<SubsetBuild> build_subset(const nn::Tokenizer& tokenizer,
+exstl::Result<SubsetBuild> build_subset(const nn::Tokenizer& tokenizer,
                                      const std::vector<std::string>& docs, bool need_mask,
                                      std::string_view name)
 {
@@ -135,7 +135,7 @@ nn::Result<SubsetBuild> build_subset(const nn::Tokenizer& tokenizer,
             out.asst_tokens += m;
     }
     if (out.asst_tokens == 0)
-        NN_FAIL(std::string(name) + "中未找到 <|assistant|> 段（--loss-scope assistant "
+        EX_FAIL(std::string(name) + "中未找到 <|assistant|> 段（--loss-scope assistant "
                                     "要求语料含对话标记）");
     return out;
 }
@@ -148,7 +148,7 @@ int main(int argc, char* argv[])
 
     // ── 词表（必需：词表从配套嵌入，tokenizer_train 先行）──────────
     auto tok_r = nn::load_tokenizer_from_file(cfg.vocab_path);
-    NN_EXIT(tok_r, 1, "加载词表失败: ");
+    EX_EXIT(tok_r, 1, "加载词表失败: ");
     std::unique_ptr<nn::Tokenizer> tokenizer = std::move(*tok_r);
     if (need_mask && !tokenizer->has_dialogue_markers())
     {
@@ -158,7 +158,7 @@ int main(int argc, char* argv[])
 
     // ── 读文本（trim/过滤规则与原 text_train read_file_lines 逐字一致）──
     auto train_lines_r = nn::read_text_docs(cfg.text_path);
-    NN_EXIT(train_lines_r, 1, "读取训练文本失败: ");
+    EX_EXIT(train_lines_r, 1, "读取训练文本失败: ");
     const std::vector<std::string>& train_lines = *train_lines_r;
     if (train_lines.empty())
     {
@@ -169,18 +169,18 @@ int main(int argc, char* argv[])
     if (!cfg.test_path.empty())
     {
         auto test_lines_r = nn::read_text_docs(cfg.test_path);
-        NN_EXIT(test_lines_r, 1, "读取测试文本失败: ");
+        EX_EXIT(test_lines_r, 1, "读取测试文本失败: ");
         test_lines = std::move(*test_lines_r);
     }
 
     // ── tokenize（保序并行 + 进度条）+ 掩码 ──────────────────────────
     auto train_r = build_subset(*tokenizer, train_lines, need_mask, "训练集");
-    NN_EXIT(train_r, 1, "生成训练子集失败: ");
+    EX_EXIT(train_r, 1, "生成训练子集失败: ");
     std::optional<SubsetBuild> test_build;
     if (!test_lines.empty())
     {
         auto test_r = build_subset(*tokenizer, test_lines, need_mask, "测试集");
-        NN_EXIT(test_r, 1, "生成测试子集失败: ");
+        EX_EXIT(test_r, 1, "生成测试子集失败: ");
         test_build = std::move(*test_r);
     }
 
@@ -194,7 +194,7 @@ int main(int argc, char* argv[])
 
     // ── 配套：源摘要（内容 sha256，不是文件大小）/ license / 生成参数 ──
     auto text_bytes_r = nn::load_text_file(cfg.text_path);
-    NN_EXIT(text_bytes_r, 1, "读取训练文本失败: ");
+    EX_EXIT(text_bytes_r, 1, "读取训练文本失败: ");
 
     nn::NndatasetBuild build;
     build.vocab_kvrec = tokenizer->to_kvrec();
@@ -215,7 +215,7 @@ int main(int argc, char* argv[])
     if (!cfg.license_path.empty())
     {
         auto lic_r = nn::load_text_file(cfg.license_path);
-        NN_EXIT(lic_r, 1, "读取许可文件失败: ");
+        EX_EXIT(lic_r, 1, "读取许可文件失败: ");
         build.license_text = std::move(*lic_r);
     }
 
@@ -229,7 +229,7 @@ int main(int argc, char* argv[])
     const std::string label = nn::write_file_label(nn::NNDATASET_MAGIC, nn::NNDATASET_FILE_VERSION);
     ofs.write(label.data(), static_cast<std::streamsize>(label.size()));
     auto wr = nn::write_nndataset(ofs, build);
-    NN_EXIT(wr, 1, "写 .nndataset 失败: ");
+    EX_EXIT(wr, 1, "写 .nndataset 失败: ");
     ofs.close();
 
     std::cout << "数据集已生成: " << cfg.output_path << "\n"

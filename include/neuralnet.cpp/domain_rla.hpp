@@ -15,7 +15,7 @@
 #include <cstddef>
 #include <string>
 
-#include <neuralnet.cpp/core_errors.hpp>
+#include <exstl/errors.hpp>
 #include "compute_engine.hpp"
 #include "model_container.hpp"
 #include "model_spec.hpp"
@@ -42,34 +42,34 @@ struct RAPTConfig
 };
 
 // ── 构建 RAPT 模型（推荐使用） ─────────────────────────────────────────
-[[nodiscard]] inline Result<Model> build_rapt_model(ComputeEngine& engine, const RAPTConfig& cfg)
+[[nodiscard]] inline exstl::Result<Model> build_rapt_model(ComputeEngine& engine, const RAPTConfig& cfg)
 {
     if (cfg.d_model == 0 || cfg.num_heads == 0 || cfg.seq_len == 0 || cfg.vocab_size == 0 ||
         cfg.d_ff == 0 || cfg.num_layers == 0)
-        NN_FAIL("RAPT model parameters must be positive");
-    if (cfg.d_model % cfg.num_heads != 0) NN_FAIL("RAPT d_model must be divisible by num_heads");
+        EX_FAIL("RAPT model parameters must be positive");
+    if (cfg.d_model % cfg.num_heads != 0) EX_FAIL("RAPT d_model must be divisible by num_heads");
     // RLA 强约束：RoPE 需偶数 d_k（旋转块）；v1 只支持 RoPE
     if (cfg.pos_enc != PosEncodingType::RoPE)
-        NN_FAIL("RAPT v1 requires pos_enc == RoPE (RLA constraint)");
+        EX_FAIL("RAPT v1 requires pos_enc == RoPE (RLA constraint)");
     if ((cfg.d_model / cfg.num_heads) % 2 != 0)
-        NN_FAIL("RAPT requires even d_k (RoPE) — d_model/num_heads must be even");
+        EX_FAIL("RAPT requires even d_k (RoPE) — d_model/num_heads must be even");
     Model model(engine);
     {
         auto r = model.add<RAPTModel>(cfg.vocab_size, cfg.d_model, cfg.seq_len, cfg.num_heads,
                                       cfg.d_ff, cfg.num_layers, cfg.pos_enc, cfg.activation,
                                       cfg.norm_type, cfg.causal, cfg.precision);
-        NN_TRY_CHECK(r);
+        EX_TRY_CHECK(r);
     }
     return model;
 }
 
 // ── 从 ModelSpec 构建 RAPT 模型 ─────────────────────────────────────────
-[[nodiscard]] inline Result<Model>
+[[nodiscard]] inline exstl::Result<Model>
 build_rapt_model_from_spec(ComputeEngine& engine, const ModelSpec& spec,
                            PrecisionProfile precision = PrecisionProfile{})
 {
     const auto* r = spec.as<RaptSpec>();
-    if (r == nullptr) NN_FAIL("Invalid ModelSpec type for RAPT: expected RAPT");
+    if (r == nullptr) EX_FAIL("Invalid ModelSpec type for RAPT: expected RAPT");
     auto model =
         build_rapt_model(engine, RAPTConfig{r->vocab_size, r->d_model, r->seq_len, r->num_heads,
                                             r->d_ff, r->num_layers, r->pos_encoding, r->activation,

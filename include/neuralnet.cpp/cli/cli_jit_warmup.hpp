@@ -10,7 +10,7 @@
 // 约定：
 //   · CPU 引擎直接跳过（模板路径无需预热）；
 //   · `--no-warmup`（各 app 的布尔开关）跳过；
-//   · 失败经 `Result` 返回，由调用方 `NN_TRY_MSG(..., "预热失败", ...)` 上抛（不静默降级）。
+//   · 失败经 `Result` 返回，由调用方 `EX_TRY_MSG(..., "预热失败", ...)` 上抛（不静默降级）。
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 
@@ -27,13 +27,13 @@ namespace nn::cli
 
 // 跑一遍代表性 forward（输入形状由调用方按架构构造：值不重要、形状重要——
 // JIT 键只含结构；GPU 才执行）。
-[[nodiscard]] inline Result<void> jit_warmup(Model& model, ComputeEngine& engine,
+[[nodiscard]] inline exstl::Result<void> jit_warmup(Model& model, ComputeEngine& engine,
                                              const Tensor& input, bool enabled)
 {
     if (!enabled) return {};
     if (engine.device() == Device::CPU) return {};
     const auto t0 = std::chrono::steady_clock::now();
-    NN_TRY(r, model_warmup(model, input));
+    EX_TRY(r, model_warmup(model, input));
     (void)r;
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now() - t0)

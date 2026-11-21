@@ -15,7 +15,7 @@
 //   --layers N  Transformer 层数（默认 2）
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -298,14 +298,14 @@ int main(int argc, char* argv[])
         else if (arg == "--no-batch") use_batch = false;
         else if (arg == "--seq" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
-            NN_EXIT(v, 1, "无效 --seq\n");
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
+            EX_EXIT(v, 1, "无效 --seq\n");
             seq_len = *v;
         }
         else if (arg == "--layers" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
-            NN_EXIT(v, 1, "无效 --layers\n");
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
+            EX_EXIT(v, 1, "无效 --layers\n");
             num_layers = *v;
         }
         else if (arg == "--help")
@@ -334,7 +334,7 @@ int main(int argc, char* argv[])
     nn::cli::EngineConfig cfg;
     cfg.use_gpu = use_gpu;
     auto engine_res = nn::cli::create_engine(cfg, std::cout);
-    NN_EXIT(engine_res, 1, "引擎创建失败: ");
+    EX_EXIT(engine_res, 1, "引擎创建失败: ");
     auto engine = std::move(*engine_res);
 
     bool all_pass = true;

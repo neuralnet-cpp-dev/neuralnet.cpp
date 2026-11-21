@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 import nn.train;
 
 static int g_fail = 0;
@@ -42,7 +42,7 @@ void test_step_grid()
     std::cout << "\n── [1] 步网格 = ceil(n/batch)，末批不满 ──\n";
     auto src_r = nn::IndexedBatchSource::create(
         /*sample_count=*/10, /*batch_size=*/4, /*seed=*/7,
-        [](std::span<const std::size_t> ix) -> nn::Result<std::pair<std::any, std::size_t>>
+        [](std::span<const std::size_t> ix) -> exstl::Result<std::pair<std::any, std::size_t>>
         {
             // 载荷 = 下标和（便于断言）；单位 = 下标个数
             std::size_t sum = 0;
@@ -74,7 +74,7 @@ void test_shuffle_determinism()
 {
     std::cout << "\n── [2] 每 epoch shuffle：同 seed/epoch 复现，跨 epoch 变化 ──\n";
     auto assemble =
-        [](std::span<const std::size_t> ix) -> nn::Result<std::pair<std::any, std::size_t>>
+        [](std::span<const std::size_t> ix) -> exstl::Result<std::pair<std::any, std::size_t>>
     { return std::make_pair(std::any(), ix.size()); };
 
     auto a_r = nn::IndexedBatchSource::create(32, 8, 42, assemble);
@@ -114,7 +114,7 @@ void test_rewind_validation()
     std::cout << "\n── [3] rewind：start_step 越界报错 ──\n";
     auto src_r = nn::IndexedBatchSource::create(
         10, 4, 1,
-        [](std::span<const std::size_t> ix) -> nn::Result<std::pair<std::any, std::size_t>>
+        [](std::span<const std::size_t> ix) -> exstl::Result<std::pair<std::any, std::size_t>>
         { return std::make_pair(std::any(), ix.size()); });
     CHECK(src_r.has_value(), "create 成功");
     if (!src_r) return;
@@ -128,7 +128,7 @@ void test_ctor_validation()
 {
     std::cout << "\n── [4] 构造期校验：batch_size=0 / sample=0 / 空回调 ──\n";
     auto assemble =
-        [](std::span<const std::size_t> ix) -> nn::Result<std::pair<std::any, std::size_t>>
+        [](std::span<const std::size_t> ix) -> exstl::Result<std::pair<std::any, std::size_t>>
     { return std::make_pair(std::any(), ix.size()); };
 
     CHECK(!nn::IndexedBatchSource::create(10, 0, 1, assemble).has_value(), "batch_size=0 → 报错");
@@ -145,7 +145,7 @@ void test_payload()
     std::cout << "\n── [5] 载荷：any 指针形式（-fno-exceptions 安全）──\n";
     auto src_r = nn::IndexedBatchSource::create(
         6, 3, 9,
-        [](std::span<const std::size_t> ix) -> nn::Result<std::pair<std::any, std::size_t>>
+        [](std::span<const std::size_t> ix) -> exstl::Result<std::pair<std::any, std::size_t>>
         {
             std::string tag = "batch:" + std::to_string(ix.size());
             return std::make_pair(std::any(std::move(tag)), ix.size() * 10);
@@ -167,7 +167,7 @@ void test_payload()
 class StepOnlySource : public nn::BatchSource
 {
 public:
-    [[nodiscard]] nn::Result<nn::BatchAt> next(std::size_t hint) override
+    [[nodiscard]] exstl::Result<nn::BatchAt> next(std::size_t hint) override
     {
         nn::BatchAt b;
         b.samples = 4;

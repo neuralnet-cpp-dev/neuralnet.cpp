@@ -7,7 +7,7 @@
 // 用法：softmax_gradcheck [--gpu] [--rows N] [--cols N] [--tol <f>]
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <cmath>
 #include <cstdlib>
@@ -114,7 +114,7 @@ int main(int argc, char* argv[])
     nn::cli::EngineConfig ecfg;
     ecfg.use_gpu = use_gpu;
     auto engine_res = nn::cli::create_engine(ecfg, std::cout);
-    NN_EXIT(engine_res, 1, "引擎创建失败: ");
+    EX_EXIT(engine_res, 1, "引擎创建失败: ");
     auto engine = std::move(*engine_res);
     ComputeEngine& eng = *engine;
 

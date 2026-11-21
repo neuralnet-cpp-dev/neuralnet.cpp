@@ -39,7 +39,7 @@ export namespace nn {
     using nn::EXPR_MAX_REGS;
     using nn::EXPR_PREC_DISPATCH_SUFFIX;
     using nn::EXPR_PREC_SIG_DISPATCH;
-    using nn::Error;
+    using exstl::Error;
     using nn::ExprGraph;
     using nn::ExprInstr;
     using nn::ExprOp;
@@ -56,10 +56,10 @@ export namespace nn {
     using nn::MatrixT;
     using nn::NamedTensor;
     using nn::NamedTensorSet;
-    using nn::PARALLEL_THRESHOLD;
+    using exstl::PARALLEL_THRESHOLD;
     using nn::Precision;
     using nn::PrecisionProfile;
-    using nn::Result;
+    using exstl::Result;
     using nn::Scalar;
     using nn::Tensor;
     using nn::TensorFieldSpec;
@@ -67,7 +67,7 @@ export namespace nn {
     using nn::TensorRef;
     using nn::TensorSchema;
     using nn::TensorShapeSpec;
-    using nn::ThreadPool;
+    using exstl::ThreadPool;
     using nn::VecAccSpec;
     using nn::canonicalize_expr_spec;
     using nn::check_precision_supported;
@@ -82,15 +82,15 @@ export namespace nn {
     using nn::expr_spec_reduce_axis;
     using nn::expr_spec_runtime_matmul_trans;
     using nn::f16;
-    using nn::for_each;
+    using exstl::for_each;
     using nn::fuse_expr_graph;
-    using nn::global_thread_pool;
+    using exstl::global_thread_pool;
     using nn::is_profile_f32;
     using nn::kHostDomain;
     using nn::max_precision;
-    using nn::parallel_for_blocks;
-    using nn::parallel_for_samples;
-    using nn::parse_number;
+    using exstl::parallel_for_blocks;
+    using exstl::parallel_for_samples;
+    using exstl::parse_number;
     using nn::precision_bytes;
     using nn::precision_from_tag;
     using nn::precision_has_order;
@@ -103,8 +103,8 @@ export namespace nn {
     using nn::profile_master_weights;
     using nn::profile_t1_58;
     using nn::tensor_field;
-    using nn::transform;
-    using nn::transform_reduce;
+    using exstl::transform;
+    using exstl::transform_reduce;
     using nn::validate_dst_order;
     using nn::validate_expr_spec;
     namespace dsl {

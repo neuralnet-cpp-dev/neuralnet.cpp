@@ -5,7 +5,7 @@
 //       MHA 双向语义探针（fold 掩码回归钉子）+ CPU/GPU 一致性
 // ───────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cstdio>
 #include <iostream>
 
@@ -65,7 +65,7 @@ static int mha_bidirectional_probe()
 {
     int failures = 0;
     auto cpu_res = nn::cli::create_engine(nn::cli::EngineConfig{}, std::cout);
-    NN_EXIT(cpu_res, 1, "MHA probe: CPU 引擎创建失败\n");
+    EX_EXIT(cpu_res, 1, "MHA probe: CPU 引擎创建失败\n");
     nn::ComputeEngine& cpu = **cpu_res;
 
     const std::size_t d_model = 16, heads = 2, seq = 4, batch = 2;
@@ -96,7 +96,7 @@ static int mha_bidirectional_probe()
 
     // ── CPU 半场：MHA 必须敏感（双向），CSA 必须不敏感（因果阴性对照）──
     nn::MultiHeadAttention attn_c(d_model, heads, seq);
-    NN_EXIT(attn_c.init(cpu), 1, "MHA cpu init: ");
+    EX_EXIT(attn_c.init(cpu), 1, "MHA cpu init: ");
     auto t1 = cpu.from_matrix(x1);
     auto t2 = cpu.from_matrix(x2);
     if (!t1 || !t2)
@@ -126,7 +126,7 @@ static int mha_bidirectional_probe()
     if (!mha_ok) ++failures;
 
     nn::CausalSelfAttention attn_cs_c(d_model, heads, seq, seq, nn::PosEncodingType::Learned);
-    NN_EXIT(attn_cs_c.init(cpu), 1, "CSA cpu init: ");
+    EX_EXIT(attn_cs_c.init(cpu), 1, "CSA cpu init: ");
     auto cy1 = attn_cs_c.forward(*t1);
     auto cy2 = attn_cs_c.forward(*t2);
     if (!cy1 || !cy2)
@@ -158,16 +158,16 @@ static int mha_bidirectional_probe()
     }
     nn::ComputeEngine& gpu = **gpu_res;
     nn::MultiHeadAttention attn_g(d_model, heads, seq);
-    NN_EXIT(attn_g.init(gpu), 1, "MHA gpu init: ");
+    EX_EXIT(attn_g.init(gpu), 1, "MHA gpu init: ");
     {   // 权重同步：CPU 随机 → GPU
         auto pc = attn_c.parameters();
         auto pg = attn_g.parameters();
         for (std::size_t i = 0; i < pc.size(); ++i)
         {
             auto cm = cpu.to_matrix(pc[i].get());
-            NN_EXIT(cm, 1, "to_matrix cpu failed\n");
+            EX_EXIT(cm, 1, "to_matrix cpu failed\n");
             auto cp = gpu.write(pg[i].get(), cm->span());
-            NN_EXIT(cp, 1, "write gpu failed: ");
+            EX_EXIT(cp, 1, "write gpu failed: ");
         }
     }
     auto g1 = gpu.from_matrix(x1);

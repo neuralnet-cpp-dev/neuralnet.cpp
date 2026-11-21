@@ -36,7 +36,7 @@
 #include <thread>
 #include <vector>
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -73,7 +73,7 @@ namespace
 // ── 训练主流程（除 CLI 参数解析外**不终止进程**；见文件头）──────────────
 // 返回值 = 进程退出码：0 = 正常；1 = 断点保存失败（详见 checkpoint 模块）。
 // 错误经 Result 交给 main 打印 + 退出码 1（P1-1 口径）。
-[[nodiscard]] nn::Result<int> run_text_train(nn::cli::TrainConfig cfg)
+[[nodiscard]] exstl::Result<int> run_text_train(nn::cli::TrainConfig cfg)
 {
     // ── 断点状态采纳（P1-2 第三刀 B）────────────────────────────────────
     // 必须**早于**建模型/建优化器/切窗口：状态段是断点的权威来源（精度 profile、
@@ -81,23 +81,23 @@ namespace
     nn::cli::ResumeStateAdoption adoption;
     if (cfg.load_existing)
     {
-        NN_TRY(adopt_r, nn::cli::adopt_resume_state(cfg, std::cout, std::cerr));
+        EX_TRY(adopt_r, nn::cli::adopt_resume_state(cfg, std::cout, std::cerr));
         adoption = std::move(*adopt_r);
         // adopt 会用断点状态段覆盖 cfg.precision：必须在覆盖之后再校验一次
         // "精度 × activation offload" 组合，否则 rc0 承诺的配置期拒绝会被绕开
         // （残余路径只能到首个 block 才由库层 fail-fast）。这里经 Result 上抛
         // （不用 std::exit），保持三模块不终止进程的不变量。
-        if (auto combo_err = nn::cli::precision_offload_combo_error(cfg)) NN_FAIL(*combo_err);
+        if (auto combo_err = nn::cli::precision_offload_combo_error(cfg)) EX_FAIL(*combo_err);
     }
 
     // ── 打开数据集（.nndataset；token 流/掩码/词表都在生成期定好）──────
     std::cout << "加载数据集: " << cfg.text_path << " ..." << std::endl;
-    NN_TRY_MSG(ds_r, "打开数据集失败", nn::Dataset::open(cfg.text_path));
+    EX_TRY_MSG(ds_r, "打开数据集失败", nn::Dataset::open(cfg.text_path));
     const nn::Dataset& dataset = *ds_r;
     const std::string& loss_scope = dataset.info().loss_scope;
 
     // 词表来自数据集配套（内嵌三层 kvrec）；保存模型时原样嵌出（模型 v6）。
-    NN_TRY_MSG(tokenizer_r, "加载数据集内嵌词表失败",
+    EX_TRY_MSG(tokenizer_r, "加载数据集内嵌词表失败",
                nn::load_tokenizer_from_kvrec(dataset.vocab_kvrec()));
     std::unique_ptr<nn::Tokenizer> tokenizer = std::move(*tokenizer_r);
     const std::string tokenizer_bytes = nn::write_nnvocab(dataset.vocab_kvrec());
@@ -106,11 +106,11 @@ namespace
     // 每样本 = 一个 seq_len 滑动窗口（可能跨 doc 边界）；目标 = 输入左移一位。
     // 窗口化策略留在训练侧（TextWindowConfig），`.nndataset` 只存 docs。
     const nn::TextWindowConfig window{cfg.seq_len, cfg.stride, tokenizer->pad_id()};
-    NN_TRY_MSG(train_samples_r, "读取训练样本集失败",
+    EX_TRY_MSG(train_samples_r, "读取训练样本集失败",
                nn::TextSampleSet::create(dataset, nn::DatasetSubset::Train, window));
     nn::TextSampleSet train_samples = std::move(*train_samples_r);
     if (train_samples.sample_count() == 0)
-        NN_FAIL("数据集 train 子集为空（无 token）: " + cfg.text_path);
+        EX_FAIL("数据集 train 子集为空（无 token）: " + cfg.text_path);
 
     std::optional<nn::TextSampleSet> test_samples;
     // 空 test 子集（合法文件：test 全是空 doc）⇒ 视为无 test、跳过评估；
@@ -118,7 +118,7 @@ namespace
     std::optional<std::size_t> empty_test_tokens;
     if (dataset.info().test_docs > 0)
     {
-        NN_TRY_MSG(test_samples_r, "读取测试样本集失败",
+        EX_TRY_MSG(test_samples_r, "读取测试样本集失败",
                    nn::TextSampleSet::create(dataset, nn::DatasetSubset::Test, window));
         if (test_samples_r->sample_count() > 0) test_samples = std::move(*test_samples_r);
         else empty_test_tokens = test_samples_r->token_count();
@@ -163,7 +163,7 @@ namespace
     // （出口 = 从 .nnmodel 开新一轮，docs/internal/23 §2.1.1）。
     nn::DatasetIdentity dataset_identity;
     dataset_identity.path = cfg.text_path;
-    NN_TRY_MSG(sha_r, "计算数据集身份失败", nn::sha256_file_hex(cfg.text_path));
+    EX_TRY_MSG(sha_r, "计算数据集身份失败", nn::sha256_file_hex(cfg.text_path));
     dataset_identity.sha256 = std::move(*sha_r);
     dataset_identity.num_tokens = train_samples.token_count();
     dataset_identity.num_docs = train_samples.doc_count();
@@ -178,7 +178,7 @@ namespace
     // 的续训语义。合法出口 = 从 .nnmodel 开新一轮（下面的 warm start 分支）。
     if (adoption.adopted)
     {
-        NN_TRY_CHECK(nn::cli::verify_dataset_identity(adoption.state.dataset, dataset_identity,
+        EX_TRY_CHECK(nn::cli::verify_dataset_identity(adoption.state.dataset, dataset_identity,
                                                       cfg.resume_path));
     }
 
@@ -217,7 +217,7 @@ namespace
     nn::cli::EngineConfig eng_cfg;
     eng_cfg.use_gpu = cfg.gpu_enabled;
     eng_cfg.gpu_device = cfg.gpu_device;
-    NN_TRY_MSG(engine_res, "引擎创建失败", nn::cli::create_engine(eng_cfg, std::cout));
+    EX_TRY_MSG(engine_res, "引擎创建失败", nn::cli::create_engine(eng_cfg, std::cout));
     auto raw_engine = std::move(*engine_res);
 
     // ── 多精度：边界 cast 已下沉基类（NVI，原 PrecisionEngine，f16 存储）────────────────────────────────
@@ -250,7 +250,7 @@ namespace
     mem_probe.mark(*engine, "engine-init");
 
     // ── 构建模型（绑定引擎） ─────────────────────────────────
-    nn::Result<nn::Model> model_build;
+    exstl::Result<nn::Model> model_build;
     if (cfg.model_type == "rapt")
     {
         // RLA 强约束：位置编码必须 RoPE（施加在 Q/K 进 ReLU 之前），强制覆盖
@@ -259,7 +259,7 @@ namespace
         // RLA 注意力自持 4 个 Linear 且当前**不转发**精度 profile（与 roadmap
         // P2「RAPT/CNN f16」同源）→ 留成"静默半三值"是最坏的选项，前置拒绝。
         if (cfg.precision.param == nn::Precision::T1_58)
-            NN_FAIL("RAPT 尚不支持三值权重（--precision-param t1_58）：RLA 注意力的"
+            EX_FAIL("RAPT 尚不支持三值权重（--precision-param t1_58）：RLA 注意力的"
                     " 4 个 Linear 还没接 make_linear_layer，\n"
                     "见 docs/internal/21-quantized-weights.md §4.8.3。\n"
                     "  · 三值 GPT：改用 --model gpt\n"
@@ -276,7 +276,7 @@ namespace
             *engine, tokenizer->vocab_size(), cfg.d_model, cfg.seq_len, cfg.num_heads, cfg.d_ff,
             cfg.num_layers, cfg.pos_encoding, cfg.activation, cfg.norm_type, cfg.precision);
     }
-    NN_TRY_MSG(model_build_r, "构建模型失败", std::move(model_build));
+    EX_TRY_MSG(model_build_r, "构建模型失败", std::move(model_build));
     auto model = std::move(*model_build_r);
     mem_probe.mark(*engine, "model-built");
 
@@ -367,7 +367,7 @@ namespace
         // 不加语境前缀：角色门禁的报错文案是用户可见契约（docs/internal/23 §2.1），
         // 原样透出；返回的 TextTrainResume（spec_restored / weights_loaded）
         // 只有测试消费，主流程按进度打印即可。
-        NN_TRY_CHECK(nn::cli::resume_text_train(*engine, cfg, model, spec, std::cout, std::cerr));
+        EX_TRY_CHECK(nn::cli::resume_text_train(*engine, cfg, model, spec, std::cout, std::cerr));
     }
 
     // ── 训练会话（P2b）：Model + Optimizer 同生共死 ───────────────────────
@@ -384,7 +384,7 @@ namespace
     session_cfg.beta2 = cfg.beta2;
     session_cfg.clip_grad_norm = cfg.max_norm;
     session_cfg.grad_accum_steps = cfg.accum_steps;
-    NN_TRY_MSG(session_r, "创建训练会话失败",
+    EX_TRY_MSG(session_r, "创建训练会话失败",
                nn::TrainingSession::create(std::move(model), session_cfg));
     nn::TrainingSession session = std::move(*session_r);
     mem_probe.mark(*engine, "optimizer-created");
@@ -394,7 +394,7 @@ namespace
     // 位置必须在优化器构造之后：状态张量按优化器自身的缓冲形状回写。
     if (adoption.adopted)
     {
-        NN_TRY_CHECK(nn::cli::load_optimizer_state(*engine, cfg.resume_path, session.optimizer(),
+        EX_TRY_CHECK(nn::cli::load_optimizer_state(*engine, cfg.resume_path, session.optimizer(),
                                                    std::cout));
     }
 
@@ -402,7 +402,7 @@ namespace
     // 配方字段就是 TrainConfig 的基类（nn::TextTrainConfig）；数据集身份复用上面
     // 已算好的 sha256/网格（避免大文件二次哈希）。
     cfg.identity = dataset_identity;
-    NN_TRY_MSG(trainer_r, "创建训练工厂失败",
+    EX_TRY_MSG(trainer_r, "创建训练工厂失败",
                nn::TextTrainer::create(std::move(session), std::move(train_samples),
                                        std::move(test_samples), cfg));
     nn::TextTrainer trainer = std::move(*trainer_r);
@@ -414,17 +414,17 @@ namespace
     {
         const std::size_t micro = cfg.batch_size / cfg.accum_steps;
         // 走 try_create_tensor（Result 版）：本文件失败一律经 Result 上抛，
-        // 不用 NN_UNWRAP 版在 OOM/形状拒绝时 fail_abort 终止（#E3）。
-        NN_TRY_MSG(warm_x_r, "创建预热输入张量失败",
+        // 不用 EX_UNWRAP 版在 OOM/形状拒绝时 fail_abort 终止（#E3）。
+        EX_TRY_MSG(warm_x_r, "创建预热输入张量失败",
                    engine->try_create_tensor(cfg.seq_len, micro > 0 ? micro : 1,
                                              nn::Precision::F32, nn::InitSpec::zero()));
-        NN_TRY_MSG(warmup_r, "预热失败",
+        EX_TRY_MSG(warmup_r, "预热失败",
                    nn::cli::jit_warmup(trainer.session().model(), *engine, *warm_x_r,
                                        cfg.jit_warmup));
     }
 
     // ── 训练循环（库层 TextTrainer；CLI 只装诊断/断点 hooks）──────────────
-    NN_TRY_MSG(loop_r, "训练循环失败",
+    EX_TRY_MSG(loop_r, "训练循环失败",
                nn::cli::run_text_train_loop(trainer, cfg, spec, tokenizer_bytes, mem_probe));
     const nn::TextTrainReport report = std::move(*loop_r);
 
@@ -438,7 +438,7 @@ namespace
     // ── 保存模型（含规格 + 嵌入 tokenizer） ──────────────────
     // 推理模型（Model 角色）：三值层写打包形态 + τ（不含训练参数）。
     // 写不出去 = 这一轮训练对用户没有产出 ⇒ 失败退出（错误经 Result 回报）。
-    NN_TRY_MSG(save_result, "推理模型保存失败",
+    EX_TRY_MSG(save_result, "推理模型保存失败",
                nn::cli::save_text_train_model(cfg.save_path, trainer.session().model(), spec,
                                               tokenizer_bytes));
     (void)save_result;

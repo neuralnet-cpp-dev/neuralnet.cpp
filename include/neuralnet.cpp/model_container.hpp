@@ -23,7 +23,7 @@
 #include <source_location>
 #include <vector>
 
-#include <neuralnet.cpp/core_assert.hpp>
+#include <exstl/assert.hpp>
 #include "core_domain.hpp"
 #include "compute_layer.hpp"
 #include "model_spec.hpp"
@@ -76,7 +76,7 @@ public:
         {
             const std::string msg =
                 "[model-lifetime] Model: 未绑定引擎（构造时引擎必须由 shared_ptr 管理）";
-            detail::fatal_at("NN_FATAL", loc.file_name(), static_cast<int>(loc.line()),
+            exstl::detail::fatal_at("EX_FATAL", loc.file_name(), static_cast<int>(loc.line()),
                              msg.c_str());
         }
         return *engine_;
@@ -88,24 +88,24 @@ public:
     // 注意：MultiHeadAttention 的构造函数是 protected（设计为基类，
     //       由 TransformerEncoderLayer / CausalSelfAttention 内部组合），
     //       因此不直接通过 add 添加。
-    template <typename LayerType, typename... Args> Result<void> add(Args&&... args)
+    template <typename LayerType, typename... Args> exstl::Result<void> add(Args&&... args)
     {
         auto layer = std::make_unique<LayerType>(std::forward<Args>(args)...);
         if (default_precision_.has_value())
             layer->set_precision_profile(default_precision_.value());
         auto r = layer->init(engine());
-        NN_TRY_CHECK(r);
+        EX_TRY_CHECK(r);
         layers_.emplace_back(std::move(layer));
         return {};
     }
 
     // 添加已由工厂构造的 Layer（如 make_norm_layer 按 NormType 创建归一化层）
-    Result<void> add_layer(std::unique_ptr<Layer> layer)
+    exstl::Result<void> add_layer(std::unique_ptr<Layer> layer)
     {
         if (default_precision_.has_value())
             layer->set_precision_profile(default_precision_.value());
         auto r = layer->init(engine());
-        NN_TRY_CHECK(r);
+        EX_TRY_CHECK(r);
         layers_.emplace_back(std::move(layer));
         return {};
     }
@@ -114,11 +114,11 @@ public:
     // 用于"同一模型内按层类型分派精度"的场景：三值 MLP 里 BitLinear 要
     // param=T1_58，而非权重层/归一化层的 param 槽不适用（仍走模型默认）。
     // 见 docs/internal/21-quantized-weights.md §4.8。
-    Result<void> add_layer(std::unique_ptr<Layer> layer, const PrecisionProfile& profile)
+    exstl::Result<void> add_layer(std::unique_ptr<Layer> layer, const PrecisionProfile& profile)
     {
         layer->set_precision_profile(profile);
         auto r = layer->init(engine());
-        NN_TRY_CHECK(r);
+        EX_TRY_CHECK(r);
         layers_.emplace_back(std::move(layer));
         return {};
     }
@@ -138,7 +138,7 @@ public:
     [[nodiscard]] Layer& layer_at(std::size_t index) noexcept
     {
         // RV-01：越界后 `*layers_[index]` 是越界读 + 空/错层解引用 → 无条件终止
-        NN_ASSERT_ALWAYS(index < layers_.size(), "Model::layer_at index out of range");
+        EX_ASSERT_ALWAYS(index < layers_.size(), "Model::layer_at index out of range");
         return *layers_[index];
     }
 
@@ -158,10 +158,10 @@ public:
         if (spec_) spec_->output_schema = output_schema_;
     }
 
-    [[nodiscard]] Result<TensorSchema> output_schema() const
+    [[nodiscard]] exstl::Result<TensorSchema> output_schema() const
     {
         if (output_schema_) return *output_schema_;
-        if (layers_.empty()) NN_FAIL("Model::output_schema: no layers");
+        if (layers_.empty()) EX_FAIL("Model::output_schema: no layers");
         return layers_.back()->output_schema();
     }
 
@@ -226,75 +226,75 @@ public:
     }
 
     // ── 前向传播：Tensor → Tensor（全程不离开 engine 设备） ───────────────
-    [[nodiscard]] Result<Tensor> forward(const Tensor& input)
+    [[nodiscard]] exstl::Result<Tensor> forward(const Tensor& input)
     {
-        if (layers_.empty()) NN_FAIL("Model::forward: no layers");
-        if (!engine_) NN_FAIL("Model::forward: engine 未绑定（构造时引擎必须由 shared_ptr 管理）");
+        if (layers_.empty()) EX_FAIL("Model::forward: no layers");
+        if (!engine_) EX_FAIL("Model::forward: engine 未绑定（构造时引擎必须由 shared_ptr 管理）");
         // GPU 单次推理自动 batch 作用域（issue #28）：外层未持有 batch 时
         // 临时开一个，多 Conv 模型不再因逐原语路径不回收帧内分配而
         // VK_ERROR_OUT_OF_DEVICE_MEMORY。外层训练循环已持有 batch → 透传。
         InferenceScope scope(*engine_);
-        if (!scope.ok()) NN_FAIL("Model::forward: " + scope.error().message);
+        if (!scope.ok()) EX_FAIL("Model::forward: " + scope.error().message);
         Tensor x = input;
         for (std::size_t li = 0; li < layers_.size(); ++li)
         {
             NN_PROF_SCOPE(nn::prof::interned("fwd.layer", li));
             auto r = layers_[li]->forward(x);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
             x = std::move(*r);
         }
         return x;
     }
 
     // ── 反向传播：Tensor → Tensor（从最后一层到第一层） ───────────────────
-    [[nodiscard]] Result<Tensor> backward(const Tensor& grad_output)
+    [[nodiscard]] exstl::Result<Tensor> backward(const Tensor& grad_output)
     {
-        if (layers_.empty()) NN_FAIL("Model::backward: no layers");
-        if (!engine_) NN_FAIL("Model::backward: engine 未绑定（构造时引擎必须由 shared_ptr 管理）");
+        if (layers_.empty()) EX_FAIL("Model::backward: no layers");
+        if (!engine_) EX_FAIL("Model::backward: engine 未绑定（构造时引擎必须由 shared_ptr 管理）");
         // 同 forward（issue #28）：外层未持有 batch 时临时开一个。
         InferenceScope scope(*engine_);
-        if (!scope.ok()) NN_FAIL("Model::backward: " + scope.error().message);
+        if (!scope.ok()) EX_FAIL("Model::backward: " + scope.error().message);
         Tensor g = grad_output;
         for (std::size_t i = layers_.size(); i-- > 0;)
         {
             NN_PROF_SCOPE(nn::prof::interned("bwd.layer", i));
             auto r = layers_[i]->backward(g);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
             g = std::move(*r);
         }
         return g;
     }
 
     // ── 具名 forward/backward：中间层仍走单 Tensor，最后一层可展开多端口 ──
-    [[nodiscard]] Result<NamedTensorSet> forward_named(const Tensor& input)
+    [[nodiscard]] exstl::Result<NamedTensorSet> forward_named(const Tensor& input)
     {
-        if (layers_.empty()) NN_FAIL("Model::forward_named: no layers");
-        if (!engine_) NN_FAIL("Model::forward_named: engine 未绑定");
-        NN_TRY(schema, output_schema());
+        if (layers_.empty()) EX_FAIL("Model::forward_named: no layers");
+        if (!engine_) EX_FAIL("Model::forward_named: engine 未绑定");
+        EX_TRY(schema, output_schema());
 
         Tensor x = input;
         for (std::size_t li = 0; li + 1 < layers_.size(); ++li)
         {
             NN_PROF_SCOPE(nn::prof::interned("fwd_named.layer", li));
-            NN_TRY(out, layers_[li]->forward(x));
+            EX_TRY(out, layers_[li]->forward(x));
             x = std::move(*out);
         }
         NN_PROF_SCOPE(nn::prof::interned("fwd_named.layer", layers_.size() - 1));
         return layers_.back()->forward_named(x, *schema);
     }
 
-    [[nodiscard]] Result<Tensor> backward_named(const GradientBundle& gradients)
+    [[nodiscard]] exstl::Result<Tensor> backward_named(const GradientBundle& gradients)
     {
-        if (layers_.empty()) NN_FAIL("Model::backward_named: no layers");
-        if (!engine_) NN_FAIL("Model::backward_named: engine 未绑定");
-        NN_TRY(schema, output_schema());
+        if (layers_.empty()) EX_FAIL("Model::backward_named: no layers");
+        if (!engine_) EX_FAIL("Model::backward_named: engine 未绑定");
+        EX_TRY(schema, output_schema());
 
-        NN_TRY(last_grad, layers_.back()->backward_named(gradients, *schema));
+        EX_TRY(last_grad, layers_.back()->backward_named(gradients, *schema));
         Tensor g = std::move(*last_grad);
         for (std::size_t i = layers_.size() - 1; i-- > 0;)
         {
             NN_PROF_SCOPE(nn::prof::interned("bwd_named.layer", i));
-            NN_TRY(out, layers_[i]->backward(g));
+            EX_TRY(out, layers_[i]->backward(g));
             g = std::move(*out);
         }
         return g;
@@ -336,7 +336,7 @@ public:
     }
 
     // ── 梯度清零（每个训练 step 开头调用） ────────────────────────────────
-    [[nodiscard]] Result<void> zero_grad()
+    [[nodiscard]] exstl::Result<void> zero_grad()
     {
         for (auto& layer : layers_)
         {
@@ -358,10 +358,10 @@ public:
 // 回到非 batch 态；JIT 生成器加载失败也不固化"已尝试"标记
 // （compute_gpu_engine.hpp ensure_generator_）——修正 NN_KERNELGEN_PATH 等
 // 环境后可对同一模型再次 warmup。
-[[nodiscard]] inline Result<void> model_warmup(Model& model, const Tensor& input)
+[[nodiscard]] inline exstl::Result<void> model_warmup(Model& model, const Tensor& input)
 {
     auto out = model.forward(input);
-    NN_TRY_CHECK(out);
+    EX_TRY_CHECK(out);
     return {};
 }
 

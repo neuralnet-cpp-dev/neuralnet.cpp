@@ -62,8 +62,8 @@ std::string exe_dir(const char* argv0)
 bool env_cache_configured()
 {
     // 行为开关（RV-09：读取收敛到 core_env.hpp）。
-    return !::nn::detail::env_string_raw("NN_KERNEL_CACHE_PATH").empty() ||
-           !::nn::detail::env_string_raw("NN_KERNEL_CACHE_DIR").empty();
+    return !::exstl::env::str("NN_KERNEL_CACHE_PATH").empty() ||
+           !::exstl::env::str("NN_KERNEL_CACHE_DIR").empty();
 }
 }  // namespace
 

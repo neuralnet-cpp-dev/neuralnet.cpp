@@ -11,7 +11,7 @@
 // 用法：rapt_smoke_test [--steps N] [--gpu]（经 rapt_test 聚合注册 ctest）
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -51,7 +51,7 @@ int main(int argc, char* argv[])
     }
 
     auto engine = nn::cli::create_engine(nn::cli::EngineConfig{use_gpu});
-    NN_EXIT(engine, 1, "\n");
+    EX_EXIT(engine, 1, "\n");
     nn::ComputeEngine& eng = **engine;
 
     // ── 1. 规格往返校验 ─────────────────────────────────────────────
@@ -72,7 +72,7 @@ int main(int argc, char* argv[])
     auto spec = nn::make_rapt_spec(cfg.vocab_size, cfg.d_model, cfg.seq_len, cfg.num_heads,
                                    cfg.d_ff, cfg.num_layers);
     auto model_from_spec = nn::build_rapt_model_from_spec(eng, spec);
-    NN_EXIT(model_from_spec, 1, "build_rapt_model_from_spec failed\n");
+    EX_EXIT(model_from_spec, 1, "build_rapt_model_from_spec failed\n");
     if (!nn::spec_matches(spec, *model_from_spec->spec()))
     {
         std::cerr << "RAPT spec round-trip mismatch\n";
@@ -81,13 +81,13 @@ int main(int argc, char* argv[])
     std::cout << "spec round-trip OK (" << nn::spec_summary(spec) << ")\n";
 
     auto model = nn::build_rapt_model(eng, cfg);
-    NN_EXIT(model, 1, "build_rapt_model failed\n");
+    EX_EXIT(model, 1, "build_rapt_model failed\n");
 
     // ── 2. 训练冒烟：合成数据（causal 下一位置预测），验证 loss 下降 ──
     auto optimizer =
         nn::create_optimizer("adamw", eng, model->parameters(), model->param_gradients(),
                              nn::Scalar{1e-3}, nn::Scalar{0.01});
-    NN_EXIT(optimizer, 1, "optimizer creation failed\n");
+    EX_EXIT(optimizer, 1, "optimizer creation failed\n");
 
     nn::CrossEntropyLoss ce;
     if (use_f16) ce.set_precision_profile(nn::profile_f16());
@@ -106,24 +106,24 @@ int main(int argc, char* argv[])
         labels[t] = (t + 1 < cfg.seq_len) ? toks[t + 1] : tok(rng);
     }
     auto x = eng.from_matrix(in);
-    NN_EXIT(x, 1);
+    EX_EXIT(x, 1);
 
     nn::Scalar first_loss = 0;
     nn::Scalar last_loss = 0;
     for (std::size_t step = 0; step < steps; ++step)
     {
         auto zero = optimizer->zero_grad();
-        NN_EXIT(zero, 1, "zero_grad failed\n");
+        EX_EXIT(zero, 1, "zero_grad failed\n");
         auto logits = model->forward(*x);
-        NN_EXIT(logits, 1, "forward failed: ");
+        EX_EXIT(logits, 1, "forward failed: ");
         auto loss = ce.forward_sparse(eng, *logits, labels, {}, cfg.vocab_size);
-        NN_EXIT(loss, 1, "loss failed: ");
+        EX_EXIT(loss, 1, "loss failed: ");
         auto grad = ce.backward();
-        NN_EXIT(grad, 1, "loss backward failed\n");
+        EX_EXIT(grad, 1, "loss backward failed\n");
         auto b = model->backward(*grad);
-        NN_EXIT(b, 1, "model backward failed: ");
+        EX_EXIT(b, 1, "model backward failed: ");
         auto st = optimizer->step();
-        NN_EXIT(st, 1, "optimizer step failed\n");
+        EX_EXIT(st, 1, "optimizer step failed\n");
         if (step == 0) first_loss = *loss;
         last_loss = *loss;
         std::cout << "  step " << step << "  loss=" << *loss << "\n";
@@ -154,27 +154,27 @@ int main(int argc, char* argv[])
             }
         }
         auto bx = eng.from_matrix(bin);
-        NN_EXIT(bx, 1);
+        EX_EXIT(bx, 1);
         // 同一模型上多跑几步，验证 batch>1 的 forward/backward 不崩、不 NaN
         for (std::size_t step = 0; step < 3; ++step)
         {
             auto zero = optimizer->zero_grad();
-            NN_EXIT(zero, 1, "batch>1 zero_grad failed\n");
+            EX_EXIT(zero, 1, "batch>1 zero_grad failed\n");
             auto logits = model->forward(*bx);
-            NN_EXIT(logits, 1, "batch>1 forward failed: ");
+            EX_EXIT(logits, 1, "batch>1 forward failed: ");
             auto loss = ce.forward_sparse(eng, *logits, blabels, {}, cfg.vocab_size);
-            NN_EXIT(loss, 1, "batch>1 loss failed\n");
+            EX_EXIT(loss, 1, "batch>1 loss failed\n");
             if (!(*loss == *loss))
             {
                 std::cerr << "batch>1 loss NaN\n";
                 return 1;
             }
             auto grad = ce.backward();
-            NN_EXIT(grad, 1, "batch>1 loss backward failed\n");
+            EX_EXIT(grad, 1, "batch>1 loss backward failed\n");
             auto b = model->backward(*grad);
-            NN_EXIT(b, 1, "batch>1 model backward failed\n");
+            EX_EXIT(b, 1, "batch>1 model backward failed\n");
             auto st = optimizer->step();
-            NN_EXIT(st, 1, "batch>1 optimizer step failed\n");
+            EX_EXIT(st, 1, "batch>1 optimizer step failed\n");
         }
         std::cout << "batch>1 (batch=" << batch << ") smoke OK\n";
     }
@@ -199,19 +199,19 @@ int main(int argc, char* argv[])
                 v = dist(rng);
         }
         auto x_t = eng.from_matrix(x_m);
-        NN_EXIT(x_t, 1);
+        EX_EXIT(x_t, 1);
         auto full = attn.forward(*x_t);
-        NN_EXIT(full, 1, "kv full forward failed\n");
+        EX_EXIT(full, 1, "kv full forward failed\n");
         auto full_m = eng.to_matrix(*full);
-        NN_EXIT(full_m, 1);
+        EX_EXIT(full_m, 1);
 
         // 逐 token 增量（运行态 KV cache）
         // RLA-2 状态：B_state (d_model, d_k) + z_state (d_model, 1)
         const std::size_t dk = d_model / heads;
         nn::Tensor B_state = eng.create_tensor(d_model, dk);
-        NN_EXIT(eng.zero(B_state), 1, "kv zero B_state failed\n");
+        EX_EXIT(eng.zero(B_state), 1, "kv zero B_state failed\n");
         nn::Tensor z_state = eng.create_tensor(d_model, 1);
-        NN_EXIT(eng.zero(z_state), 1, "kv zero z_state failed\n");
+        EX_EXIT(eng.zero(z_state), 1, "kv zero z_state failed\n");
         nn::Tensor inc_out;
         for (std::size_t t = 0; t < L; ++t)
         {
@@ -219,13 +219,13 @@ int main(int argc, char* argv[])
             for (std::size_t r = 0; r < d_model; ++r)
                 col.set_value_unchecked(r, 0, x_m.at_unchecked(r, t));
             auto col_t = eng.from_matrix(col);
-            NN_EXIT(col_t, 1);
+            EX_EXIT(col_t, 1);
             auto o = attn.forward_step(eng, *col_t, B_state, z_state, t);
-            NN_EXIT(o, 1, "kv forward_step failed: ");
+            EX_EXIT(o, 1, "kv forward_step failed: ");
             inc_out = std::move(*o);
         }
         auto inc_m = eng.to_matrix(inc_out);
-        NN_EXIT(inc_m, 1);
+        EX_EXIT(inc_m, 1);
         // 比较增量末位 vs 整序列 forward 末位
         // 容差依据（自旧 1e-3 收紧至 ulp 口径）：两路径仅加法结合序不同，实测
         // docs/development/08 §测试表 = CPU 0 / GPU 2.98e-08（≈1 ulp）；本机
@@ -290,7 +290,7 @@ int main(int argc, char* argv[])
         const auto read_p = [&](std::size_t i)
         {
             auto m = eng.to_matrix(ps[i].get());
-            NN_EXIT(m, 1, "den: 参数读回失败\n");
+            EX_EXIT(m, 1, "den: 参数读回失败\n");
             return std::move(*m);
         };
         const nn::Matrix Wq = read_p(0), bq = read_p(1), Wk = read_p(2), bk = read_p(3),
@@ -368,17 +368,17 @@ int main(int argc, char* argv[])
 
         // 设备侧单步执行（pos=0，状态清零）
         auto x_t = eng.from_matrix(x_m);
-        NN_EXIT(x_t, 1);
+        EX_EXIT(x_t, 1);
         nn::Tensor B_state = eng.create_tensor(dm, dk);
-        NN_EXIT(eng.zero(B_state), 1, "den: zero B_state failed\n");
+        EX_EXIT(eng.zero(B_state), 1, "den: zero B_state failed\n");
         nn::Tensor z_state = eng.create_tensor(dm, 1);
-        NN_EXIT(eng.zero(z_state), 1, "den: zero z_state failed\n");
+        EX_EXIT(eng.zero(z_state), 1, "den: zero z_state failed\n");
         auto o = attn.forward_step(eng, *x_t, B_state, z_state, /*pos=*/0);
-        NN_EXIT(o, 1, "den forward_step failed: ");
+        EX_EXIT(o, 1, "den forward_step failed: ");
         auto om = eng.to_matrix(*o);
-        NN_EXIT(om, 1);
+        EX_EXIT(om, 1);
         auto zm = eng.to_matrix(z_state);
-        NN_EXIT(zm, 1);
+        EX_EXIT(zm, 1);
 
         // ① z_state == 宿主 k'（分母累加器数值正确）
         double z_err = 0, z_mag = 0;

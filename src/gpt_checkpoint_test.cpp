@@ -11,7 +11,7 @@
 //   4. 容差 tol：重计算路径与基线应在浮点重算误差范围内一致。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -70,7 +70,7 @@ int run_test()
     // 单一模型实例（checkpoint 关闭初始化）
     GPTModel model(vocab, d_model, seq_len, num_heads, d_ff, num_layers, PosEncodingType::Learned,
                    ActivationType::SwiGLU, NormType::RMSNorm);
-    NN_EXIT(model.init(eng), 1, "GPTModel init 失败: ");
+    EX_EXIT(model.init(eng), 1, "GPTModel init 失败: ");
 
     std::mt19937_64 rng(7);
     std::uniform_real_distribution<Scalar> dist(-1, 1);
@@ -86,9 +86,9 @@ int run_test()
         go_m.span()[i] = dist(rng);
 
     auto x = eng.from_matrix(x_m);
-    NN_EXIT(x, 1, "from_matrix(x) failed\n");
+    EX_EXIT(x, 1, "from_matrix(x) failed\n");
     auto go = eng.from_matrix(go_m);
-    NN_EXIT(go, 1, "from_matrix(go) failed\n");
+    EX_EXIT(go, 1, "from_matrix(go) failed\n");
 
     // ── 基线（stride=0，全存激活） ──
     nn::Matrix baseline_logits;
@@ -96,22 +96,22 @@ int run_test()
     {
         model.set_checkpoint_every(0);
         auto r = model.forward(*x);
-        NN_EXIT(r, 1, "baseline forward failed: ");
+        EX_EXIT(r, 1, "baseline forward failed: ");
         auto lm = eng.to_matrix(*r);
-        NN_EXIT(lm, 1, "to_matrix(logits) failed\n");
+        EX_EXIT(lm, 1, "to_matrix(logits) failed\n");
         baseline_logits = std::move(*lm);
 
         for (auto& g : model.param_gradients())
         {
             auto rz = eng.zero(g.get());
-            NN_EXIT(rz, 1, "baseline zero failed\n");
+            EX_EXIT(rz, 1, "baseline zero failed\n");
         }
         auto b = model.backward(*go);
-        NN_EXIT(b, 1, "baseline backward failed: ");
+        EX_EXIT(b, 1, "baseline backward failed: ");
         for (auto& g : model.param_gradients())
         {
             auto gm = eng.to_matrix(g.get());
-            NN_EXIT(gm, 1, "to_matrix(grad) failed\n");
+            EX_EXIT(gm, 1, "to_matrix(grad) failed\n");
             baseline_grads.push_back(std::move(*gm));
         }
     }
@@ -125,9 +125,9 @@ int run_test()
         std::cout << "\n── 检查点 stride=" << stride << " ──\n";
         model.set_checkpoint_every(stride);
         auto r = model.forward(*x);
-        NN_EXIT(r, 1, "checkpoint forward failed: ");
+        EX_EXIT(r, 1, "checkpoint forward failed: ");
         auto lm = eng.to_matrix(*r);
-        NN_EXIT(lm, 1, "to_matrix(logits) failed\n");
+        EX_EXIT(lm, 1, "to_matrix(logits) failed\n");
 
         // 1) forward 输出对比
         bool fwd_pass = close_to(*lm, baseline_logits, tol, "logits", 0);
@@ -137,18 +137,18 @@ int run_test()
         for (auto& g : model.param_gradients())
         {
             auto rz = eng.zero(g.get());
-            NN_EXIT(rz, 1, "zero failed\n");
+            EX_EXIT(rz, 1, "zero failed\n");
         }
         auto b = model.backward(*go);
-        NN_EXIT(b, 1, "checkpoint backward failed: ");
+        EX_EXIT(b, 1, "checkpoint backward failed: ");
 
         const auto& grads = model.param_gradients();
-        NN_ASSERT_ALWAYS(grads.size() == baseline_grads.size(),
+        EX_ASSERT_ALWAYS(grads.size() == baseline_grads.size(),
                          "gpt_checkpoint_test: grad count mismatch");
         for (std::size_t p = 0; p < grads.size(); ++p)
         {
             auto gm = eng.to_matrix(grads[p].get());
-            NN_EXIT(gm, 1, "to_matrix(grad) failed\n");
+            EX_EXIT(gm, 1, "to_matrix(grad) failed\n");
             std::string name = "grad[" + std::to_string(p) + "]";
             bool ok = close_to(*gm, baseline_grads[p], tol, name, p);
             all_pass &= ok;

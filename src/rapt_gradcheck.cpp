@@ -10,7 +10,7 @@
 // doc-aware=2），batch>1 覆盖（铁律 5）由 causal/doc-aware 段保证。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <cmath>
 #include <cstdlib>
@@ -157,7 +157,7 @@ int main(int argc, char* argv[])
     }
 
     auto engine = nn::cli::create_engine(nn::cli::EngineConfig{use_gpu});
-    NN_EXIT(engine, 1, "\n");
+    EX_EXIT(engine, 1, "\n");
     ComputeEngine& eng = **engine;
 
     constexpr Scalar eps = 1e-3f;
@@ -187,7 +187,7 @@ int main(int argc, char* argv[])
                 v = dist(rng);
         }
         auto x_t = eng.from_matrix(x_m);
-        NN_EXIT(x_t, 1);
+        EX_EXIT(x_t, 1);
         Matrix go_m(d_model, batch * seq);
         {
             auto sp = go_m.span();
@@ -195,7 +195,7 @@ int main(int argc, char* argv[])
                 v = dist(rng);
         }
         auto go_t = eng.from_matrix(go_m);
-        NN_EXIT(go_t, 1);
+        EX_EXIT(go_t, 1);
 
         auto eval_loss = [&]() -> Scalar
         {
@@ -210,9 +210,9 @@ int main(int argc, char* argv[])
             if (!eng.zero(g)) return 1;
         }
         auto y0 = attn.forward(*x_t);
-        NN_EXIT(y0, 1, "  fwd failed\n");
+        EX_EXIT(y0, 1, "  fwd failed\n");
         auto gx = attn.backward(*go_t);
-        NN_EXIT(gx, 1, "  bwd failed\n");
+        EX_EXIT(gx, 1, "  bwd failed\n");
 
         auto params = attn.parameters();
         all_ok &= check_all_params(eng, eval_loss, params, grads, eps, tol);
@@ -242,7 +242,7 @@ int main(int argc, char* argv[])
                 v = dist(rng);
         }
         auto x_t = eng.from_matrix(x_m);
-        NN_EXIT(x_t, 1);
+        EX_EXIT(x_t, 1);
         Matrix go_m(d_model, batch * seq);
         {
             auto sp = go_m.span();
@@ -250,7 +250,7 @@ int main(int argc, char* argv[])
                 v = dist(rng);
         }
         auto go_t = eng.from_matrix(go_m);
-        NN_EXIT(go_t, 1);
+        EX_EXIT(go_t, 1);
 
         auto eval_loss = [&]() -> Scalar
         {
@@ -265,9 +265,9 @@ int main(int argc, char* argv[])
             if (!eng.zero(g)) return 1;
         }
         auto y0 = attn.forward(*x_t);
-        NN_EXIT(y0, 1, "  fwd failed\n");
+        EX_EXIT(y0, 1, "  fwd failed\n");
         auto gx = attn.backward(*go_t);
-        NN_EXIT(gx, 1, "  bwd failed\n");
+        EX_EXIT(gx, 1, "  bwd failed\n");
 
         auto params = attn.parameters();
         all_ok &= check_all_params(eng, eval_loss, params, grads, eps, tol);
@@ -311,7 +311,7 @@ int main(int argc, char* argv[])
                 v = dist(rng);
         }
         auto x_t = eng.from_matrix(x_m);
-        NN_EXIT(x_t, 1);
+        EX_EXIT(x_t, 1);
         Matrix go_m(d_model, batch * seq);
         {
             auto sp = go_m.span();
@@ -319,7 +319,7 @@ int main(int argc, char* argv[])
                 v = dist(rng);
         }
         auto go_t = eng.from_matrix(go_m);
-        NN_EXIT(go_t, 1);
+        EX_EXIT(go_t, 1);
 
         auto eval_loss = [&]() -> Scalar
         {
@@ -334,9 +334,9 @@ int main(int argc, char* argv[])
             if (!eng.zero(g)) return 1;
         }
         auto y0 = attn.forward(*x_t);
-        NN_EXIT(y0, 1, "  fwd failed\n");
+        EX_EXIT(y0, 1, "  fwd failed\n");
         auto gx = attn.backward(*go_t);
-        NN_EXIT(gx, 1, "  bwd failed\n");
+        EX_EXIT(gx, 1, "  bwd failed\n");
 
         auto params = attn.parameters();
         all_ok &= check_all_params(eng, eval_loss, params, grads, eps, tol);

@@ -14,7 +14,7 @@
 // 架构选择：--arch mlp|transformer（默认 mlp，从已保存模型 resume 时自动识别）
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -235,7 +235,7 @@ TrainConfig parse_args(int argc, char* argv[])
             std::string token;
             while (std::getline(ss, token, ','))
             {
-                auto v = nn::parse_number<std::size_t>(token);
+                auto v = exstl::parse_number<std::size_t>(token);
                 if (!v)
                 {
                     std::cerr << "无效层维度: " << v.error().message << "\n";
@@ -286,7 +286,7 @@ TrainConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--d-model" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --d-model: " << v.error().message << "\n";
@@ -296,7 +296,7 @@ TrainConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--num-heads" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --num-heads: " << v.error().message << "\n";
@@ -306,7 +306,7 @@ TrainConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--num-layers" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --num-layers: " << v.error().message << "\n";
@@ -316,7 +316,7 @@ TrainConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--d-ff" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --d-ff: " << v.error().message << "\n";
@@ -326,7 +326,7 @@ TrainConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--patch-size" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --patch-size: " << v.error().message << "\n";
@@ -342,7 +342,7 @@ TrainConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--max-samples" && i + 1 < argc)
         {
-            auto v = nn::parse_number<int>(argv[++i]);
+            auto v = exstl::parse_number<int>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --max-samples: " << v.error().message << "\n";
@@ -352,7 +352,7 @@ TrainConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--eval-samples" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --eval-samples: " << v.error().message << "\n";
@@ -367,7 +367,7 @@ TrainConfig parse_args(int argc, char* argv[])
             std::string token;
             while (std::getline(ss, token, ','))
             {
-                auto v = nn::parse_number<std::size_t>(token);
+                auto v = exstl::parse_number<std::size_t>(token);
                 if (!v)
                 {
                     std::cerr << "无效 --cnn-channels: " << v.error().message << "\n";
@@ -393,7 +393,7 @@ TrainConfig parse_args(int argc, char* argv[])
             std::string token;
             while (std::getline(ss, token, ','))
             {
-                auto v = nn::parse_number<std::size_t>(token);
+                auto v = exstl::parse_number<std::size_t>(token);
                 if (!v)
                 {
                     std::cerr << "无效 --cnn-kernels: " << v.error().message << "\n";
@@ -414,7 +414,7 @@ TrainConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--cnn-pool" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --cnn-pool: " << v.error().message << "\n";
@@ -435,7 +435,7 @@ TrainConfig parse_args(int argc, char* argv[])
             std::string token;
             while (std::getline(ss, token, ','))
             {
-                auto v = nn::parse_number<std::size_t>(token);
+                auto v = exstl::parse_number<std::size_t>(token);
                 if (!v)
                 {
                     std::cerr << "无效 --cnn-fc: " << v.error().message << "\n";
@@ -767,7 +767,7 @@ int main(int argc, char* argv[])
     eng_cfg.use_gpu = cfg.gpu_enabled;
     eng_cfg.gpu_device = cfg.gpu_device;
     auto engine_res = nn::cli::create_engine(eng_cfg, std::cout);
-    NN_EXIT(engine_res, 1, "引擎创建失败: ");
+    EX_EXIT(engine_res, 1, "引擎创建失败: ");
     auto raw_engine = std::move(*engine_res);
 
     // ── 多精度：边界 cast 已下沉基类（NVI，原 PrecisionEngine；同 text_train）──
@@ -793,11 +793,11 @@ int main(int argc, char* argv[])
     const std::size_t train_max =
         (cfg.max_train_samples > 0) ? static_cast<std::size_t>(cfg.max_train_samples) : 0;
     auto csv_train_result = nn::cli::load_mnist_csv(cfg.dataset_path + "/train.csv", train_max);
-    NN_EXIT(csv_train_result, 1, "Error: ");
+    EX_EXIT(csv_train_result, 1, "Error: ");
     auto [train_x, train_y] = std::move(*csv_train_result);
 
     auto csv_test_result = nn::cli::load_mnist_csv(cfg.dataset_path + "/test.csv");
-    NN_EXIT(csv_test_result, 1, "Error: ");
+    EX_EXIT(csv_test_result, 1, "Error: ");
     auto [test_x, test_y] = std::move(*csv_test_result);
     std::cout << "训练集: " << train_x.cols() << " 样本, 测试集: " << test_x.cols() << " 样本\n"
               << std::endl;
@@ -811,7 +811,7 @@ int main(int argc, char* argv[])
                      "本选项**未生效**（run at f32）\n";
     }
     auto model_result = nn::build_mnist_model_from_spec(*engine, spec, cfg.precision);
-    NN_EXIT(model_result, 1, "构建模型失败: ");
+    EX_EXIT(model_result, 1, "构建模型失败: ");
     auto model = std::move(*model_result);
     model.set_training(true);  // 训练模式：BatchNorm 使用 batch 统计量并更新 running 统计
 
@@ -863,7 +863,7 @@ int main(int argc, char* argv[])
     // beta1/beta2 保留 TrainingConfig 默认 0.9/0.999（= 迁移前 create_optimizer 默认值，
     // 本 CLI 无对应参数）；clip_grad_norm 保留 0（迁移前不做梯度裁剪）。
     auto session_result = nn::TrainingSession::create(std::move(model), std::move(train_cfg));
-    NN_EXIT(session_result, 1, "错误：未知优化器名称");
+    EX_EXIT(session_result, 1, "错误：未知优化器名称");
     nn::TrainingSession session = std::move(*session_result);
 
     Scalar optimizer_current_lr = cfg.lr;
@@ -902,7 +902,7 @@ int main(int argc, char* argv[])
     {
         nn::Tensor warm_x = engine->create_tensor(train_x.rows(), cfg.batch_size,
                                                   nn::Precision::F32, nn::InitSpec::zero());
-        NN_EXIT(nn::cli::jit_warmup(session.model(), *engine, warm_x, cfg.jit_warmup), 1,
+        EX_EXIT(nn::cli::jit_warmup(session.model(), *engine, warm_x, cfg.jit_warmup), 1,
                 "预热失败: ");
     }
 
@@ -945,39 +945,39 @@ int main(int argc, char* argv[])
 
             // ── Matrix → Tensor（上传到引擎设备） ──
             auto x_tensor_r = engine->from_matrix(x_batch);
-            NN_EXIT(x_tensor_r, 1, "\nfrom_matrix(x_batch) failed: ");
+            EX_EXIT(x_tensor_r, 1, "\nfrom_matrix(x_batch) failed: ");
             auto y_tensor_r = engine->from_matrix(y_batch);
-            NN_EXIT(y_tensor_r, 1, "\nfrom_matrix(y_batch) failed: ");
+            EX_EXIT(y_tensor_r, 1, "\nfrom_matrix(y_batch) failed: ");
 
             // ── 批量录制：forward + loss + backward 录制到单一 command buffer ──
             auto bb = engine->begin_batch();
-            NN_EXIT(bb, 1, "\nbegin_batch failed: ");
+            EX_EXIT(bb, 1, "\nbegin_batch failed: ");
 
             // ── 前向 ──
             auto out_r = session.model().forward(*x_tensor_r);
-            NN_EXIT(out_r, 1, "\nForward pass failed: ");
+            EX_EXIT(out_r, 1, "\nForward pass failed: ");
 
             // ── 计算损失 ──
             auto loss_result = ce_loss.forward(*engine, *out_r, *y_tensor_r);
-            NN_EXIT(loss_result, 1, "\nLoss computation failed: ");
+            EX_EXIT(loss_result, 1, "\nLoss computation failed: ");
             Scalar loss = *loss_result;
             total_loss += loss;
 
             // ── 反向 ──
             auto grad_r = ce_loss.backward();
-            NN_EXIT(grad_r, 1, "\nLoss backward failed: ");
+            EX_EXIT(grad_r, 1, "\nLoss backward failed: ");
 
             auto bwd_r = session.model().backward(*grad_r);
-            NN_EXIT(bwd_r, 1, "\nModel backward failed: ");
+            EX_EXIT(bwd_r, 1, "\nModel backward failed: ");
 
             // ── 提交并等待所有录制的命令 ──
             auto eb = engine->end_batch();
-            NN_EXIT(eb, 1, "\nend_batch failed: ");
+            EX_EXIT(eb, 1, "\nend_batch failed: ");
 
             // ── 优化器 step + 梯度清零（整段包进单次 begin/end_batch，
             //    与 text_train 一致；否则 GPU 下逐原语同步提交，铁律 6）──
             auto obb = engine->begin_batch();
-            NN_EXIT(obb, 1, "\nbegin_batch (optimizer) failed: ");
+            EX_EXIT(obb, 1, "\nbegin_batch (optimizer) failed: ");
 
             auto step_result = session.step();
             if (!step_result)
@@ -996,7 +996,7 @@ int main(int argc, char* argv[])
             }
 
             auto oeb = engine->end_batch();
-            NN_EXIT(oeb, 1, "\nend_batch (optimizer) failed: ");
+            EX_EXIT(oeb, 1, "\nend_batch (optimizer) failed: ");
 
             // ── 进度显示 ──
             if ((batch + 1) % 10 == 0 || batch + 1 == num_batches)
@@ -1048,7 +1048,7 @@ int main(int argc, char* argv[])
     // 推理模型（Model 角色）：三值层写打包形态 + τ（不含训练参数）
     auto save_result =
         nn::save_model(cfg.save_path, session.model(), spec, {}, nn::ModelRole::Model);
-    NN_EXIT(save_result, 1, "保存模型失败: ");
+    EX_EXIT(save_result, 1, "保存模型失败: ");
     std::cout << "\n训练完成! 总耗时: " << std::fixed << std::setprecision(1) << total_sec << "s"
               << std::endl;
 

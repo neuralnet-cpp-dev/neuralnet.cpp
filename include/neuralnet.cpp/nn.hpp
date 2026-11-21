@@ -13,10 +13,10 @@
 //   forward/backward 单套实现适配 CPU/GPU。
 
 // L0 硬件层
-#include <neuralnet.cpp/core_errors.hpp>
-#include <neuralnet.cpp/core_assert.hpp>
-#include "core_observer_ptr.hpp"
-#include <neuralnet.cpp/core_threadpool.hpp>
+#include <exstl/errors.hpp>
+#include <exstl/assert.hpp>
+#include <exstl/observer_ptr.hpp>
+#include <exstl/threadpool.hpp>
 #include <neuralnet.cpp/core_file.hpp>
 #include <neuralnet.cpp/core_config.hpp>
 

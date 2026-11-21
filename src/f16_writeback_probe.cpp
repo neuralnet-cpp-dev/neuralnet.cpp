@@ -11,7 +11,7 @@
 // 用法：f16_writeback_probe [--gpu[=名称]]
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <cstdio>
 #include <cstdlib>
@@ -108,7 +108,7 @@ void probe_cast_rounding(nn::ComputeEngine& eng, const char* label)
 
 // K3 模式：p += delta（p = f16 存储，delta 同精度物化）——text_train 冻结路径
 // 的最小复刻。返回写入后 p 的下载值。
-nn::Result<Matrix> inplace_add_writeback(nn::ComputeEngine& eng, Precision target_p)
+exstl::Result<Matrix> inplace_add_writeback(nn::ComputeEngine& eng, Precision target_p)
 {
     // 2×2 起始值全 1
     Matrix m(2, 2);
@@ -116,7 +116,7 @@ nn::Result<Matrix> inplace_add_writeback(nn::ComputeEngine& eng, Precision targe
         v = 1.0f;
 
     auto p_r = eng.from_matrix(m, target_p);
-    NN_TRY_CHECK(p_r);
+    EX_TRY_CHECK(p_r);
     auto p = std::move(*p_r);
 
     // delta 全 0.5，按 target_p 物化（对齐 optimizer 里 delta 精度 = p_.param）
@@ -124,10 +124,10 @@ nn::Result<Matrix> inplace_add_writeback(nn::ComputeEngine& eng, Precision targe
     for (auto& v : dm.span())
         v = 0.5f;
     auto d_r = eng.from_matrix(dm, target_p);
-    NN_TRY_CHECK(d_r);
+    EX_TRY_CHECK(d_r);
     // K3：compute_into(leaf(p) + leaf(delta), p) —— 目标传递 in-place
     auto r = nn::dsl::compute_into(eng, nn::dsl::leaf(p) + nn::dsl::leaf(*d_r), p);
-    NN_TRY_CHECK(r);
+    EX_TRY_CHECK(r);
     return eng.to_matrix(p);
 }
 

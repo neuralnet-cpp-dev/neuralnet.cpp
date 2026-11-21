@@ -8,7 +8,7 @@
 //   [5] 缺少 old_log_prob / old_value 明确报错。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>
@@ -41,7 +41,7 @@ nn::Tensor matrix_tensor(nn::ComputeEngine& engine, std::size_t rows, std::size_
                          std::initializer_list<float> values)
 {
     nn::Matrix m(rows, cols);
-    NN_ASSERT_ALWAYS(values.size() == m.size(), "matrix_tensor size");
+    EX_ASSERT_ALWAYS(values.size() == m.size(), "matrix_tensor size");
     auto span = m.span();
     std::size_t i = 0;
     for (float v : values)
@@ -71,7 +71,7 @@ nn::TensorSchema fixture_schema()
 {
     auto r = nn::ExperienceSchema::create(
         {"action", "action_mask", "advantage", "return", "old_value", "old_log_prob"});
-    NN_ASSERT_ALWAYS(r, "fixture schema");
+    EX_ASSERT_ALWAYS(r, "fixture schema");
     return r->schema();
 }
 
@@ -81,10 +81,10 @@ struct Fixture
     nn::PolicyBatchView view;
 };
 
-nn::Result<Fixture> make_fixture(nn::Tensor actions, nn::Tensor mask, nn::Tensor advantage,
+exstl::Result<Fixture> make_fixture(nn::Tensor actions, nn::Tensor mask, nn::Tensor advantage,
                                  nn::Tensor returns, nn::Tensor old_value, nn::Tensor old_log_prob)
 {
-    NN_TRY(record,
+    EX_TRY(record,
            nn::TensorRecord::create(
                fixture_schema(), {nn::NamedTensor{.name = "action", .value = actions},
                                   nn::NamedTensor{.name = "action_mask", .value = mask},
@@ -95,7 +95,7 @@ nn::Result<Fixture> make_fixture(nn::Tensor actions, nn::Tensor mask, nn::Tensor
                                   nn::NamedTensor{.name = "old_log_prob", .value = old_log_prob}}));
     Fixture out;
     out.record = std::make_unique<nn::TensorRecord>(std::move(*record));
-    NN_TRY(view, nn::PolicyBatchView::create(*out.record));
+    EX_TRY(view, nn::PolicyBatchView::create(*out.record));
     out.view = std::move(*view);
     return out;
 }
@@ -322,8 +322,8 @@ void test_preset_matches_manual()
     CHECK(std::fabs(report->loss - (p->loss + e->loss + v->loss)) < 1e-5f,
           "PPO preset loss equals component composition");
 
-    auto manual_policy_grad = NN_UNWRAP(owner->clone(p->gradient));
-    NN_UNWRAP(owner->accumulate(manual_policy_grad, e->gradient));
+    auto manual_policy_grad = EX_UNWRAP(owner->clone(p->gradient));
+    EX_UNWRAP(owner->accumulate(manual_policy_grad, e->gradient));
     auto policy_h = report->gradients.field("policy");
     auto value_h = report->gradients.field("value");
     CHECK(policy_h && value_h, "PPO preset gradient bundle fields");

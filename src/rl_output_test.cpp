@@ -8,7 +8,7 @@
 //   [5] ModelSpec output_schema/output_packing 往返，旧键缺失兼容。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>
@@ -47,30 +47,30 @@ nn::TensorSchema policy_value_schema()
                           nn::Precision::F32, nn::TensorPlacement::CPU),
          nn::tensor_field("value", nn::TensorShapeSpec{.rows = 1, .cols = std::nullopt}, true,
                           nn::Precision::F32, nn::TensorPlacement::CPU)});
-    NN_ASSERT_ALWAYS(r, "policy_value_schema");
+    EX_ASSERT_ALWAYS(r, "policy_value_schema");
     return std::move(*r);
 }
 
 void set_matrix(nn::ComputeEngine& engine, nn::Tensor& tensor, const nn::Matrix& value)
-{ NN_UNWRAP(engine.copy_from(tensor, value)); }
+{ EX_UNWRAP(engine.copy_from(tensor, value)); }
 
 auto make_bundle_model(nn::ComputeEngine& engine, const nn::TensorSchema& schema)
-    -> nn::Result<nn::Model>
+    -> exstl::Result<nn::Model>
 {
     nn::Model model(engine);
-    NN_TRY_CHECK(model.add<nn::Linear>(2, 2));
+    EX_TRY_CHECK(model.add<nn::Linear>(2, 2));
 
     auto bundle = std::make_unique<nn::OutputBundleLayer>(schema);
-    NN_TRY_CHECK(bundle->add_port("policy", std::make_unique<nn::Linear>(2, 2)));
-    NN_TRY_CHECK(bundle->add_port("value", std::make_unique<nn::Linear>(2, 1)));
-    NN_TRY_CHECK(bundle->set_row_band_packing({"policy", "value"}));
-    NN_TRY_CHECK(model.add_layer(std::move(bundle)));
+    EX_TRY_CHECK(bundle->add_port("policy", std::make_unique<nn::Linear>(2, 2)));
+    EX_TRY_CHECK(bundle->add_port("value", std::make_unique<nn::Linear>(2, 1)));
+    EX_TRY_CHECK(bundle->set_row_band_packing({"policy", "value"}));
+    EX_TRY_CHECK(model.add_layer(std::move(bundle)));
 
     // 固定参数，使 named 与 packed 两条路径比较的是同一函数。
     auto matrix = [](std::size_t rows, std::size_t cols, std::initializer_list<float> items)
     {
         nn::Matrix m(rows, cols);
-        NN_ASSERT_ALWAYS(items.size() == m.size(), "matrix initializer size");
+        EX_ASSERT_ALWAYS(items.size() == m.size(), "matrix initializer size");
         auto dst = m.span();
         std::size_t i = 0;
         for (float v : items)
@@ -86,7 +86,7 @@ auto make_bundle_model(nn::ComputeEngine& engine, const nn::TensorSchema& schema
         matrix(1, 1, {-0.03f}),
     };
     auto params = model.parameters();
-    NN_ASSERT_ALWAYS(params.size() == values.size(), "bundle model parameter inventory");
+    EX_ASSERT_ALWAYS(params.size() == values.size(), "bundle model parameter inventory");
     for (std::size_t i = 0; i < values.size(); ++i)
         set_matrix(engine, params[i].get(), values[i]);
     return model;
@@ -133,46 +133,46 @@ public:
     [[nodiscard]] const char* layer_name() const noexcept override
     { return "FailSecondForwardLayer"; }
 
-    [[nodiscard]] nn::Result<nn::Tensor> forward(const nn::Tensor& input) override
+    [[nodiscard]] exstl::Result<nn::Tensor> forward(const nn::Tensor& input) override
     {
-        if (!first_forward_) NN_FAIL("FailSecondForwardLayer: intentional failure");
+        if (!first_forward_) EX_FAIL("FailSecondForwardLayer: intentional failure");
         first_forward_ = false;
         return engine_ref().slice_rows(input, 0, 1);
     }
 
-    [[nodiscard]] nn::Result<nn::Tensor> backward(const nn::Tensor& grad_output) override
+    [[nodiscard]] exstl::Result<nn::Tensor> backward(const nn::Tensor& grad_output) override
     { return grad_output; }
 
 protected:
-    [[nodiscard]] nn::Result<void> init_impl(nn::ComputeEngine&) override { return {}; }
+    [[nodiscard]] exstl::Result<void> init_impl(nn::ComputeEngine&) override { return {}; }
 };
 
-nn::Result<ObjectiveGrads> make_objective_grads(nn::ComputeEngine& engine,
+exstl::Result<ObjectiveGrads> make_objective_grads(nn::ComputeEngine& engine,
                                                 const nn::TensorSchema& schema,
                                                 const nn::NamedTensorSet& output)
 {
-    NN_TRY(policy_h, output.field("policy"));
-    NN_TRY(value_h, output.field("value"));
-    NN_TRY(policy, output.require(*policy_h));
-    NN_TRY(value, output.require(*value_h));
+    EX_TRY(policy_h, output.field("policy"));
+    EX_TRY(value_h, output.field("value"));
+    EX_TRY(policy, output.require(*policy_h));
+    EX_TRY(value, output.require(*value_h));
 
     nn::MSELoss policy_loss;
     nn::MSELoss value_loss;
     auto zero_policy = make_tensor(engine, (*policy)->rows(), (*policy)->cols(), 0.0f, 0.0f);
     auto zero_value = make_tensor(engine, (*value)->rows(), (*value)->cols(), 0.0f, 0.0f);
-    NN_TRY_CHECK(policy_loss.forward(engine, **policy, zero_policy));
-    NN_TRY_CHECK(value_loss.forward(engine, **value, zero_value));
-    NN_TRY(policy_grad, policy_loss.backward());
-    NN_TRY(value_grad, value_loss.backward());
-    NN_TRY_CHECK(engine.scale_inplace(*value_grad, 0.5f));
+    EX_TRY_CHECK(policy_loss.forward(engine, **policy, zero_policy));
+    EX_TRY_CHECK(value_loss.forward(engine, **value, zero_value));
+    EX_TRY(policy_grad, policy_loss.backward());
+    EX_TRY(value_grad, value_loss.backward());
+    EX_TRY_CHECK(engine.scale_inplace(*value_grad, 0.5f));
 
     auto named = nn::NamedTensorSet::create(
         schema, {nn::NamedTensor{.name = "policy", .value = *policy_grad},
                  nn::NamedTensor{.name = "value", .value = *value_grad}});
-    NN_TRY_CHECK(named);
-    NN_TRY(packing, nn::RowBandPacking::create(schema, {"policy", "value"}));
-    NN_TRY(packed, packing->pack(engine, *named));
-    NN_TRY(named_grads, nn::GradientBundle::create(
+    EX_TRY_CHECK(named);
+    EX_TRY(packing, nn::RowBandPacking::create(schema, {"policy", "value"}));
+    EX_TRY(packed, packing->pack(engine, *named));
+    EX_TRY(named_grads, nn::GradientBundle::create(
                             schema, {nn::NamedTensor{.name = "policy", .value = *policy_grad},
                                      nn::NamedTensor{.name = "value", .value = *value_grad}}));
     return ObjectiveGrads{.named = std::move(*named_grads), .packed = std::move(*packed)};
@@ -195,8 +195,8 @@ void test_named_and_packed()
           "named forward");
 
     const nn::Tensor input = make_tensor(engine, 2, 3, 0.2f, 0.1f);
-    NN_UNWRAP(named_model.zero_grad());
-    NN_UNWRAP(packed_model.zero_grad());
+    EX_UNWRAP(named_model.zero_grad());
+    EX_UNWRAP(packed_model.zero_grad());
 
     auto named = named_model.forward_named(input);
     CHECK(named.has_value(), "named forward succeeds");
@@ -212,7 +212,7 @@ void test_named_and_packed()
     CHECK((*policy)->rows() == 2 && (*policy)->cols() == 3, "policy shape (A,T)");
     CHECK((*value)->rows() == 1 && (*value)->cols() == 3, "value shape (1,T)");
 
-    auto packing = NN_UNWRAP(nn::RowBandPacking::create(schema, {"policy", "value"}));
+    auto packing = EX_UNWRAP(nn::RowBandPacking::create(schema, {"policy", "value"}));
     auto named_packed = packing.pack(engine, *named);
     CHECK(named_packed.has_value(), "named outputs pack");
     auto packed = packed_model.forward(input);
@@ -275,9 +275,9 @@ void test_negative_paths()
 
     nn::Model stateful_model(engine);
     auto stateful_bundle = std::make_unique<nn::OutputBundleLayer>(schema);
-    NN_UNWRAP(stateful_bundle->add_port("policy", std::make_unique<nn::Linear>(2, 2)));
-    NN_UNWRAP(stateful_bundle->add_port("value", std::make_unique<FailSecondForwardLayer>()));
-    NN_UNWRAP(stateful_model.add_layer(std::move(stateful_bundle)));
+    EX_UNWRAP(stateful_bundle->add_port("policy", std::make_unique<nn::Linear>(2, 2)));
+    EX_UNWRAP(stateful_bundle->add_port("value", std::make_unique<FailSecondForwardLayer>()));
+    EX_UNWRAP(stateful_model.add_layer(std::move(stateful_bundle)));
 
     const nn::Tensor stateful_input = make_tensor(engine, 2, 2, 0.1f, 0.1f);
     CHECK(stateful_model.forward_named(stateful_input).has_value(),

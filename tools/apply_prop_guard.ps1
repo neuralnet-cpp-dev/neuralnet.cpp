@@ -1,5 +1,5 @@
 # apply_prop_guard.ps1 — A 批 prop 守卫形态：if (!x)\n return std::unexpected(x.error());
-#   → NN_TRY_CHECK(x);   （跨两行合并；宏 = 该 guard 的逐字等价）
+#   → EX_TRY_CHECK(x);   （跨两行合并；宏 = 该 guard 的逐字等价）
 # 孤立 return（无守卫，前一行非 if）一律不动（需人工审：可能在 if 块内已知错）。
 param([switch]$DryRun)
 $ErrorActionPreference = 'Stop'
@@ -16,7 +16,7 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         $script:n = 0
         $text = $re.Replace($orig, { param($m)
             $script:n++
-            $m.Groups[1].Value + 'NN_TRY_CHECK(' + $m.Groups[2].Value + ');'
+            $m.Groups[1].Value + 'EX_TRY_CHECK(' + $m.Groups[2].Value + ');'
         })
         if ($text -ne $orig) {
             $tf++
@@ -27,4 +27,4 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         }
     }
 }
-Write-Output ("TOTAL guarded-prop -> NN_TRY_CHECK = {0} files={1} (DryRun={2})" -f $tot, $tf, $DryRun)
+Write-Output ("TOTAL guarded-prop -> EX_TRY_CHECK = {0} files={1} (DryRun={2})" -f $tot, $tf, $DryRun)

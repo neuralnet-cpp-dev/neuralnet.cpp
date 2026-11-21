@@ -31,7 +31,7 @@ private:
     Tensor encoding_cache_;
     std::size_t cached_total_ = 0;
 
-    [[nodiscard]] Result<void> rebuild_encoding(ComputeEngine& engine, std::size_t total_len)
+    [[nodiscard]] exstl::Result<void> rebuild_encoding(ComputeEngine& engine, std::size_t total_len)
     {
         const std::size_t base_len = (tile_size_ > 0) ? tile_size_ : total_len;
         const std::size_t batch = (tile_size_ > 0) ? total_len / tile_size_ : 1;
@@ -64,7 +64,7 @@ private:
                 }
             }
         }
-        NN_TRY(r, nn::upload_span(engine, d_model_, total_len, p_.param, std::span(enc)));
+        EX_TRY(r, nn::upload_span(engine, d_model_, total_len, p_.param, std::span(enc)));
         encoding_cache_ = std::move(*r);
         cached_total_ = total_len;
         return {};
@@ -76,21 +76,21 @@ public:
     {
     }
 
-    [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
+    [[nodiscard]] exstl::Result<Tensor> forward(const Tensor& input) override
     {
         ComputeEngine& engine = engine_ref();
-        if (input.rows() != d_model_) NN_FAIL("PE forward: d_model mismatch");
+        if (input.rows() != d_model_) EX_FAIL("PE forward: d_model mismatch");
         const std::size_t total_len = input.cols();
         if (tile_size_ > 0 && total_len % tile_size_ != 0)
-            NN_FAIL("PE forward: total_len not divisible by tile_size");
-        if (tile_size_ == 0 && total_len > max_len_) NN_FAIL("PE forward: seq_len exceeds max_len");
-        if (cached_total_ != total_len) { NN_TRY(r, rebuild_encoding(engine, total_len)); }
+            EX_FAIL("PE forward: total_len not divisible by tile_size");
+        if (tile_size_ == 0 && total_len > max_len_) EX_FAIL("PE forward: seq_len exceeds max_len");
+        if (cached_total_ != total_len) { EX_TRY(r, rebuild_encoding(engine, total_len)); }
 
         return dsl::compute(engine, dsl::leaf(input) + dsl::leaf(encoding_cache_), input.rows(),
                             input.cols(), p_.compute);
     }
 
-    [[nodiscard]] Result<Tensor> backward(const Tensor& grad_output) override
+    [[nodiscard]] exstl::Result<Tensor> backward(const Tensor& grad_output) override
     {
         return grad_output;  // 位置编码不可学习，梯度直接穿透
     }
@@ -126,12 +126,12 @@ public:
     {
     }
 
-    [[nodiscard]] Result<void> init_impl(ComputeEngine& engine) override
+    [[nodiscard]] exstl::Result<void> init_impl(ComputeEngine& engine) override
     {
-        NN_TRY(r1, self_attn_.init(engine));
-        NN_TRY(r2, norm1_->init(engine));
-        NN_TRY(r3, ff_.init(engine));
-        NN_TRY(r4, norm2_->init(engine));
+        EX_TRY(r1, self_attn_.init(engine));
+        EX_TRY(r2, norm1_->init(engine));
+        EX_TRY(r3, ff_.init(engine));
+        EX_TRY(r4, norm2_->init(engine));
         return {};
     }
 
@@ -169,7 +169,7 @@ public:
 
     [[nodiscard]] bool recompute_supported() const override { return true; }
 
-    [[nodiscard]] Result<Tensor> forward_recompute(const Tensor& saved_input) override
+    [[nodiscard]] exstl::Result<Tensor> forward_recompute(const Tensor& saved_input) override
     {
         // 临时关闭本层及其子层的 checkpoint 模式，使 forward 重建缓存
         set_checkpoint_mode(false);
@@ -198,18 +198,18 @@ public:
         norm2_->set_training(training);
     }
 
-    [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
+    [[nodiscard]] exstl::Result<Tensor> forward(const Tensor& input) override
     {
         ComputeEngine& engine = engine_ref();
         // 残差分支 1（Pre-Norm + 自注意力），与 GPTBlock/RAPTBlock 同骨架
-        NN_TRY(r2, prenorm_residual_forward_(engine, input, *norm1_, self_attn_, p_.compute));
+        EX_TRY(r2, prenorm_residual_forward_(engine, input, *norm1_, self_attn_, p_.compute));
         Tensor res2 = std::move(*r2);
         if (!checkpoint_mode_) residual2_cache_ = res2;
         // 残差分支 2（Pre-Norm + FFN）
         return prenorm_residual_forward_(engine, res2, *norm2_, ff_, p_.compute);
     }
 
-    [[nodiscard]] Result<Tensor> backward(const Tensor& grad_output) override
+    [[nodiscard]] exstl::Result<Tensor> backward(const Tensor& grad_output) override
     {
         ComputeEngine& engine = engine_ref();
         // 两处残差分流 + 子层反向（与 GPTBlock / RAPTBlock 同一骨架）
@@ -267,21 +267,21 @@ public:
         if (final_norm) ln_f_ = make_norm_layer(d_model, norm_type);
     }
 
-    [[nodiscard]] Result<void> init_impl(ComputeEngine& engine) override
+    [[nodiscard]] exstl::Result<void> init_impl(ComputeEngine& engine) override
     {
         for (auto& layer : layers_)
         {
-            NN_TRY(r, layer.init(engine));
+            EX_TRY(r, layer.init(engine));
         }
         // M6 段 C：pos_encoding_ 是子 Layer，engine 由 init 绑定
         {
-            NN_TRY(r, pos_encoding_.init(engine));
+            EX_TRY(r, pos_encoding_.init(engine));
         }
         // 预创建 ones_row_ (1, num_patches) 全1，用于 backward 广播
         // （M2 声明式：引擎填数，原 from_matrix 口径 = F32）
-        if (ln_f_) { NN_TRY(rn, ln_f_->init(engine)); }
+        if (ln_f_) { EX_TRY(rn, ln_f_->init(engine)); }
         ones_row_ = engine.create_tensor(1, num_patches_, Precision::F32, InitSpec::constant(1));
-        if (!ones_row_.valid()) NN_FAIL("TransformerEncoder: ones_row_ 初始化失败");
+        if (!ones_row_.valid()) EX_FAIL("TransformerEncoder: ones_row_ 初始化失败");
         return {};
     }
 
@@ -335,31 +335,31 @@ public:
         return refs;
     }
 
-    [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
+    [[nodiscard]] exstl::Result<Tensor> forward(const Tensor& input) override
     {
         ComputeEngine& engine = engine_ref();
         // input: (d_model, batch * num_patches)
-        if (input.rows() != d_model_) NN_FAIL("TransformerEncoder: row count mismatch");
+        if (input.rows() != d_model_) EX_FAIL("TransformerEncoder: row count mismatch");
         if (input.cols() % num_patches_ != 0)
-            NN_FAIL("TransformerEncoder: cols not divisible by num_patches");
+            EX_FAIL("TransformerEncoder: cols not divisible by num_patches");
         batch_size_ = input.cols() / num_patches_;
 
         // 1. 添加 tiled 位置编码 → (d_model, batch * num_patches)
-        NN_TRY(pe, pos_encoding_.forward(input));
+        EX_TRY(pe, pos_encoding_.forward(input));
         Tensor x = std::move(*pe);
 
         // 2. 一次性通过所有 EncoderLayer [全批量化 GPU]
         for (std::size_t li = 0; li < layers_.size(); ++li)
         {
             NN_PROF_SCOPE(nn::prof::interned("fwd.enc", li));
-            NN_TRY(lr, layers_[li].forward(x));
+            EX_TRY(lr, layers_[li].forward(x));
             x = std::move(*lr);
         }
 
         // final norm（NormPlace::Final）：在全局池化之前对每个 token 归一化
         if (ln_f_)
         {
-            NN_TRY(nf, ln_f_->forward(x));
+            EX_TRY(nf, ln_f_->forward(x));
             x = std::move(*nf);
         }
         // x: (d_model, batch * num_patches)
@@ -369,20 +369,20 @@ public:
         //   (batch*d_model, num_patches)，每行块对应一个样本，
         //   row_reduce_sum 后得到 (batch*d_model, 1)，
         //   再 rearrange_3d inverse 回 (d_model, batch)。
-        NN_TRY(re, engine.rearrange_3d(x, d_model_, batch_size_, num_patches_, false));
+        EX_TRY(re, engine.rearrange_3d(x, d_model_, batch_size_, num_patches_, false));
         // 归约步走 dsl::compute_reduce（输出与输入同形）
         auto row_sum = dsl::compute_reduce(engine, dsl::row_reduce_sum(dsl::leaf(*re)), re->rows(),
                                            re->cols(), p_.compute);
-        NN_TRY_CHECK(row_sum);
-        NN_TRY(rs_re, engine.rearrange_3d(*row_sum, d_model_, batch_size_, 1, true));
+        EX_TRY_CHECK(row_sum);
+        EX_TRY(rs_re, engine.rearrange_3d(*row_sum, d_model_, batch_size_, 1, true));
         // 原地缩放走 dsl::compute_into（inv_num_patches_ 走 rparam，值不进 key）
         auto r =
             dsl::compute_into(engine, dsl::leaf(*rs_re) * dsl::rparam(inv_num_patches_), *rs_re);
-        NN_TRY_CHECK(r);
+        EX_TRY_CHECK(r);
         return *rs_re;
     }
 
-    [[nodiscard]] Result<Tensor> backward(const Tensor& grad_output) override
+    [[nodiscard]] exstl::Result<Tensor> backward(const Tensor& grad_output) override
     {
         ComputeEngine& engine = engine_ref();
         // grad_output: (d_model, batch) — 来自下游 Linear.backward
@@ -393,24 +393,24 @@ public:
         //   实现：rearrange_3d(grad, d_model, batch, 1, false) → (batch*d_model, 1)
         //         原地 scale(inv_n) → matmul(grad_col_vec, ones_row_) → (batch*d_model, num_patches)
         //         rearrange_3d(result, d_model, batch, num_patches, true) → (d_model, batch*num_patches)
-        NN_TRY(g_re, engine.rearrange_3d(grad_output, d_model_, batch_size_, 1, false));
+        EX_TRY(g_re, engine.rearrange_3d(grad_output, d_model_, batch_size_, 1, false));
         // 原地缩放走 dsl::compute_into（inv_num_patches_ 走 rparam，值不进 key）
         auto r = dsl::compute_into(engine, dsl::leaf(*g_re) * dsl::rparam(inv_num_patches_), *g_re);
-        NN_TRY_CHECK(r);
+        EX_TRY_CHECK(r);
         // (*g_re): (batch*d_model, 1) × ones_row_ (1, num_patches) → (batch*d_model, num_patches)
         // 纯 matmul 走 DSL 直写（结构经 scan 的 TransformerEncoderLayer dry-run 登记；
         // 注意该调用在 pooling 路径，scan 的 enc dry-run 覆盖 forward/backward）
         auto unpooled = dsl::compute(engine, dsl::matmul(*g_re, ones_row_, false, false),
                                      g_re->rows(), ones_row_.cols(), p_.compute);
-        NN_TRY_CHECK(unpooled);
-        NN_TRY(grad, engine.rearrange_3d(*unpooled, d_model_, batch_size_, num_patches_, true));
+        EX_TRY_CHECK(unpooled);
+        EX_TRY(grad, engine.rearrange_3d(*unpooled, d_model_, batch_size_, num_patches_, true));
         Tensor grad_x = std::move(*grad);
 
         // 2. 反向通过所有 EncoderLayer [全批量化 GPU]
         // final norm 反向：次序 = forward 的逆（池化反向之后、逐层反向之前）
         if (ln_f_)
         {
-            NN_TRY(gb, ln_f_->backward(grad_x));
+            EX_TRY(gb, ln_f_->backward(grad_x));
             grad_x = std::move(*gb);
         }
 
@@ -418,7 +418,7 @@ public:
         {
             const std::size_t li = static_cast<std::size_t>(layers_.rend() - it) - 1;
             NN_PROF_SCOPE(nn::prof::interned("bwd.enc", li));
-            NN_TRY(br, it->backward(grad_x));
+            EX_TRY(br, it->backward(grad_x));
             grad_x = std::move(*br);
         }
 
@@ -461,11 +461,11 @@ public:
           d_model_(d_model), projection_(patch_dim_, d_model)
     {
         // RV-01：不整除 → num_patches_ 少算、后续按错误形状索引 → 无条件终止
-        NN_ASSERT_ALWAYS(img_size % patch_size == 0,
+        EX_ASSERT_ALWAYS(img_size % patch_size == 0,
                          "PatchEmbedding: img_size must be divisible by patch_size");
     }
 
-    [[nodiscard]] Result<void> init_impl(ComputeEngine& engine) override
+    [[nodiscard]] exstl::Result<void> init_impl(ComputeEngine& engine) override
     { return projection_.init(engine); }
 
     // ── D7：精度配置下传（§9.2）：投影层是复合层的唯一子层 ───────────────
@@ -482,7 +482,7 @@ public:
 
     std::vector<TensorRef> param_gradients() override { return projection_.param_gradients(); }
 
-    [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
+    [[nodiscard]] exstl::Result<Tensor> forward(const Tensor& input) override
     {
         ComputeEngine& engine = engine_ref();
         input_cache_ = input;
@@ -495,7 +495,7 @@ public:
         // （patch 提取是 PatchEmbedding 的算法职责，无对应 op-level 原语；
         //  此处为 batch 边界的合法 CPU 预处理，与 GPTModel 的 gather_rows 同性质；
         //  宿主桥走 span，不经 Matrix——17 §3 D11）
-        NN_TRY(in_v, nn::download_vector(engine, input));
+        EX_TRY(in_v, nn::download_vector(engine, input));
         const std::size_t in_cols = input.cols();
 
         std::vector<Scalar> all_patches(patch_dim_ * batch * num_patches_);
@@ -519,24 +519,24 @@ public:
 
         auto ap_t = nn::upload_span(engine, patch_dim_, batch * num_patches_, Precision::F32,
                                         std::span(all_patches));
-        NN_TRY_CHECK(ap_t);
+        EX_TRY_CHECK(ap_t);
 
         // Step 2: 投影 → (d_model, batch * num_patches) — 已是 batch-major，无需重排
         return projection_.forward(*ap_t);
     }
 
-    [[nodiscard]] Result<Tensor> backward(const Tensor& grad_output) override
+    [[nodiscard]] exstl::Result<Tensor> backward(const Tensor& grad_output) override
     {
         ComputeEngine& engine = engine_ref();
         // grad_output: (d_model, batch * num_patches) — batch-major
         const std::size_t batch = grad_output.cols() / num_patches_;
 
         // Step 1: 投影层反向 → (patch_dim, batch * num_patches) — batch-major
-        NN_TRY(bp, projection_.backward(grad_output));
+        EX_TRY(bp, projection_.backward(grad_output));
 
         // Step 2: 散射梯度回输入 → (img_size², batch)
         auto gp_v = nn::download_vector(engine, *bp);   // 宿主桥（17 §3 D11）
-        NN_TRY_CHECK(gp_v);
+        EX_TRY_CHECK(gp_v);
         const std::size_t gp_cols = bp->cols();
 
         std::vector<Scalar> grad_input(img_size_ * img_size_ * batch);

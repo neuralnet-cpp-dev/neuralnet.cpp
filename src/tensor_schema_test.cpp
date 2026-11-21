@@ -8,7 +8,7 @@
 //   [5] NamedTensorSet / GradientBundle 共享 schema 语义。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <optional>
 #include <cstdint>
 #include <string>
@@ -63,7 +63,7 @@ nn::TensorSchema output_schema(bool value_optional = false)
         },
     };
     auto r = nn::TensorSchema::create("policy_value", std::move(fields));
-    NN_ASSERT_ALWAYS(r, "output_schema: create");
+    EX_ASSERT_ALWAYS(r, "output_schema: create");
     return std::move(*r);
 }
 
@@ -71,7 +71,7 @@ nn::Tensor make_f16_tensor(nn::ComputeEngine& engine, std::size_t rows, std::siz
 {
     nn::Matrix host(rows, cols);
     auto r = engine.from_matrix(host, nn::Precision::F16);
-    NN_ASSERT_ALWAYS(r, "make_f16_tensor: from_matrix");
+    EX_ASSERT_ALWAYS(r, "make_f16_tensor: from_matrix");
     return std::move(*r);
 }
 

@@ -30,7 +30,7 @@
 
 #include "neuralnet.cpp/algebra_matrix.hpp"  // nn::Matrix
 #include "neuralnet.cpp/compute_engine.hpp"   // nn::ComputeEngine
-#include "neuralnet.cpp/core_errors.hpp"      // nn::Result / nn::Error
+#include <exstl/errors.hpp>      // exstl::Result / exstl::Error
 #include "neuralnet.cpp/domain_mnist.hpp"     // nn::MNIST_NUM_CLASSES
 #include "neuralnet.cpp/model_container.hpp"  // nn::Model
 
@@ -39,11 +39,11 @@ namespace nn::cli
 // ── 从 CSV 加载 MNIST 数据 ─────────────────────────────────────────────
 // 返回 (feat_mat[feat_dim, N], label_mat[10, N])，label_mat 为 one-hot。
 // max_samples = 0 表示加载全部样本。
-[[nodiscard]] inline nn::Result<std::pair<nn::Matrix, nn::Matrix>>
+[[nodiscard]] inline exstl::Result<std::pair<nn::Matrix, nn::Matrix>>
 load_mnist_csv(const std::string& path, std::size_t max_samples = 0)
 {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) NN_FAIL("Cannot open file: " + path);
+    if (!file.is_open()) EX_FAIL("Cannot open file: " + path);
     const auto file_size = file.tellg();
     file.seekg(0);
 
@@ -56,7 +56,7 @@ load_mnist_csv(const std::string& path, std::size_t max_samples = 0)
         if (c == '\n') ++row_count;
     // 末行无换行符时也要计入（否则最后一行样本被静默丢弃）
     if (!buffer.empty() && buffer.back() != '\n') ++row_count;
-    if (row_count == 0) NN_FAIL("CSV file is empty or malformed: " + path);
+    if (row_count == 0) EX_FAIL("CSV file is empty or malformed: " + path);
     if (max_samples > 0 && max_samples < row_count) row_count = max_samples;
 
     const char* ptr = buffer.data();
@@ -95,7 +95,7 @@ load_mnist_csv(const std::string& path, std::size_t max_samples = 0)
     while (ptr < end && row < row_count)
     {
         auto [p_label, ec_label] = std::from_chars(ptr, end, labels[row]);
-        if (ec_label != std::errc{}) NN_FAIL("Failed to parse label at row " + std::to_string(row));
+        if (ec_label != std::errc{}) EX_FAIL("Failed to parse label at row " + std::to_string(row));
         ptr = p_label;
 
         for (std::size_t j = 0; j < feat_dim; ++j)
@@ -104,7 +104,7 @@ load_mnist_csv(const std::string& path, std::size_t max_samples = 0)
             nn::Scalar val;
             auto [p_feat, ec_feat] = std::from_chars(ptr, end, val);
             if (ec_feat != std::errc{})
-                NN_FAIL("Failed to parse feature at row " + std::to_string(row));
+                EX_FAIL("Failed to parse feature at row " + std::to_string(row));
             features[row * feat_dim + j] = val;
             ptr = p_feat;
         }
@@ -125,7 +125,7 @@ load_mnist_csv(const std::string& path, std::size_t max_samples = 0)
     for (std::size_t i = 0; i < N; ++i)
     {
         int lbl = labels[i];
-        if (lbl < 0 || lbl >= 10) NN_FAIL("Label out of range: " + std::to_string(lbl));
+        if (lbl < 0 || lbl >= 10) EX_FAIL("Label out of range: " + std::to_string(lbl));
         label_mat.set_value_unchecked(lbl, i, 1.0);
     }
 
@@ -144,13 +144,13 @@ load_mnist_csv(const std::string& path, std::size_t max_samples = 0)
 // 注：签名用 nn::Model& —— nn::Model 不派生自 nn::Layer，且 Model::forward
 //     自带 engine 绑定，签名不同于 Layer::forward(engine, ...)；
 //     与调用点 model.forward(...) 一致。
-[[nodiscard]] inline nn::Result<nn::Scalar>
+[[nodiscard]] inline exstl::Result<nn::Scalar>
 evaluate_mnist(nn::Model& model, nn::ComputeEngine& engine, const nn::Matrix& x,
                const nn::Matrix& y_onehot, std::size_t eval_samples = 0,
                std::size_t eval_batch = 1000)
 {
     const std::size_t N = (eval_samples > 0) ? std::min(x.cols(), eval_samples) : x.cols();
-    if (N == 0) NN_FAIL("evaluate_mnist: empty dataset");
+    if (N == 0) EX_FAIL("evaluate_mnist: empty dataset");
     const std::size_t chunk = (eval_batch > 0) ? std::min(eval_batch, N) : N;
 
     // 评估一律用推理模式：BatchNorm 使用 running 统计量而非 batch 统计量。
@@ -178,21 +178,21 @@ evaluate_mnist(nn::Model& model, nn::ComputeEngine& engine, const nn::Matrix& x,
                 xb.set_value_unchecked(r, i, x.at_unchecked(r, start + i));
 
         auto x_tensor_r = engine.from_matrix(xb);
-        NN_TRY_CHECK(x_tensor_r);
+        EX_TRY_CHECK(x_tensor_r);
         // batch 模式加速 forward（GPU 下消除 per-primitive 提交开销）
         auto bb = engine.begin_batch();
-        NN_TRY_CHECK(bb);
+        EX_TRY_CHECK(bb);
         auto out_tensor_r = model.forward(*x_tensor_r);
         if (!out_tensor_r)
         {
             (void)engine.end_batch();   // 出错也收尾，避免录制状态泄漏
-            NN_TRY_CHECK(out_tensor_r);
+            EX_TRY_CHECK(out_tensor_r);
         }
 
         auto eb = engine.end_batch();
-        NN_TRY_CHECK(eb);
+        EX_TRY_CHECK(eb);
         auto out_r = engine.to_matrix(*out_tensor_r);
-        NN_TRY_CHECK(out_r);
+        EX_TRY_CHECK(out_r);
         const auto& out = *out_r;
 
         for (std::size_t i = 0; i < cnt; ++i)

@@ -644,7 +644,7 @@ void test_f16_model_e2e(nn::ComputeEngine& raw, nn::ComputeEngine& eng)
 
     // profile_f16：param + compute f16（CLI --f16 语义）
     // NN_F16_DEBUG=1 → 逐 step loss + 逐阶段非有限值扫描（定位 CPU f16 发散用）
-    const bool dbg = ::nn::detail::env_flag_raw("NN_F16_DEBUG");
+    const bool dbg = ::exstl::env::flag("NN_F16_DEBUG");
     const auto r16 = train_tiny_gpt(eng, nn::profile_f16(), STEPS, LR, dbg);
     CHECK(r16.ok, "profile_f16 训练完成");
     if (!r16.ok) return;
@@ -883,7 +883,7 @@ int main()
         nn::ComputeEngine& cpu = *cpu_owner;
         nn::ComputeEngine& adapter = cpu; // P-1：原 PrecisionEngine 已下沉
         run_suite("cpu", cpu, adapter, /*allow_arbitrary_expr=*/true);
-        if (::nn::detail::env_flag_raw("NN_F16_DEBUG"))
+        if (::exstl::env::flag("NN_F16_DEBUG"))
         {
             std::printf("── NN_F16_DEBUG: CPU profile 组合矩阵（逐阶段扫描）──\n");
             run_profile_matrix(adapter, /*verbose=*/true);

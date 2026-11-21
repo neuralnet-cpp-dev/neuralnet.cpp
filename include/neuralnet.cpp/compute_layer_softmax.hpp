@@ -50,7 +50,7 @@ public:
         return r;
     }
 
-    [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
+    [[nodiscard]] exstl::Result<Tensor> forward(const Tensor& input) override
     {
         ComputeEngine& engine = engine_ref();
         // 行 softmax（数值稳定）：out = exp(x - row_max) / Σ_c exp(x - row_max)
@@ -63,14 +63,14 @@ public:
             dsl::exp(dsl::leaf(input) - dsl::row_reduce_max(input)) /
                 dsl::row_reduce_sum(dsl::exp(dsl::leaf(input) - dsl::row_reduce_max(input))),
             p_.stable);   // 输出仍是整网格（归约视图按行广播）→ 由表达式推导
-        NN_TRY_CHECK(out);
+        EX_TRY_CHECK(out);
         if (checkpoint_mode_) return out;
         // 单缓冲：把结果移入 output_cache_（唯一持有者），返回共享同一 buffer
         output_cache_ = std::move(*out);
         return output_cache_;
     }
 
-    [[nodiscard]] Result<Tensor> backward(const Tensor& grad_output) override
+    [[nodiscard]] exstl::Result<Tensor> backward(const Tensor& grad_output) override
     {
         ComputeEngine& engine = engine_ref();
         // grad_x = out ⊙ (grad_output - row_dot(out ⊙ grad_output))

@@ -126,16 +126,16 @@ endif()
 #
 # /Zc:preprocessor 是**必需**项，不是加固项（2026-10-10 四编译器矩阵实测）：
 #   cl.exe 默认走传统预处理器，它在把 `__VA_ARGS__` 代入**嵌套宏调用**时
-#   会把整个实参表当成**一个**实参（core_errors.hpp 的 NN_DETAIL_PICK2/3 实参
+#   会把整个实参表当成**一个**实参（core_errors.hpp 的 EX_DETAIL_PICK2/3 实参
 #   计数分发因此全部错位）。后果对两种语义都致命：
-#     · `NN_UNWRAP(cond, "ctx")` → 错选 NN_UNWRAP_1 → 展开成逗号表达式
+#     · `EX_UNWRAP(cond, "ctx")` → 错选 EX_UNWRAP_1 → 展开成逗号表达式
 #       `check_value((cond, "ctx"), …)` → 条件恒为字符串指针（恒真）
-#       → **检查静默失效且编译通过**（实测：`NN_UNWRAP(false, "x")` 不 abort）；
-#     · `NN_EXIT(cond, code, "ctx")` → 错选 NN_PICK_END → C3861 编译失败。
-#   打开 /Zc:preprocessor 后两种形态均按 C++ 标准展开（实测 `NN_UNWRAP(false,…)`
+#       → **检查静默失效且编译通过**（实测：`EX_UNWRAP(false, "x")` 不 abort）；
+#     · `EX_EXIT(cond, code, "ctx")` → 错选 EX_PICK_END → C3861 编译失败。
+#   打开 /Zc:preprocessor 后两种形态均按 C++ 标准展开（实测 `EX_UNWRAP(false,…)`
 #   正常 abort），本仓 500+ 处宏调用点的语义在 MSVC 下才与 clang/GCC 一致。
 #   该开关同时也是**接口**选项（见下方 nn_core），否则库外消费者在 cl.exe 下
-#   会拿到失效的 NN_UNWRAP。
+#   会拿到失效的 EX_UNWRAP。
 if(MSVC)
     # ⚠ 字符集只用 **/utf-8 一种写法**（= /source-charset:utf-8 +
     #   /execution-charset:utf-8）。此前这里写的是那对分开的开关，而
@@ -371,13 +371,20 @@ else()
     message(STATUS "std::stacktrace link library: (none found,可能链接失败)")
 endif()
 
+# ── exSTL（扁平 submodule：错误处理 / 线程池 / 并行 / observer_ptr / env）────
+# foundation 单一真源在 exstl/；engine 与主仓都只消费 exstl::exstl，
+# 不再各自嵌套、不再在 abstraction 里存副本。
+add_subdirectory(exstl)
+
 # ── 公共 INTERFACE 库：所有目标共享 include 目录和链接库 ──────────────
 # 通过 INTERFACE 库消除 7 个目标的重复设置
 add_library(nn_core INTERFACE)
 # 引擎抽象层（submodule engine/abstraction，MIT）排在**主仓库 include 之前**：
 # 主仓库已删除与抽象层重复的接口/值类型头（algebra_* / compute_engine /
-# compute_tensor / core_* / expr_spec 等），同名头一律解析到抽象层 —— 与
+# compute_tensor / expr_spec 等），同名头一律解析到抽象层 —— 与
 # libnn-cpu.so / libnn-gpu.so（LGPL）按同一份头编译，跨界 ABI 一致。
+# foundation（原 core_errors/assert/threadpool/parallel/observer_ptr/宏岛）
+# 已迁 exstl submodule，经 exstl::exstl 传递 include。
 # 纯接口头（expr_dsl / expr_fold / expr_registry / ternary_pack / int8_pack /
 # kernel_cache）单一真源同样在抽象层 —— 消费方**只 include 抽象层头 + 主仓
 # include/**，不再依赖 engine/engine/include（LGPL 实现目录，只留引擎实现头
@@ -390,7 +397,7 @@ target_include_directories(nn_core INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/abstraction/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-target_link_libraries(nn_core INTERFACE Threads::Threads)
+target_link_libraries(nn_core INTERFACE exstl::exstl Threads::Threads)
 if(NN_STACKTRACE_LIB)
     target_link_libraries(nn_core INTERFACE ${NN_STACKTRACE_LIB})
 endif()
@@ -448,7 +455,7 @@ target_compile_options(neuralnet_cpp INTERFACE
     # 目录级与接口级必须同用 /utf-8，混用分开的两个开关会让 cl 直接拒绝命令行）。
     # ⚠ 这同时要求消费方源码也是 UTF-8（现代工程默认如此）。
     # /Zc:preprocessor 必须随接口传出去（见上方公共标志处的实测说明：
-    # 传统预处理器会让 NN_UNWRAP/NN_EXIT 的变参分发错位）。
+    # 传统预处理器会让 EX_UNWRAP/EX_EXIT 的变参分发错位）。
     $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
     $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>
     # /bigobj 也随接口传：消费方在大 TU 里展开 nn.hpp 同样可能触发 C1128
@@ -509,8 +516,8 @@ endfunction()
 #   `export import nn.<依赖域>` 让消费方只 import 最顶域即可连带拿到依赖域
 #   名字（C++ 模块的 import **不可传递**，必须显式 re-export）。
 # 约束（实证，README §4）：
-#   · 宏（NN_TRY / NN_UNWRAP / NN_ASSERT_* 等）**不可导出** → 消费者
-#     `import nn.<域>` + 按需 `#include <nn_error_macros.hpp>` 宏岛头；
+#   · 宏（EX_TRY / EX_UNWRAP / NN_ASSERT_* 等）**不可导出** → 消费者
+#     `import nn.<域>` + 按需 `#include <exstl/error_macros.hpp>` 宏岛头；
 #   · STL 留在全局片段 → 消费者自带用到的 STL 头。
 # 构建 = 显式 BMI 自定义命令（clang --precompile）+ -fmodule-file 经
 #   INTERFACE 目标传播，不开 CMake 模块扫描（见文件头注释的成本说明）。
@@ -521,47 +528,52 @@ endfunction()
 # ── 各域头文件闭包（nn_add_module 的 DEPENDS；跨域头改动触发对应 BMI 重编）──
 # 闭包 = 模块单元文本包含的全部 nn 头（含传递）。宁多勿少：多列只会偶发
 # 重编，少列会在头改动后**静默用旧 BMI**（比编译慢更糟）。
-# ⚠ 引擎 .so 化后 core_*（除 core_file/core_sha256）与 precision 位于
-#   submodule 抽象层（engine/abstraction/include）——闭包路径须指向实际位置。
+# ⚠ foundation（原 core_errors/assert/threadpool/parallel/observer_ptr/宏岛）
+#   已迁扁平 submodule exstl/——闭包路径指向 exstl/include/exstl/。
+#   其余 abstraction 头仍在 engine/abstraction/include。
 #   nn_add_module 会把 HEADERS 拼到 ${NN_LIB_SOURCE_DIR}/ 前 → 这里用相对路径。
 set(NN_ABST_INC engine/abstraction/include/neuralnet.cpp)
+set(NN_EXSTL_INC exstl/include/exstl)
 set(NN_MOD_CORE_HEADERS
-    ${NN_ABST_INC}/core_assert.hpp
-    ${NN_ABST_INC}/core_observer_ptr.hpp
+    ${NN_EXSTL_INC}/assert.hpp
+    ${NN_EXSTL_INC}/observer_ptr.hpp
     ${NN_ABST_INC}/core_config.hpp
     ${NN_ABST_INC}/core_env.hpp
-    ${NN_ABST_INC}/core_errors.hpp
+    ${NN_EXSTL_INC}/errors.hpp
     include/neuralnet.cpp/core_file.hpp
-    ${NN_ABST_INC}/core_parallel.hpp
+    ${NN_EXSTL_INC}/parallel.hpp
     include/neuralnet.cpp/core_sha256.hpp
-    ${NN_ABST_INC}/core_threadpool.hpp
-    ${NN_ABST_INC}/precision.hpp)
-# kvrecord 闭包 = 自身 + core（model_keyvalue_record → core_errors）
+    ${NN_EXSTL_INC}/threadpool.hpp
+    ${NN_ABST_INC}/precision.hpp
+    ${NN_EXSTL_INC}/error_macros.hpp
+    ${NN_EXSTL_INC}/env.hpp)
+# kvrecord 闭包 = 自身 + core（model_keyvalue_record → errors）
 set(NN_MOD_KVRECORD_HEADERS
     ${NN_ABST_INC}/model_keyvalue_record.hpp
     ${NN_MOD_CORE_HEADERS})
-# dataset 闭包 = dataset/dataset_format + kvrecord + core_file/core_sha256/core_errors
+# dataset 闭包 = dataset/dataset_format + kvrecord + core_file/core_sha256/errors
 #   （dataset 不依赖 threadpool/parallel/config/precision/assert，无需全 core）
 set(NN_MOD_DATASET_HEADERS
     include/neuralnet.cpp/dataset.hpp
     include/neuralnet.cpp/dataset_format.hpp
     ${NN_ABST_INC}/model_keyvalue_record.hpp
-    ${NN_ABST_INC}/core_errors.hpp
+    ${NN_EXSTL_INC}/errors.hpp
+    ${NN_EXSTL_INC}/error_macros.hpp
     include/neuralnet.cpp/core_file.hpp
     include/neuralnet.cpp/core_sha256.hpp)
-# tokenizer 闭包 = 4 分词器头 + base 的传递（core_errors/core_parallel/
-#   core_threadpool/dataset_format → core_config/precision/core_assert/kvrecord）
-#   —— 恰好与 spike 实测的「12 头闭包」一致
+# tokenizer 闭包 = 4 分词器头 + base 的传递（errors/parallel/
+#   threadpool/dataset_format → core_config/precision/assert/kvrecord）
 set(NN_MOD_TOKENIZER_HEADERS
     include/neuralnet.cpp/domain_tokenizer.hpp
     include/neuralnet.cpp/domain_tokenizer_base.hpp
     include/neuralnet.cpp/domain_tokenizer_bpe.hpp
     include/neuralnet.cpp/domain_tokenizer_charbpe.hpp
-    ${NN_ABST_INC}/core_errors.hpp
-    ${NN_ABST_INC}/core_parallel.hpp
-    ${NN_ABST_INC}/core_threadpool.hpp
+    ${NN_EXSTL_INC}/errors.hpp
+    ${NN_EXSTL_INC}/error_macros.hpp
+    ${NN_EXSTL_INC}/parallel.hpp
+    ${NN_EXSTL_INC}/threadpool.hpp
     ${NN_ABST_INC}/core_config.hpp
-    ${NN_ABST_INC}/core_assert.hpp
+    ${NN_EXSTL_INC}/assert.hpp
     ${NN_ABST_INC}/precision.hpp
     include/neuralnet.cpp/dataset_format.hpp
     ${NN_ABST_INC}/model_keyvalue_record.hpp)
@@ -575,12 +587,12 @@ set(NN_MOD_EXPR_HEADERS
     engine/abstraction/include/neuralnet.cpp/algebra_span.hpp
     engine/abstraction/include/neuralnet.cpp/backend/compute_gpu_storage.hpp
     engine/abstraction/include/neuralnet.cpp/compute_tensor.hpp
-    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    exstl/include/exstl/assert.hpp
     engine/abstraction/include/neuralnet.cpp/core_config.hpp
     engine/abstraction/include/neuralnet.cpp/core_domain.hpp
-    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
-    engine/abstraction/include/neuralnet.cpp/core_parallel.hpp
-    engine/abstraction/include/neuralnet.cpp/core_threadpool.hpp
+    exstl/include/exstl/errors.hpp
+    exstl/include/exstl/parallel.hpp
+    exstl/include/exstl/threadpool.hpp
     engine/abstraction/include/neuralnet.cpp/expr_dsl.hpp
     engine/abstraction/include/neuralnet.cpp/expr_fold.hpp
     engine/abstraction/include/neuralnet.cpp/expr_graph.hpp
@@ -589,7 +601,7 @@ set(NN_MOD_EXPR_HEADERS
     engine/abstraction/include/neuralnet.cpp/expr_registry.hpp
     engine/abstraction/include/neuralnet.cpp/expr_spec.hpp
     engine/abstraction/include/neuralnet.cpp/precision.hpp
-    engine/abstraction/include/nn_error_macros.hpp
+    exstl/include/exstl/error_macros.hpp
     include/neuralnet.cpp/named_tensor_set.hpp
     include/neuralnet.cpp/tensor_schema.hpp
 )
@@ -600,15 +612,15 @@ set(NN_MOD_ENGINE_HEADERS
     engine/abstraction/include/neuralnet.cpp/backend/compute_gpu_storage.hpp
     engine/abstraction/include/neuralnet.cpp/compute_engine.hpp
     engine/abstraction/include/neuralnet.cpp/compute_tensor.hpp
-    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    exstl/include/exstl/assert.hpp
     engine/abstraction/include/neuralnet.cpp/core_config.hpp
     engine/abstraction/include/neuralnet.cpp/core_domain.hpp
     engine/abstraction/include/neuralnet.cpp/core_env.hpp
-    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
-    engine/abstraction/include/neuralnet.cpp/core_observer_ptr.hpp
-    engine/abstraction/include/neuralnet.cpp/core_parallel.hpp
+    exstl/include/exstl/errors.hpp
+    exstl/include/exstl/observer_ptr.hpp
+    exstl/include/exstl/parallel.hpp
     engine/abstraction/include/neuralnet.cpp/core_profile.hpp
-    engine/abstraction/include/neuralnet.cpp/core_threadpool.hpp
+    exstl/include/exstl/threadpool.hpp
     engine/abstraction/include/neuralnet.cpp/expr_graph.hpp
     engine/abstraction/include/neuralnet.cpp/expr_op_table.hpp
     engine/abstraction/include/neuralnet.cpp/expr_opt.hpp
@@ -617,14 +629,14 @@ set(NN_MOD_ENGINE_HEADERS
     engine/abstraction/include/neuralnet.cpp/kernel_cache.hpp
     engine/abstraction/include/neuralnet.cpp/precision.hpp
     engine/abstraction/include/neuralnet.cpp/ternary_pack.hpp
-    engine/abstraction/include/nn_error_macros.hpp
+    exstl/include/exstl/error_macros.hpp
     ${NN_ABST_INC}/model_keyvalue_record.hpp
 )
 set(NN_MOD_LAYER_HEADERS
-    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
-    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    exstl/include/exstl/assert.hpp
+    exstl/include/exstl/errors.hpp
     engine/abstraction/include/neuralnet.cpp/precision.hpp
-    engine/abstraction/include/nn_error_macros.hpp
+    exstl/include/exstl/error_macros.hpp
     include/neuralnet.cpp/compute_layer.hpp
     include/neuralnet.cpp/compute_layer_attention.hpp
     include/neuralnet.cpp/compute_layer_base.hpp
@@ -645,10 +657,10 @@ set(NN_MOD_LAYER_HEADERS
     include/neuralnet.cpp/tensor_schema.hpp
 )
 set(NN_MOD_LOSS_HEADERS
-    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
-    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    exstl/include/exstl/assert.hpp
+    exstl/include/exstl/errors.hpp
     engine/abstraction/include/neuralnet.cpp/precision.hpp
-    engine/abstraction/include/nn_error_macros.hpp
+    exstl/include/exstl/error_macros.hpp
     include/neuralnet.cpp/compute_layer_base.hpp
     include/neuralnet.cpp/compute_loss.hpp
     ${NN_ABST_INC}/model_keyvalue_record.hpp
@@ -657,11 +669,11 @@ set(NN_MOD_LOSS_HEADERS
     include/neuralnet.cpp/tensor_schema.hpp
 )
 set(NN_MOD_OPT_HEADERS
-    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    exstl/include/exstl/assert.hpp
     engine/abstraction/include/neuralnet.cpp/core_config.hpp
-    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    exstl/include/exstl/errors.hpp
     engine/abstraction/include/neuralnet.cpp/precision.hpp
-    engine/abstraction/include/nn_error_macros.hpp
+    exstl/include/exstl/error_macros.hpp
     include/neuralnet.cpp/compute_layer_base.hpp
     include/neuralnet.cpp/compute_optimizer.hpp
     include/neuralnet.cpp/lr_scheduler.hpp
@@ -671,11 +683,11 @@ set(NN_MOD_OPT_HEADERS
     include/neuralnet.cpp/tensor_schema.hpp
 )
 set(NN_MOD_MODEL_HEADERS
-    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    exstl/include/exstl/assert.hpp
     engine/abstraction/include/neuralnet.cpp/core_config.hpp
-    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    exstl/include/exstl/errors.hpp
     engine/abstraction/include/neuralnet.cpp/precision.hpp
-    engine/abstraction/include/nn_error_macros.hpp
+    exstl/include/exstl/error_macros.hpp
     include/neuralnet.cpp/compute_layer.hpp
     include/neuralnet.cpp/compute_layer_attention.hpp
     include/neuralnet.cpp/compute_layer_base.hpp
@@ -704,13 +716,13 @@ set(NN_MOD_MODEL_HEADERS
     include/neuralnet.cpp/training_session.hpp
 )
 set(NN_MOD_TRAIN_HEADERS
-    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    exstl/include/exstl/assert.hpp
     engine/abstraction/include/neuralnet.cpp/core_config.hpp
-    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
-    engine/abstraction/include/neuralnet.cpp/core_parallel.hpp
-    engine/abstraction/include/neuralnet.cpp/core_threadpool.hpp
+    exstl/include/exstl/errors.hpp
+    exstl/include/exstl/parallel.hpp
+    exstl/include/exstl/threadpool.hpp
     engine/abstraction/include/neuralnet.cpp/precision.hpp
-    engine/abstraction/include/nn_error_macros.hpp
+    exstl/include/exstl/error_macros.hpp
     include/neuralnet.cpp/batch_source.hpp
     include/neuralnet.cpp/compute_layer.hpp
     include/neuralnet.cpp/compute_layer_attention.hpp
@@ -754,10 +766,10 @@ set(NN_MOD_TRAIN_HEADERS
     include/neuralnet.cpp/training_session.hpp
 )
 set(NN_MOD_DOMAIN_HEADERS
-    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
-    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
+    exstl/include/exstl/assert.hpp
+    exstl/include/exstl/errors.hpp
     engine/abstraction/include/neuralnet.cpp/precision.hpp
-    engine/abstraction/include/nn_error_macros.hpp
+    exstl/include/exstl/error_macros.hpp
     include/neuralnet.cpp/compute_layer.hpp
     include/neuralnet.cpp/compute_layer_attention.hpp
     include/neuralnet.cpp/compute_layer_base.hpp
@@ -789,20 +801,20 @@ set(NN_MOD_CLI_HEADERS
     engine/abstraction/include/neuralnet.cpp/backend/compute_gpu_storage.hpp
     engine/abstraction/include/neuralnet.cpp/compute_engine.hpp
     engine/abstraction/include/neuralnet.cpp/compute_tensor.hpp
-    engine/abstraction/include/neuralnet.cpp/core_assert.hpp
+    exstl/include/exstl/assert.hpp
     engine/abstraction/include/neuralnet.cpp/core_config.hpp
     engine/abstraction/include/neuralnet.cpp/core_domain.hpp
     engine/abstraction/include/neuralnet.cpp/core_env.hpp
-    engine/abstraction/include/neuralnet.cpp/core_errors.hpp
-    engine/abstraction/include/neuralnet.cpp/core_parallel.hpp
+    exstl/include/exstl/errors.hpp
+    exstl/include/exstl/parallel.hpp
     engine/abstraction/include/neuralnet.cpp/core_profile.hpp
-    engine/abstraction/include/neuralnet.cpp/core_threadpool.hpp
+    exstl/include/exstl/threadpool.hpp
     engine/abstraction/include/neuralnet.cpp/expr_graph.hpp
     engine/abstraction/include/neuralnet.cpp/expr_op_table.hpp
     engine/abstraction/include/neuralnet.cpp/expr_opt.hpp
     engine/abstraction/include/neuralnet.cpp/expr_spec.hpp
     engine/abstraction/include/neuralnet.cpp/precision.hpp
-    engine/abstraction/include/nn_error_macros.hpp
+    exstl/include/exstl/error_macros.hpp
     include/neuralnet.cpp/batch_source.hpp
     include/neuralnet.cpp/cli/cli_engine_factory.hpp
     include/neuralnet.cpp/cli/cli_gpu_option.hpp
@@ -973,6 +985,7 @@ function(nn_bmi_compile_flags out_var)
     endif()
     list(APPEND _flags "$<$<TARGET_EXISTS:nn_gpu>:-DNN_GPU_ENGINE=1>")
     list(APPEND _flags
+        -I "${NN_LIB_SOURCE_DIR}/exstl/include"
         -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include/neuralnet.cpp"
         -I "${NN_LIB_SOURCE_DIR}/engine/abstraction/include"
         -I "${NN_LIB_SOURCE_DIR}/include")
@@ -1020,7 +1033,7 @@ function(nn_add_module modname source)
                     ${NN_LIB_SOURCE_DIR}/${source}
             WORKING_DIRECTORY ${NN_LIB_BINARY_DIR}/modules
             DEPENDS ${NN_LIB_SOURCE_DIR}/${source} ${_file_deps}
-            COMMENT "[nn] module IFC: ${_cpp}"
+            COMMENT "[exstl] module IFC: ${_cpp}"
             VERBATIM
         )
     else()
@@ -1029,7 +1042,7 @@ function(nn_add_module modname source)
             COMMAND ${CMAKE_CXX_COMPILER} ${_flags} --precompile
                     -o ${_bmi} -x c++-module ${NN_LIB_SOURCE_DIR}/${source}
             DEPENDS ${NN_LIB_SOURCE_DIR}/${source} ${_file_deps}
-            COMMENT "[nn] module BMI: ${_cpp}"
+            COMMENT "[exstl] module BMI: ${_cpp}"
             VERBATIM
         )
     endif()
@@ -1110,8 +1123,8 @@ endfunction()
 # ── 门禁：src/ 全量 import 化后不得残留文本 include 库头（P6-2，35 号）────
 # src/*.cpp（含测试聚合体）一律经 `import nn.*` 取声明（P5/D8）；残留
 # `#include <neuralnet.cpp/…>` 会绕过模块边界（GMF 文本包含 + import 同实体
-# 的 ODR 隐患），且自 D8 起已无任何必要。合法例外：`<nn_error_macros.hpp>`
-#（宏岛头，不带 neuralnet.cpp/ 前缀，宏不可导出——P2/D3）。
+# 的 ODR 隐患），且自 D8 起已无任何必要。合法例外：`<exstl/error_macros.hpp>`
+#（宏岛头，宏不可导出）与 STL）。
 if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     file(GLOB _nn_src_files CONFIGURE_DEPENDS src/*.cpp)
     foreach(_f IN LISTS _nn_src_files)
@@ -1120,7 +1133,7 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
             message(FATAL_ERROR
                 "[nn-gate] ${_f} 残留文本 include 库头：src/ 已全量 import 化"
                 "（35 号 D8，P5），请改用 `import nn.*`（合法 include 仅"
-                " `<nn_error_macros.hpp>` 宏岛头与 STL）")
+                " `<exstl/...>` 与 STL）")
         endif()
     endforeach()
 endif()
@@ -1393,9 +1406,9 @@ if(NN_BUILD_APPS OR NN_ENABLE_TESTS)
     # nn::detail:: 旧名过渡别名向后兼容。
     nn_add_test_target(host_bridge_test)
 
-    # ── RV-01：前置条件校验（NN_ASSERT_ALWAYS / NN_FATAL）在 NDEBUG 下也终止 ──
+    # ── RV-01：前置条件校验（EX_ASSERT_ALWAYS / EX_FATAL）在 NDEBUG 下也终止 ──
     # 负例经子进程断言：越界 at / 未绑定 Tensor::engine() / 空 logits 采样
-    # 必须非零退出、打印 `file:line`、且 tag 是新宏（不是 NDEBUG 下为空的 NN_ASSERT）
+    # 必须非零退出、打印 `file:line`、且 tag 是新宏（不是 NDEBUG 下为空的 EX_ASSERT）
     nn_add_test_target(assert_always_test)
 
     # ── 生命周期 v3（设备域 / Layer 状态机 / 引擎先析构路径）────────────

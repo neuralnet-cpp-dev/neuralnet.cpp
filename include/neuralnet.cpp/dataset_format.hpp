@@ -22,7 +22,7 @@
 #include <string_view>
 #include <vector>
 
-#include <neuralnet.cpp/core_errors.hpp>   // 跨仓
+#include <exstl/errors.hpp>   // 跨仓
 #include <neuralnet.cpp/model_keyvalue_record.hpp>   // 跨仓
 
 namespace nn
@@ -50,28 +50,28 @@ struct FileLabel
     std::uint32_t file_version = 0;
 };
 
-[[nodiscard]] inline Result<FileLabel> read_file_label(std::string_view bytes)
+[[nodiscard]] inline exstl::Result<FileLabel> read_file_label(std::string_view bytes)
 {
-    if (bytes.size() < FILE_LABEL_SIZE) NN_FAIL("数据集文件过短（缺少文件标签）");
+    if (bytes.size() < FILE_LABEL_SIZE) EX_FAIL("数据集文件过短（缺少文件标签）");
     FileLabel label;
     label.magic.assign(bytes.substr(0, 4));
     std::string_view rest = bytes.substr(4, 4);
-    if (!detail::take_u32(rest, label.file_version)) NN_FAIL("数据集文件标签损坏");
+    if (!detail::take_u32(rest, label.file_version)) EX_FAIL("数据集文件标签损坏");
     return label;
 }
 
 // 校验文件标签；magic 不符时给出针对性提示（旧 JSON 词表 → 指路转换器）
-[[nodiscard]] inline Result<void> check_file_label(std::string_view bytes, const char (&magic)[4],
+[[nodiscard]] inline exstl::Result<void> check_file_label(std::string_view bytes, const char (&magic)[4],
                                                    std::string_view kind_name)
 {
-    NN_TRY(label, read_file_label(bytes));
+    EX_TRY(label, read_file_label(bytes));
     if (label->magic != std::string_view(magic, 4))
     {
         if (!bytes.empty() && bytes[0] == '{')
-            NN_FAIL(std::string(kind_name) +
+            EX_FAIL(std::string(kind_name) +
                     ": 这是旧 JSON 格式，不再直读；"
                     "请先用 `dataset_convert vocab <in.json> -o <out.nnvocab>` 转换");
-        NN_FAIL(std::string(kind_name) + ": 文件标签不匹配（不是 " + std::string(kind_name) +
+        EX_FAIL(std::string(kind_name) + ": 文件标签不匹配（不是 " + std::string(kind_name) +
                 " 文件）");
     }
     return {};
@@ -93,17 +93,17 @@ struct FileLabel
     return out;
 }
 
-[[nodiscard]] inline Result<std::vector<std::string>> decode_vocab_blob(std::string_view value)
+[[nodiscard]] inline exstl::Result<std::vector<std::string>> decode_vocab_blob(std::string_view value)
 {
     std::uint64_t count = 0;
-    if (!detail::take_u64(value, count)) NN_FAIL("decode_vocab_blob: 缺少词表计数");
+    if (!detail::take_u64(value, count)) EX_FAIL("decode_vocab_blob: 缺少词表计数");
     std::vector<std::string> vocab;
     vocab.reserve(static_cast<std::size_t>(count));
     for (std::uint64_t i = 0; i < count; ++i)
     {
         std::uint64_t len = 0;
-        if (!detail::take_u64(value, len)) NN_FAIL("decode_vocab_blob: 词表条目长度越界");
-        if (len > value.size()) NN_FAIL("decode_vocab_blob: 词表条目数据不足");
+        if (!detail::take_u64(value, len)) EX_FAIL("decode_vocab_blob: 词表条目长度越界");
+        if (len > value.size()) EX_FAIL("decode_vocab_blob: 词表条目数据不足");
         vocab.emplace_back(value.substr(0, static_cast<std::size_t>(len)));
         value.remove_prefix(static_cast<std::size_t>(len));
     }
@@ -118,9 +118,9 @@ struct FileLabel
     return out;
 }
 
-[[nodiscard]] inline Result<KeyValueRecord> parse_nnvocab(std::string_view file_bytes)
+[[nodiscard]] inline exstl::Result<KeyValueRecord> parse_nnvocab(std::string_view file_bytes)
 {
-    NN_TRY_CHECK(check_file_label(file_bytes, NNVOCAB_MAGIC, ".nnvocab"));
+    EX_TRY_CHECK(check_file_label(file_bytes, NNVOCAB_MAGIC, ".nnvocab"));
     return KeyValueRecord::parse_at(kvrec_memory_source(file_bytes), FILE_LABEL_SIZE);
 }
 

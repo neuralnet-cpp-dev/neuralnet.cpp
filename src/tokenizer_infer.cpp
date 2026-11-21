@@ -9,7 +9,7 @@
 // 支持交互模式和命令行模式。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <algorithm>
 #include <fstream>
@@ -87,7 +87,7 @@ Config parse_args(int argc, char* argv[])
         else if (arg == "--show-bytes") cfg.show_bytes = true;
         else if (arg == "--top" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v || *v == 0)
             {
                 std::cerr << "无效 --top: " << argv[i] << "\n";
@@ -97,7 +97,7 @@ Config parse_args(int argc, char* argv[])
         }
         else if (arg == "--threads" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::uint32_t>(argv[++i]);
+            auto v = exstl::parse_number<std::uint32_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --threads: " << argv[i] << "\n";
@@ -129,7 +129,7 @@ std::vector<std::size_t> parse_ids(const std::string& s)
         while (!token.empty() && (token.back() == ' ' || token.back() == ']'))
             token.pop_back();
         if (token.empty()) continue;
-        auto v = nn::parse_number<std::size_t>(token);
+        auto v = exstl::parse_number<std::size_t>(token);
         if (v) ids.push_back(*v);
     }
     return ids;
@@ -391,7 +391,7 @@ int main(int argc, char* argv[])
     if (!cfg.encode_file.empty())
     {
         auto text_result = nn::load_text_file(cfg.encode_file);
-        NN_EXIT(text_result, 1, "读取文件失败: ");
+        EX_EXIT(text_result, 1, "读取文件失败: ");
         auto ids = tokenizer->encode(*text_result);
         std::cout << "文件大小: " << text_result->size() << " 字节\n";
         std::cout << "Token 数: " << ids.size() << "\n";

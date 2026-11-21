@@ -39,7 +39,7 @@
 #include <utility>
 #include <vector>
 
-#include <neuralnet.cpp/core_errors.hpp>   // 跨仓
+#include <exstl/errors.hpp>   // 跨仓
 #include <neuralnet.cpp/core_file.hpp>   // 跨仓
 #include <neuralnet.cpp/core_sha256.hpp>   // 跨仓
 #include "dataset_format.hpp"
@@ -100,10 +100,10 @@ struct TextDoc
 // ══════════════════════════════════════════════════════════════════════════
 
 // 行 trim 规则（逐字搬自 read_file_lines：首尾去空格/`\t`/`\r`、跳过空行）
-[[nodiscard]] inline Result<std::vector<std::string>> read_text_docs(const std::string& path)
+[[nodiscard]] inline exstl::Result<std::vector<std::string>> read_text_docs(const std::string& path)
 {
     std::ifstream ifs(path, std::ios::binary);
-    if (!ifs) NN_FAIL("无法打开文件: " + path);
+    if (!ifs) EX_FAIL("无法打开文件: " + path);
     std::string buffer;
     buffer.assign(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
 
@@ -235,19 +235,19 @@ inline KeyValueRecord make_root_record(const NndatasetBuild& b,
 
 }  // namespace detail
 
-[[nodiscard]] inline Result<void> write_nndataset(std::ostream& os, const NndatasetBuild& b)
+[[nodiscard]] inline exstl::Result<void> write_nndataset(std::ostream& os, const NndatasetBuild& b)
 {
     const bool has_mask = (b.loss_scope == "assistant");
     if (has_mask)
     {
         if (b.train_masks.size() != b.train_docs.size())
-            NN_FAIL("write_nndataset: assistant 模式要求 train_masks 与 train_docs 一一对应");
+            EX_FAIL("write_nndataset: assistant 模式要求 train_masks 与 train_docs 一一对应");
         if (!b.test_docs.empty() && b.test_masks.size() != b.test_docs.size())
-            NN_FAIL("write_nndataset: assistant 模式要求 test_masks 与 test_docs 一一对应");
+            EX_FAIL("write_nndataset: assistant 模式要求 test_masks 与 test_docs 一一对应");
     }
     else if (!b.train_masks.empty() || !b.test_masks.empty())
     {
-        NN_FAIL("write_nndataset: loss_scope=all 时不写 mask 段（masks 应为空）");
+        EX_FAIL("write_nndataset: loss_scope=all 时不写 mask 段（masks 应为空）");
     }
 
     // ── 第一遍：占位 doc_index（长度正确即可）→ 定出 kvrec 字节块大小 ──
@@ -277,13 +277,13 @@ inline KeyValueRecord make_root_record(const NndatasetBuild& b,
     // ── 第二遍：真实 doc_index → 序列化（字节数与第一遍相同）──────────
     const std::string root =
         detail::make_root_record(b, train_index, test_index).serialize_v2(FILE_LABEL_SIZE);
-    if (root.size() != probe.size()) NN_FAIL("write_nndataset: 两遍序列化字节数不一致（内部错误）");
+    if (root.size() != probe.size()) EX_FAIL("write_nndataset: 两遍序列化字节数不一致（内部错误）");
 
     os.write(root.data(), static_cast<std::streamsize>(root.size()));
 
     // ── doc 块 arena（顺序 = doc_index 指向）──────────────────────────
     auto emit_docs = [&](const std::vector<std::vector<std::size_t>>& docs,
-                         const std::vector<std::vector<unsigned char>>& masks) -> Result<void>
+                         const std::vector<std::vector<unsigned char>>& masks) -> exstl::Result<void>
     {
         for (std::size_t i = 0; i < docs.size(); ++i)
         {
@@ -291,7 +291,7 @@ inline KeyValueRecord make_root_record(const NndatasetBuild& b,
             if (has_mask && !masks.empty())
             {
                 if (masks[i].size() != docs[i].size())
-                    NN_FAIL("write_nndataset: 第 " + std::to_string(i) +
+                    EX_FAIL("write_nndataset: 第 " + std::to_string(i) +
                             " 个 doc 的掩码长度与 token 数不一致");
                 mask = masks[i];
             }
@@ -300,9 +300,9 @@ inline KeyValueRecord make_root_record(const NndatasetBuild& b,
         }
         return {};
     };
-    NN_TRY_CHECK(emit_docs(b.train_docs, b.train_masks));
-    NN_TRY_CHECK(emit_docs(b.test_docs, b.test_masks));
-    if (!os) NN_FAIL("write_nndataset: 写文件失败");
+    EX_TRY_CHECK(emit_docs(b.train_docs, b.train_masks));
+    EX_TRY_CHECK(emit_docs(b.test_docs, b.test_masks));
+    if (!os) EX_FAIL("write_nndataset: 写文件失败");
     return {};
 }
 
@@ -314,50 +314,50 @@ namespace detail
 {
 
 // 按绝对偏移读文件片段（KeyValueRecord v2 的 ReadAt 源）
-[[nodiscard]] inline Result<KeyValueRecord> parse_kvrec_in_file(std::ifstream& ifs,
+[[nodiscard]] inline exstl::Result<KeyValueRecord> parse_kvrec_in_file(std::ifstream& ifs,
                                                                 std::uint64_t offset)
 {
     ifs.clear();
     ifs.seekg(0, std::ios::end);
     const auto fsize = static_cast<std::uint64_t>(ifs.tellg());
     KeyValueRecord::ReadAt read = [&ifs, fsize](std::uint64_t addr,
-                                                std::uint64_t len) -> Result<std::string>
+                                                std::uint64_t len) -> exstl::Result<std::string>
     {
         if (addr > fsize || len > fsize - addr)
-            NN_FAIL("数据集文件读取越界（addr=" + std::to_string(addr) +
+            EX_FAIL("数据集文件读取越界（addr=" + std::to_string(addr) +
                     ", len=" + std::to_string(len) + "）");
         std::string buf(static_cast<std::size_t>(len), '\0');
         ifs.clear();
         ifs.seekg(static_cast<std::streamoff>(addr), std::ios::beg);
-        if (!ifs) NN_FAIL("数据集文件 seek 失败");
+        if (!ifs) EX_FAIL("数据集文件 seek 失败");
         ifs.read(buf.data(), static_cast<std::streamsize>(len));
-        if (!ifs) NN_FAIL("数据集文件读取失败");
+        if (!ifs) EX_FAIL("数据集文件读取失败");
         return buf;
     };
     return KeyValueRecord::parse_at(read, offset);
 }
 
 // 读一个 doc 块（含可选 mask 段）
-[[nodiscard]] inline Result<std::pair<std::vector<std::size_t>, std::vector<unsigned char>>>
+[[nodiscard]] inline exstl::Result<std::pair<std::vector<std::size_t>, std::vector<unsigned char>>>
 read_doc_block(std::ifstream& ifs, std::uint64_t offset, bool has_mask)
 {
     ifs.clear();
     ifs.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
-    if (!ifs) NN_FAIL("数据集文件 seek 失败");
+    if (!ifs) EX_FAIL("数据集文件 seek 失败");
     std::uint64_t count = 0;
-    if (!read_pod(ifs, count)) NN_FAIL("数据集 doc 块读取失败（token_count）");
+    if (!read_pod(ifs, count)) EX_FAIL("数据集 doc 块读取失败（token_count）");
     std::vector<std::size_t> tokens(static_cast<std::size_t>(count));
     for (auto& t : tokens)
     {
         std::uint64_t v = 0;
-        if (!read_pod(ifs, v)) NN_FAIL("数据集 doc 块读取失败（tokens）");
+        if (!read_pod(ifs, v)) EX_FAIL("数据集 doc 块读取失败（tokens）");
         t = static_cast<std::size_t>(v);
     }
     std::vector<unsigned char> mask;
     if (has_mask)
     {
         mask.resize(tokens.size());
-        if (!read_pod_span(ifs, std::span(mask))) NN_FAIL("数据集 doc 块读取失败（loss_mask）");
+        if (!read_pod_span(ifs, std::span(mask))) EX_FAIL("数据集 doc 块读取失败（loss_mask）");
     }
     return std::make_pair(std::move(tokens), std::move(mask));
 }
@@ -369,10 +369,10 @@ class Dataset
 public:
     // 嗅探 label magic 分派 reader：.nndataset / .nnvocab 都能开；
     // 其它扩展/坏文件 → 明确错误。
-    [[nodiscard]] static Result<Dataset> open(const std::string& path)
+    [[nodiscard]] static exstl::Result<Dataset> open(const std::string& path)
     {
         std::ifstream ifs(path, std::ios::binary);
-        if (!ifs) NN_FAIL("无法打开数据集文件: " + path);
+        if (!ifs) EX_FAIL("无法打开数据集文件: " + path);
         ifs.seekg(0, std::ios::end);
         const auto fsize = static_cast<std::uint64_t>(ifs.tellg());
         ifs.seekg(0, std::ios::beg);
@@ -380,7 +380,7 @@ public:
         if (fsize >= FILE_LABEL_SIZE)
             ifs.read(label.data(), static_cast<std::streamsize>(FILE_LABEL_SIZE));
         else label.clear();
-        NN_TRY(label_r, read_file_label(label));
+        EX_TRY(label_r, read_file_label(label));
 
         Dataset ds;
         ds.path_ = path;
@@ -391,23 +391,23 @@ public:
             ifs.seekg(0, std::ios::beg);
             std::string content(static_cast<std::size_t>(fsize), '\0');
             ifs.read(content.data(), static_cast<std::streamsize>(fsize));
-            if (!ifs) NN_FAIL("读取词表文件失败: " + path);
-            NN_TRY(rec, parse_nnvocab(content));
+            if (!ifs) EX_FAIL("读取词表文件失败: " + path);
+            EX_TRY(rec, parse_nnvocab(content));
             ds.vocab_ = std::move(*rec);
             ds.is_vocab_only_ = true;
             return ds;
         }
         if (label_r->magic != std::string_view(NNDATASET_MAGIC, 4))
-            NN_FAIL("不是 .nndataset / .nnvocab 文件: " + path);
+            EX_FAIL("不是 .nndataset / .nnvocab 文件: " + path);
         if (label_r->file_version != NNDATASET_FILE_VERSION)
-            NN_FAIL("不支持的 .nndataset 文件版本: " + std::to_string(label_r->file_version));
+            EX_FAIL("不支持的 .nndataset 文件版本: " + std::to_string(label_r->file_version));
 
-        NN_TRY(root, detail::parse_kvrec_in_file(ifs, FILE_LABEL_SIZE));
+        EX_TRY(root, detail::parse_kvrec_in_file(ifs, FILE_LABEL_SIZE));
 
         // companion
         KeyValueRecord companion;
-        if (!root->get("companion", companion)) NN_FAIL(".nndataset 缺少 companion 配套记录");
-        if (!companion.get("vocab", ds.vocab_)) NN_FAIL(".nndataset 配套缺少 vocab 词表记录");
+        if (!root->get("companion", companion)) EX_FAIL(".nndataset 缺少 companion 配套记录");
+        if (!companion.get("vocab", ds.vocab_)) EX_FAIL(".nndataset 配套缺少 vocab 词表记录");
         KeyValueRecord source;
         if (companion.get("source", source))
         {
@@ -417,7 +417,7 @@ public:
         KeyValueRecord gen;
         if (companion.get("gen", gen)) (void)gen.get("loss_scope", ds.info_.loss_scope);
         if (ds.info_.loss_scope != "all" && ds.info_.loss_scope != "assistant")
-            NN_FAIL(".nndataset gen.loss_scope 非法: " + ds.info_.loss_scope);
+            EX_FAIL(".nndataset gen.loss_scope 非法: " + ds.info_.loss_scope);
 
         std::uint64_t kind = 0;
         (void)root->get("kind", kind);
@@ -425,12 +425,12 @@ public:
 
         // 子集
         KeyValueRecord train;
-        if (!root->get("train", train)) NN_FAIL(".nndataset 缺少 train 子集");
-        NN_TRY_CHECK(ds.load_subset_(train, ds.train_index_, ds.info_.num_docs));
+        if (!root->get("train", train)) EX_FAIL(".nndataset 缺少 train 子集");
+        EX_TRY_CHECK(ds.load_subset_(train, ds.train_index_, ds.info_.num_docs));
         KeyValueRecord test;
         if (root->get("test", test))
         {
-            NN_TRY_CHECK(ds.load_subset_(test, ds.test_index_, ds.info_.test_docs));
+            EX_TRY_CHECK(ds.load_subset_(test, ds.test_index_, ds.info_.test_docs));
         }
         return ds;
     }
@@ -450,25 +450,25 @@ public:
 
     // 读取单个 doc（含生成期 loss 掩码；loss_scope=all 时合成全 1）。
     // 训练路径批量读取走 load_text（一次 IO 拿整个子集），本接口供检查/调试。
-    [[nodiscard]] Result<TextDoc> text_doc(DatasetSubset subset, std::size_t index) const
+    [[nodiscard]] exstl::Result<TextDoc> text_doc(DatasetSubset subset, std::size_t index) const
     {
-        if (is_vocab_only_) NN_FAIL("该文件是 .nnvocab 词表，不含数据集子集: " + path_);
+        if (is_vocab_only_) EX_FAIL("该文件是 .nnvocab 词表，不含数据集子集: " + path_);
         if (info_.kind != DatasetKind::Text)
-            NN_FAIL("tabular 数据集尚未支持（阶段四预留，见 docs/todo/19 §4.4）");
+            EX_FAIL("tabular 数据集尚未支持（阶段四预留，见 docs/todo/19 §4.4）");
         if (subset == DatasetSubset::Test && info_.test_docs == 0)
-            NN_FAIL("该数据集没有 test 子集: " + path_);
+            EX_FAIL("该数据集没有 test 子集: " + path_);
         const std::vector<std::uint64_t>& index_table =
             (subset == DatasetSubset::Test) ? test_index_ : train_index_;
         const std::size_t n = index_table.empty() ? 0 : index_table.size() - 1;
         if (index >= n)
-            NN_FAIL("doc 下标越界（subset=" +
+            EX_FAIL("doc 下标越界（subset=" +
                     std::string(subset == DatasetSubset::Test ? "test" : "train") +
                     ", index=" + std::to_string(index) + ", count=" + std::to_string(n) + "）");
 
         std::ifstream ifs(path_, std::ios::binary);
-        if (!ifs) NN_FAIL("无法打开数据集文件: " + path_);
+        if (!ifs) EX_FAIL("无法打开数据集文件: " + path_);
         const bool has_mask = (info_.loss_scope == "assistant");
-        NN_TRY(blk, detail::read_doc_block(ifs, index_table[index], has_mask));
+        EX_TRY(blk, detail::read_doc_block(ifs, index_table[index], has_mask));
 
         TextDoc out;
         out.doc_id = index + 1;
@@ -480,24 +480,24 @@ public:
 
     // 一次性给出子集训练所需的全部三样（流式留待 P2-4 后半）。
     // 子集 = Train/Test（Test 无 test 子集则报错）。
-    [[nodiscard]] Result<TextCorpus> load_text(DatasetSubset subset = DatasetSubset::Train) const
+    [[nodiscard]] exstl::Result<TextCorpus> load_text(DatasetSubset subset = DatasetSubset::Train) const
     {
-        if (is_vocab_only_) NN_FAIL("该文件是 .nnvocab 词表，不含数据集子集: " + path_);
+        if (is_vocab_only_) EX_FAIL("该文件是 .nnvocab 词表，不含数据集子集: " + path_);
         if (info_.kind != DatasetKind::Text)
-            NN_FAIL("tabular 数据集尚未支持（阶段四预留，见 docs/todo/19 §4.4）");
+            EX_FAIL("tabular 数据集尚未支持（阶段四预留，见 docs/todo/19 §4.4）");
         const bool test = (subset == DatasetSubset::Test);
         const std::vector<std::uint64_t>& index = test ? test_index_ : train_index_;
-        if (test && info_.test_docs == 0) NN_FAIL("该数据集没有 test 子集");
+        if (test && info_.test_docs == 0) EX_FAIL("该数据集没有 test 子集");
         const bool has_mask = (info_.loss_scope == "assistant");
 
         std::ifstream ifs(path_, std::ios::binary);
-        if (!ifs) NN_FAIL("无法打开数据集文件: " + path_);
+        if (!ifs) EX_FAIL("无法打开数据集文件: " + path_);
 
         TextCorpus out;
         const std::size_t n = index.empty() ? 0 : index.size() - 1;
         for (std::size_t i = 0; i < n; ++i)
         {
-            NN_TRY(blk, detail::read_doc_block(ifs, index[i], has_mask));
+            EX_TRY(blk, detail::read_doc_block(ifs, index[i], has_mask));
             auto& [tokens, mask] = *blk;
             const std::size_t doc_id = i + 1;   // 文档 id（1 起，序号 + 1）
             for (std::size_t t : tokens)
@@ -512,13 +512,13 @@ public:
     }
 
 private:
-    Result<void> load_subset_(const KeyValueRecord& sub, std::vector<std::uint64_t>& index,
+    exstl::Result<void> load_subset_(const KeyValueRecord& sub, std::vector<std::uint64_t>& index,
                               std::uint64_t& num_docs)
     {
         std::uint64_t n = 0;
-        if (!sub.get("num_docs", n)) NN_FAIL("数据集子集缺少 num_docs");
-        if (!sub.get("doc_index", index)) NN_FAIL("数据集子集缺少 doc_index");
-        if (index.size() != n + 1) NN_FAIL("数据集子集 doc_index 长度与 num_docs 不符");
+        if (!sub.get("num_docs", n)) EX_FAIL("数据集子集缺少 num_docs");
+        if (!sub.get("doc_index", index)) EX_FAIL("数据集子集缺少 doc_index");
+        if (index.size() != n + 1) EX_FAIL("数据集子集 doc_index 长度与 num_docs 不符");
         num_docs = n;
         return {};
     }

@@ -16,7 +16,7 @@
 //  用法：fused_gpu_test（无 GPU 设备时返回 77 = ctest SKIP）
 // ───────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include "test_common.hpp"   // M1 访问收口：upload/download（库外经引擎进出张量）
 
@@ -100,9 +100,9 @@ int run_matmul_shapes(ComputeEngine& cpu, ComputeEngine& gpu)
         auto g32 = upload(gpu, src);
         nn::Tensor g16t = gpu.create_tensor(R, C, nn::Precision::F16);
         auto cr2 = gpu.cast_into(g32, g16t);
-        NN_EXIT(cr2, 1, "  [cast] cast_into fail: ");
+        EX_EXIT(cr2, 1, "  [cast] cast_into fail: ");
         auto gm3 = gpu.to_matrix(g16t);
-        NN_EXIT(gm3, 1, "  [cast] download fail\n");
+        EX_EXIT(gm3, 1, "  [cast] download fail\n");
         const auto& gs3 = gm3->span();
         const auto& cs3 = src.span();
         std::size_t bad = 0, lastbad = 0;
@@ -132,7 +132,7 @@ int run_matmul_shapes(ComputeEngine& cpu, ComputeEngine& gpu)
         const Tensor Bt_cpu = upload(cpu, B), Bt_gpu = upload(gpu, B);
         const Tensor tt_cpu = upload(cpu, tau), tt_gpu = upload(gpu, tau);
         const Tensor bt_cpu = upload(cpu, bias), bt_gpu = upload(gpu, bias);
-        nn::Result<nn::Tensor> cr, gr;
+        exstl::Result<nn::Tensor> cr, gr;
         if (c.tail && c.M == 65 && c.K == 17)
         {
             // f16 输入变体：X 以 f16 上传 → eval 需 to_f32_all 输入 cast（ternary 同构）
@@ -160,7 +160,7 @@ int run_matmul_shapes(ComputeEngine& cpu, ComputeEngine& gpu)
                 else
                 {
                     auto gmx = gpu.to_matrix(*grx);
-                    NN_EXIT(gmx, 1, "  [f16in] download fail\n");
+                    EX_EXIT(gmx, 1, "  [f16in] download fail\n");
                     const Scalar ex = max_abs_diff(download(cpu, *crx), *gmx);
                     const auto& csx = download(cpu, *crx).span();
                     const auto& gsx = gmx->span();
@@ -194,7 +194,7 @@ int run_matmul_shapes(ComputeEngine& cpu, ComputeEngine& gpu)
             else
             {
                 auto gm16 = gpu.to_matrix(*gr16);
-                NN_EXIT(gm16, 1, "  [f16] download fail\n");
+                EX_EXIT(gm16, 1, "  [f16] download fail\n");
                 const Scalar e16 = max_abs_diff(download(cpu, *cr16), *gm16);
                 const bool ok16 = e16 < 5e-3f;
                 const auto& cs16 = download(cpu, *cr16).span();
@@ -233,7 +233,7 @@ int run_matmul_shapes(ComputeEngine& cpu, ComputeEngine& gpu)
             continue;
         }
         auto gm = gpu.to_matrix(*gr);
-        NN_EXIT(gm, 1, "  [shapes] download fail\n");
+        EX_EXIT(gm, 1, "  [shapes] download fail\n");
         const Scalar err = max_abs_diff(download(cpu, *cr), *gm);
         const bool ok = err < 1e-3f;
         // 打印最后两行的误差帮助定位尾行
@@ -278,10 +278,10 @@ int run_rope(ComputeEngine& cpu, ComputeEngine& gpu, std::size_t dk, bool backwa
 
     auto cr = rope_cpu.apply(cpu, qc_cpu, seq, backward);
     auto gr = rope_gpu.apply(gpu, qc_gpu, seq, backward);
-    NN_EXIT(cr, 1, "  CPU apply 失败: ");
-    NN_EXIT(gr, 1, "  GPU apply 失败（未命中融合 shader？）: ");
+    EX_EXIT(cr, 1, "  CPU apply 失败: ");
+    EX_EXIT(gr, 1, "  GPU apply 失败（未命中融合 shader？）: ");
     auto gm = gpu.to_matrix(*gr);
-    NN_EXIT(gm, 1, "  GPU 结果下载失败\n");
+    EX_EXIT(gm, 1, "  GPU 结果下载失败\n");
 
     const Scalar err = max_abs_diff(download(cpu, *cr), *gm);
     const bool ok = err < 1e-4f;
@@ -310,21 +310,21 @@ int run_swiglu(ComputeEngine& cpu, ComputeEngine& gpu)
     const Tensor in_gpu = upload(gpu, input);
     auto fc = sg_cpu.forward(in_cpu);
     auto fg = sg_gpu.forward(in_gpu);
-    NN_EXIT(fc, 1, "  CPU forward 失败: ");
-    NN_EXIT(fg, 1, "  GPU forward 失败: ");
+    EX_EXIT(fc, 1, "  CPU forward 失败: ");
+    EX_EXIT(fg, 1, "  GPU forward 失败: ");
 
     const Tensor gd_cpu = upload(cpu, grad);
     const Tensor gd_gpu = upload(gpu, grad);
     auto bc = sg_cpu.backward(gd_cpu);
     auto bg = sg_gpu.backward(gd_gpu);
-    NN_EXIT(bc, 1, "  CPU backward 失败: ");
+    EX_EXIT(bc, 1, "  CPU backward 失败: ");
     if (!bg)
     {
         std::cerr << "  GPU backward 失败（未命中融合 shader？）: " << bg.error().message << "\n";
         return 1;
     }
     auto gm = gpu.to_matrix(*bg);
-    NN_EXIT(gm, 1, "  GPU 结果下载失败\n");
+    EX_EXIT(gm, 1, "  GPU 结果下载失败\n");
 
     const Scalar err = max_abs_diff(download(cpu, *bc), *gm);
     const bool ok = err < 1e-4f;
@@ -354,7 +354,7 @@ int run_gelu(ComputeEngine& cpu, ComputeEngine& gpu)
     const Tensor in_gpu = upload(gpu, x);
     auto fc = gl_cpu.forward(in_cpu);
     auto fg = gl_gpu.forward(in_gpu);
-    NN_EXIT(fc, 1, "  CPU gelu forward 失败: ");
+    EX_EXIT(fc, 1, "  CPU gelu forward 失败: ");
     if (!fg)
     {
         std::cerr << "  GPU gelu forward 失败（未命中融合 shader？）: " << fg.error().message
@@ -367,7 +367,7 @@ int run_gelu(ComputeEngine& cpu, ComputeEngine& gpu)
     const Tensor gd_gpu = upload(gpu, grad);
     auto bc = gl_cpu.backward(gd_cpu);
     auto bg = gl_gpu.backward(gd_gpu);
-    NN_EXIT(bc, 1, "  CPU gelu backward 失败: ");
+    EX_EXIT(bc, 1, "  CPU gelu backward 失败: ");
     if (!bg)
     {
         std::cerr << "  GPU gelu backward 失败（未命中融合 shader？）: " << bg.error().message
@@ -407,7 +407,7 @@ int run_softmax(ComputeEngine& cpu, ComputeEngine& gpu)
     const Tensor in_gpu = upload(gpu, x);
     auto fc = sm_cpu.forward(in_cpu);
     auto fg = sm_gpu.forward(in_gpu);
-    NN_EXIT(fc, 1, "  CPU softmax forward 失败: ");
+    EX_EXIT(fc, 1, "  CPU softmax forward 失败: ");
     if (!fg)
     {
         std::cerr << "  GPU softmax forward 失败（未命中归约融合 shader？）: " << fg.error().message
@@ -415,7 +415,7 @@ int run_softmax(ComputeEngine& cpu, ComputeEngine& gpu)
         return 1;
     }
     auto fgm = gpu.to_matrix(*fg);
-    NN_EXIT(fgm, 1, "  GPU softmax forward 结果下载失败\n");
+    EX_EXIT(fgm, 1, "  GPU softmax forward 结果下载失败\n");
     const Scalar err_f = max_abs_diff(download(cpu, *fc), *fgm);
     const bool ok_f = err_f < 1e-4f;
     std::cout << "[" << (ok_f ? "PASS" : "FAIL") << "] softmax forward"
@@ -425,7 +425,7 @@ int run_softmax(ComputeEngine& cpu, ComputeEngine& gpu)
     const Tensor gd_gpu = upload(gpu, grad);
     auto bc = sm_cpu.backward(gd_cpu);
     auto bg = sm_gpu.backward(gd_gpu);
-    NN_EXIT(bc, 1, "  CPU softmax backward 失败: ");
+    EX_EXIT(bc, 1, "  CPU softmax backward 失败: ");
     if (!bg)
     {
         std::cerr << "  GPU softmax backward 失败（未命中归约融合 shader？）: "
@@ -433,7 +433,7 @@ int run_softmax(ComputeEngine& cpu, ComputeEngine& gpu)
         return 1;
     }
     auto bgm = gpu.to_matrix(*bg);
-    NN_EXIT(bgm, 1, "  GPU softmax backward 结果下载失败\n");
+    EX_EXIT(bgm, 1, "  GPU softmax backward 结果下载失败\n");
     const Scalar err_b = max_abs_diff(download(cpu, *bc), *bgm);
     const bool ok_b = err_b < 1e-4f;
     std::cout << "[" << (ok_b ? "PASS" : "FAIL") << "] softmax backward"
@@ -456,13 +456,13 @@ template <typename NormT> int run_norm(const char* name, ComputeEngine& cpu, Com
         v = dist(rng);
 
     NormT n_cpu(F), n_gpu(F);
-    NN_EXIT(n_cpu.init(cpu), 1, "  CPU ");
-    NN_EXIT(n_gpu.init(gpu), 1, "  GPU ");
+    EX_EXIT(n_cpu.init(cpu), 1, "  CPU ");
+    EX_EXIT(n_gpu.init(gpu), 1, "  GPU ");
     const Tensor in_cpu = upload(cpu, x);
     const Tensor in_gpu = upload(gpu, x);
     auto fc = n_cpu.forward(in_cpu);
     auto fg = n_gpu.forward(in_gpu);
-    NN_EXIT(fc, 1, "  CPU ");
+    EX_EXIT(fc, 1, "  CPU ");
     if (!fg)
     {
         std::cerr << "  GPU " << name
@@ -470,7 +470,7 @@ template <typename NormT> int run_norm(const char* name, ComputeEngine& cpu, Com
         return 1;
     }
     auto fgm = gpu.to_matrix(*fg);
-    NN_EXIT(fgm, 1, "  GPU ");
+    EX_EXIT(fgm, 1, "  GPU ");
     const Scalar err_f = max_abs_diff(download(cpu, *fc), *fgm);
     const bool ok_f = err_f < 1e-4f;
     std::cout << "[" << (ok_f ? "PASS" : "FAIL") << "] " << name << " forward"
@@ -480,7 +480,7 @@ template <typename NormT> int run_norm(const char* name, ComputeEngine& cpu, Com
     const Tensor gd_gpu = upload(gpu, grad);
     auto bc = n_cpu.backward(gd_cpu);
     auto bg = n_gpu.backward(gd_gpu);
-    NN_EXIT(bc, 1, "  CPU ");
+    EX_EXIT(bc, 1, "  CPU ");
     if (!bg)
     {
         std::cerr << "  GPU " << name
@@ -488,7 +488,7 @@ template <typename NormT> int run_norm(const char* name, ComputeEngine& cpu, Com
         return 1;
     }
     auto bgm = gpu.to_matrix(*bg);
-    NN_EXIT(bgm, 1, "  GPU ");
+    EX_EXIT(bgm, 1, "  GPU ");
     const Scalar err_b = max_abs_diff(download(cpu, *bc), *bgm);
     const bool ok_b = err_b < 1e-4f;
     std::cout << "[" << (ok_b ? "PASS" : "FAIL") << "] " << name << " backward"
@@ -524,7 +524,7 @@ int run_matmul(ComputeEngine& cpu, ComputeEngine& gpu)
     auto gr = nn::dsl::compute(
         gpu, nn::dsl::max(nn::dsl::matmul(At_gpu, Bt_gpu) + nn::dsl::leaf(biast_gpu), Scalar{0}), M,
         N);
-    NN_EXIT(cr, 1, "  CPU matmul 融合求值失败: ");
+    EX_EXIT(cr, 1, "  CPU matmul 融合求值失败: ");
     if (!gr)
     {
         std::cerr << "  GPU matmul 融合求值失败（未命中 matmul 融合 shader？）: "
@@ -532,7 +532,7 @@ int run_matmul(ComputeEngine& cpu, ComputeEngine& gpu)
         return 1;
     }
     auto gm = gpu.to_matrix(*gr);
-    NN_EXIT(gm, 1, "  GPU matmul 融合结果下载失败\n");
+    EX_EXIT(gm, 1, "  GPU matmul 融合结果下载失败\n");
     const Scalar err1 = max_abs_diff(download(cpu, *cr), *gm);
     const bool ok1 = err1 < 1e-4f;
     std::cout << "[" << (ok1 ? "PASS" : "FAIL") << "] matmul+bias+relu 融合 (5x7x4)"
@@ -549,7 +549,7 @@ int run_matmul(ComputeEngine& cpu, ComputeEngine& gpu)
         return 1;
     }
     auto gpm = gpu.to_matrix(*gp);
-    NN_EXIT(gpm, 1, "  GPU 纯 matmul 结果下载失败\n");
+    EX_EXIT(gpm, 1, "  GPU 纯 matmul 结果下载失败\n");
     const Scalar err2 = max_abs_diff(download(cpu, *cp), *gpm);
     const bool ok2 = err2 < 1e-4f;
     std::cout << "[" << (ok2 ? "PASS" : "FAIL") << "] 纯 matmul 融合 (5x7x4)"
@@ -579,7 +579,7 @@ int run_matmul(ComputeEngine& cpu, ComputeEngine& gpu)
         return 1;
     }
     auto g3m = gpu.to_matrix(*g3);
-    NN_EXIT(g3m, 1, "  GPU K=6 结果下载失败\n");
+    EX_EXIT(g3m, 1, "  GPU K=6 结果下载失败\n");
     const Scalar err3 = max_abs_diff(download(cpu, *c3), *g3m);
     const bool ok3 = err3 < 1e-4f;
     std::cout << "[" << (ok3 ? "PASS" : "FAIL") << "] matmul 融合 形状无关 K=6 (3x6x2)"
@@ -608,7 +608,7 @@ int run_matmul(ComputeEngine& cpu, ComputeEngine& gpu)
         return 1;
     }
     auto glm = gpu.to_matrix(*gl);
-    NN_EXIT(glm, 1, "  GPU Linear 结构结果下载失败\n");
+    EX_EXIT(glm, 1, "  GPU Linear 结构结果下载失败\n");
     const Scalar err4 = max_abs_diff(download(cpu, *cl), *glm);
     const bool ok4 = err4 < 1e-4f;
     std::cout << "[" << (ok4 ? "PASS" : "FAIL") << "] Linear 结构 matmul+row_broadcast (4x6x3)"
@@ -651,7 +651,7 @@ int run_matmul_reduce(ComputeEngine& cpu, ComputeEngine& gpu)
         return 1;
     }
     auto grm = gpu.to_matrix(*gr);
-    NN_EXIT(grm, 1, "  GPU row_max(matmul) 下载失败\n");
+    EX_EXIT(grm, 1, "  GPU row_max(matmul) 下载失败\n");
     const Scalar err1 = max_abs_diff(download(cpu, *cr), *grm);
     const bool ok1 = err1 < 1e-4f;
     std::cout << "[" << (ok1 ? "PASS" : "FAIL") << "] row_max(matmul(Q,K^T)) 融合 (5x7x4)"
@@ -675,7 +675,7 @@ int run_matmul_reduce(ComputeEngine& cpu, ComputeEngine& gpu)
         return 1;
     }
     auto gdm = gpu.to_matrix(*gd);
-    NN_EXIT(gdm, 1, "  GPU denom(matmul) 下载失败\n");
+    EX_EXIT(gdm, 1, "  GPU denom(matmul) 下载失败\n");
     const Scalar err2 = max_abs_diff(download(cpu, *cd), *gdm);
     const bool ok2 = err2 < 1e-4f;
     std::cout << "[" << (ok2 ? "PASS" : "FAIL") << "] denom row_sum(exp(matmul-rm)) 融合 (5x7x4)"
@@ -696,7 +696,7 @@ int run_matmul_reduce(ComputeEngine& cpu, ComputeEngine& gpu)
         return 1;
     }
     auto gcolm = gpu.to_matrix(*gcol);
-    NN_EXIT(gcolm, 1, "  GPU col_max(matmul) 下载失败\n");
+    EX_EXIT(gcolm, 1, "  GPU col_max(matmul) 下载失败\n");
     const Scalar err3 = max_abs_diff(download(cpu, *ccol), *gcolm);
     const bool ok3 = err3 < 1e-4f;
     std::cout << "[" << (ok3 ? "PASS" : "FAIL") << "] col_max(matmul(Q,K^T)) 广播融合 (5x7x4)"
@@ -714,7 +714,7 @@ int run_matmul_reduce(ComputeEngine& cpu, ComputeEngine& gpu)
         return 1;
     }
     auto gcvm = gpu.to_matrix(*gcvr);
-    NN_EXIT(gcvm, 1, "  GPU col_max(matmul) 向量下载失败\n");
+    EX_EXIT(gcvm, 1, "  GPU col_max(matmul) 向量下载失败\n");
     const Scalar err4 = max_abs_diff(download(cpu, *ccvr), *gcvm);
     const bool ok4 = err4 < 1e-4f;
     std::cout << "[" << (ok4 ? "PASS" : "FAIL") << "] col_max(matmul) 归约向量 (1x4)"
@@ -745,12 +745,12 @@ int run_matmul_reduce(ComputeEngine& cpu, ComputeEngine& gpu)
             return 1;
         }
         auto gb2m = gpu.to_matrix(*gb2);
-        NN_EXIT(gb2m, 1, "  GPU col_max(matmul) batch=2 下载失败\n");
+        EX_EXIT(gb2m, 1, "  GPU col_max(matmul) batch=2 下载失败\n");
         const Scalar err5 = max_abs_diff(download(cpu, *cb2), *gb2m);
         const bool ok5 = err5 < 1e-4f;
         std::cout << "[" << (ok5 ? "PASS" : "FAIL") << "] col_max(matmul) batch=2 归约向量 (1x4)"
                   << "  err=" << std::scientific << std::setprecision(2) << err5 << "\n";
-        NN_EXIT(ok5, 1);
+        EX_EXIT(ok5, 1);
     }
 
     return (ok1 && ok2 && ok3 && ok4) ? 0 : 1;
@@ -779,7 +779,7 @@ int run_fallback(ComputeEngine& cpu, ComputeEngine& gpu)
 
     // CPU 求值正常（模板路径）
     auto cr = nn::dsl::compute(cpu, nn::dsl::leaf(xt_cpu) * nn::dsl::leaf(yt_cpu) + three, R, C);
-    NN_EXIT(cr, 1, "  CPU 求值失败: ");
+    EX_EXIT(cr, 1, "  CPU 求值失败: ");
 
     // 未扫描表达式在 GPU 上经 **JIT 现编**成功（不再硬报错）。成功即证明走了融合 kernel
     // （key 不在内嵌注册表）。
@@ -791,7 +791,7 @@ int run_fallback(ComputeEngine& cpu, ComputeEngine& gpu)
         return 1;
     }
     auto gm = gpu.to_matrix(*gr);
-    NN_EXIT(gm, 1, "  GPU JIT 结果下载失败\n");
+    EX_EXIT(gm, 1, "  GPU JIT 结果下载失败\n");
     const Scalar err = max_abs_diff(download(cpu, *cr), *gm);
     const bool ok = err < 1e-4f;
     if (!ok) std::cerr << "  JIT 结果与 CPU 参考不一致 err=" << err << "\n";
@@ -861,8 +861,8 @@ int run_reduce_consts(nn::ComputeEngine& cpu, nn::ComputeEngine& gpu)
     };
 
     Matrix mc, mg;
-    NN_EXIT(eval(cpu, "CPU", mc), 1, "[FAIL] reduce_consts: CPU 求值失败\n");
-    NN_EXIT(eval(gpu, "GPU", mg), 1, "[FAIL] reduce_consts: GPU 求值失败\n");
+    EX_EXIT(eval(cpu, "CPU", mc), 1, "[FAIL] reduce_consts: CPU 求值失败\n");
+    EX_EXIT(eval(gpu, "GPU", mg), 1, "[FAIL] reduce_consts: GPU 求值失败\n");
 
     const Scalar diff = max_abs_diff(mc, mg);
     bool ok = (diff <= 1e-6f) && mc.rows() == 1 && mc.cols() == cols;
@@ -1118,7 +1118,7 @@ int run_chain_colreduce_fullgrid(ComputeEngine& cpu, ComputeEngine& gpu)
     // A. mean 归约视图 + var 归约指令 + 全网格尾（LayerNorm forward E1）
     compare(
         "A 视图mean+指令var 全网格尾",
-        [&](ComputeEngine& e) -> nn::Result<Tensor> {
+        [&](ComputeEngine& e) -> exstl::Result<Tensor> {
             const Tensor xt = upload(e, x);
             const auto diff =
                 nn::dsl::leaf(xt) - nn::dsl::col_reduce_sum(xt) * nn::dsl::rparam(inv_r);
@@ -1132,7 +1132,7 @@ int run_chain_colreduce_fullgrid(ComputeEngine& cpu, ComputeEngine& gpu)
     // B. backward grad_x 形态：1 视图 + 3 归约指令（var/mean_g/mean_gn）
     compare(
         "B backward 1视图+3指令",
-        [&](ComputeEngine& e) -> nn::Result<Tensor> {
+        [&](ComputeEngine& e) -> exstl::Result<Tensor> {
             const Tensor xt = upload(e, x);
             const Tensor gt = upload(e, g);
             const Tensor nt = upload(e, n);
@@ -1154,7 +1154,7 @@ int run_chain_colreduce_fullgrid(ComputeEngine& cpu, ComputeEngine& gpu)
     // C. mean 走归约指令：第二条归约的源经 Reduce 操作数引用第一条归约结果
     compare(
         "C 指令链 mean→var Reduce引用",
-        [&](ComputeEngine& e) -> nn::Result<Tensor> {
+        [&](ComputeEngine& e) -> exstl::Result<Tensor> {
             const Tensor xt = upload(e, x);
             const auto mean_i = nn::dsl::col_reduce_sum(nn::dsl::leaf(xt));
             const auto diff =

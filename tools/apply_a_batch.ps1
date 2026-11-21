@@ -1,11 +1,11 @@
 # apply_a_batch.ps1 — A 批迁移：return std::unexpected(...) → 宏族（逐字等价）
 #
-#   [prop] return std::unexpected(x.error());        →  return NN_TRY_CHECK(x);
-#         （NN_TRY_CHECK(x) 展开 = if(!(x)) return std::unexpected((x).error());
+#   [prop] return std::unexpected(x.error());        →  return EX_TRY_CHECK(x);
+#         （EX_TRY_CHECK(x) 展开 = if(!(x)) return std::unexpected((x).error());
 #           在「紧随 if(!x)」的语境里 x 恒为有值，故整式 ≡ return x.error()，
 #           与原手写逐字等价；末尾 ; 与宏展开的最后一条语句拼成空语句，合法。）
-#   [new]  return std::unexpected(nn::Error{"msg"}); →  return NN_FAIL("msg");
-#         （NN_FAIL(msg) 定义即 return std::unexpected(nn::Error{(msg)})，逐字等价。）
+#   [new]  return std::unexpected(exstl::Error{"msg"}); →  return EX_FAIL("msg");
+#         （EX_FAIL(msg) 定义即 return std::unexpected(exstl::Error{(msg)})，逐字等价。）
 #
 # 只改**单行整行**形态；[other]（std::move / 多行构造 / 调用）一律不动，留人工审。
 # 所有 [new] 字面量均不含 " 与 \，拼接安全。
@@ -26,12 +26,12 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         $script:pn = 0; $script:nn = 0
         $text = $reProp.Replace($text, { param($m)
             $script:pn++
-            $m.Groups[1].Value + 'return NN_TRY_CHECK(' + $m.Groups[2].Value + ');'
+            $m.Groups[1].Value + 'return EX_TRY_CHECK(' + $m.Groups[2].Value + ');'
         })
         $text = $reNew.Replace($text, { param($m)
             $script:nn++
-            # NN_FAIL 已含 return，前缀不再加 return
-            $m.Groups[1].Value + 'NN_FAIL("' + $m.Groups[2].Value + '");'
+            # EX_FAIL 已含 return，前缀不再加 return
+            $m.Groups[1].Value + 'EX_FAIL("' + $m.Groups[2].Value + '");'
         })
         if ($text -ne $orig) {
             $tf++

@@ -60,11 +60,11 @@ private:
         if (grad_table_.valid()) return;
         ComputeEngine& engine = engine_ref();
         grad_table_ = engine.create_tensor(vocab_size_, d_model_, p_.param, InitSpec::zero());
-        NN_UNWRAP(grad_table_.valid(), "Embedding: 梯度缓冲（惰性）初始化失败");
+        EX_UNWRAP(grad_table_.valid(), "Embedding: 梯度缓冲（惰性）初始化失败");
     }
 
     // 清零 padding 行（覆盖语义：insert_rows 直接写目标行）
-    [[nodiscard]] Result<void> clear_padding_row_(Tensor& t)
+    [[nodiscard]] exstl::Result<void> clear_padding_row_(Tensor& t)
     {
         if (padding_idx_ < 0) return {};
         return engine_ref().insert_rows(t, static_cast<std::size_t>(padding_idx_),
@@ -77,9 +77,9 @@ public:
         : vocab_size_(vocab_size), d_model_(d_model), padding_idx_(padding_idx)
     {
         // 前置条件校验（铁律 #1）：构造后仍会使用这些成员 → 无条件终止口径
-        NN_ASSERT_ALWAYS(vocab_size > 0, "Embedding: vocab_size 必须 > 0");
-        NN_ASSERT_ALWAYS(d_model > 0, "Embedding: d_model 必须 > 0");
-        NN_ASSERT_ALWAYS(padding_idx < 0 || static_cast<std::size_t>(padding_idx) < vocab_size,
+        EX_ASSERT_ALWAYS(vocab_size > 0, "Embedding: vocab_size 必须 > 0");
+        EX_ASSERT_ALWAYS(d_model > 0, "Embedding: d_model 必须 > 0");
+        EX_ASSERT_ALWAYS(padding_idx < 0 || static_cast<std::size_t>(padding_idx) < vocab_size,
                          "Embedding: padding_idx 越界（须 < vocab_size 或负数表示无）");
     }
 
@@ -89,14 +89,14 @@ public:
     [[nodiscard]] std::size_t d_model() const noexcept { return d_model_; }
     [[nodiscard]] std::ptrdiff_t padding_idx() const noexcept { return padding_idx_; }
 
-    [[nodiscard]] Result<void> init_impl(ComputeEngine& engine) override
+    [[nodiscard]] exstl::Result<void> init_impl(ComputeEngine& engine) override
     {
         // N(0, 1)（torch.nn.Embedding 同分布）；seed 显式（U1）
         table_ = engine.create_tensor(vocab_size_, d_model_, p_.param,
                                       InitSpec::normal(Scalar{0}, Scalar{1}, kInitSeed));
-        if (!table_.valid()) NN_FAIL("Embedding: 嵌入表初始化失败");
+        if (!table_.valid()) EX_FAIL("Embedding: 嵌入表初始化失败");
         padding_zero_row_ = engine.create_tensor(1, d_model_, p_.param, InitSpec::zero());
-        if (!padding_zero_row_.valid()) NN_FAIL("Embedding: padding 零行缓冲初始化失败");
+        if (!padding_zero_row_.valid()) EX_FAIL("Embedding: padding 零行缓冲初始化失败");
         // padding 行强制清零（分布初始化会填值）
         return clear_padding_row_(table_);
     }
@@ -126,10 +126,10 @@ public:
     // 输出 (d_model, N)，N = input 元素数（列布局，对接下游层约定）。
     // 越界索引沿引擎防御语义返回零行（不抛错）——整数入口 forward_ids 在宿主
     // 侧 fail-fast，需要严格校验的调用方用它。
-    [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
+    [[nodiscard]] exstl::Result<Tensor> forward(const Tensor& input) override
     {
         ComputeEngine& engine = engine_ref();
-        NN_TRY(rows, engine.gather_rows(table_, input));   // (N, d_model)
+        EX_TRY(rows, engine.gather_rows(table_, input));   // (N, d_model)
         ids_cache_ = input;   // Tensor 引用语义（存储共享）；GPU 全程设备端
         return engine.transpose(*rows);                    // (d_model, N)
     }
@@ -137,42 +137,42 @@ public:
     // ── forward_ids：整数宿主入口（issue #32 的"索引接受整数类型"）──────
     // ids 经 span 宿主桥上传（f32 存储，|id| ≤ 2²⁴ 精确）；越界 fail-fast。
     // 输出 (d_model, N)。
-    [[nodiscard]] Result<Tensor> forward_ids(std::span<const std::size_t> ids)
+    [[nodiscard]] exstl::Result<Tensor> forward_ids(std::span<const std::size_t> ids)
     {
         for (std::size_t id : ids)
         {
             if (id >= vocab_size_)
-                NN_FAIL("Embedding::forward_ids: 索引 " + std::to_string(id) +
+                EX_FAIL("Embedding::forward_ids: 索引 " + std::to_string(id) +
                         " 越界（vocab_size=" + std::to_string(vocab_size_) + "）");
         }
         std::vector<Scalar> f(ids.begin(), ids.end());
         ComputeEngine& engine = engine_ref();
-        NN_TRY(idx, upload_span(engine, 1, ids.size(), Precision::F32, std::span(f)));
+        EX_TRY(idx, upload_span(engine, 1, ids.size(), Precision::F32, std::span(f)));
         return forward(*idx);
     }
 
     // ── backward：scatter_add 伴随 + 零输入梯度 ────────────────────────
     // grad_output (d_model, N) → 转置 (N, d_model) → 按索引原子累加进表梯度。
     // 索引不可导 → 返回与输入 ids 同形状的零张量（接口一致性，同 GPTModel）。
-    [[nodiscard]] Result<Tensor> backward(const Tensor& grad_output) override
+    [[nodiscard]] exstl::Result<Tensor> backward(const Tensor& grad_output) override
     {
         ComputeEngine& engine = engine_ref();
         if (grad_output.rows() != d_model_)
-            NN_FAIL("Embedding backward: grad_output 形状不匹配（rows != d_model）");
+            EX_FAIL("Embedding backward: grad_output 形状不匹配（rows != d_model）");
         if (!ids_cache_.valid())
-            NN_FAIL("Embedding backward: 无缓存索引（backward 前必须先 forward）");
+            EX_FAIL("Embedding backward: 无缓存索引（backward 前必须先 forward）");
         ensure_grad_();
         // (d_model, N) → (N, d_model)：scatter_add 的 grad 形状须与表同行宽
-        NN_TRY(gT, engine.transpose(grad_output));
+        EX_TRY(gT, engine.transpose(grad_output));
         // dst[ids[i]] += grad_T[i]（重复 id 累加；越界忽略 —— 与 forward 的
         // 防御语义对称：越界 id 取了零行、也不该有梯度）
-        NN_TRY(sr, engine.scatter_add_rows(grad_table_, ids_cache_, *gT));
+        EX_TRY(sr, engine.scatter_add_rows(grad_table_, ids_cache_, *gT));
         // padding 行梯度清零（每步；torch 同语义）
-        NN_TRY(cpr, clear_padding_row_(grad_table_));
+        EX_TRY(cpr, clear_padding_row_(grad_table_));
         // 索引梯度 = 零（形状镜像输入）
         Tensor zero = engine.create_tensor(ids_cache_.rows(), ids_cache_.cols(), Precision::F32,
                                            InitSpec::zero());
-        if (!zero.valid()) NN_FAIL("Embedding backward: 零梯度张量分配失败");
+        if (!zero.valid()) EX_FAIL("Embedding backward: 零梯度张量分配失败");
         return zero;
     }
 };

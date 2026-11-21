@@ -22,7 +22,7 @@
 // ───────────────────────────────────────────────────────────────────────────
 
 #include <memory>
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -362,9 +362,9 @@ void test_bitlinear_paths(nn::ComputeEngine& eng, const char* tag)
         auto bl = std::make_unique<nn::BitLinear>(IN, OUT);
         bl->set_precision_profile(prof);
         auto r = bl->init(eng);
-        NN_ASSERT_ALWAYS(r, "BitLinear init 失败");
+        EX_ASSERT_ALWAYS(r, "BitLinear init 失败");
         auto wr = eng.copy_from(bl->parameters()[0].get(), W);
-        NN_ASSERT_ALWAYS(wr, "写入 latent 失败");
+        EX_ASSERT_ALWAYS(wr, "写入 latent 失败");
         bl->set_ternary_pack_enabled(packed);
         return bl;
     };
@@ -579,9 +579,9 @@ void check_bitlinear_shape(nn::ComputeEngine& eng, std::size_t IN, std::size_t O
         auto bl = std::make_unique<nn::BitLinear>(IN, OUT);
         bl->set_precision_profile(prof);
         auto r = bl->init(eng);
-        NN_ASSERT_ALWAYS(r, "BitLinear init 失败");
+        EX_ASSERT_ALWAYS(r, "BitLinear init 失败");
         auto wr = eng.copy_from(bl->parameters()[0].get(), W);
-        NN_ASSERT_ALWAYS(wr, "写入 latent 失败");
+        EX_ASSERT_ALWAYS(wr, "写入 latent 失败");
         bl->set_ternary_pack_enabled(packed);
         return bl;
     };
@@ -747,7 +747,7 @@ int main(int argc, char* argv[])
         nn::cli::EngineConfig ec;
         ec.use_gpu = true;
         auto eng_r = nn::cli::create_engine(ec);
-        NN_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
+        EX_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
         test_primitives(**eng_r, "GPU");
         test_bitlinear_paths(**eng_r, "GPU");
         test_shapes(**eng_r, "GPU", /*gpu=*/true);

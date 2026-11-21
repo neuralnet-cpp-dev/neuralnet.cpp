@@ -5,7 +5,7 @@
 // 专门抓 AOT 结构漏登记与 GPU 设备域错误。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>
@@ -39,7 +39,7 @@ nn::Tensor matrix_tensor(nn::ComputeEngine& engine, std::size_t rows, std::size_
                          std::initializer_list<float> values)
 {
     nn::Matrix m(rows, cols);
-    NN_ASSERT_ALWAYS(values.size() == m.size(), "matrix_tensor size");
+    EX_ASSERT_ALWAYS(values.size() == m.size(), "matrix_tensor size");
     auto span = m.span();
     std::size_t i = 0;
     for (float v : values)
@@ -76,9 +76,9 @@ bool finite(nn::ComputeEngine& engine, const nn::Tensor& tensor)
     auto old_value = matrix_tensor(engine, 1, 4, {0.5f, 1, 2, 3});
     auto old_logp = matrix_tensor(engine, 1, 4, {0, 0, 0, 0});
     auto value = matrix_tensor(engine, 1, 4, {0.7f, 1.2f, 2.5f, 3.4f});
-    nn::ExperienceSchema exp = NN_UNWRAP(nn::ExperienceSchema::create(
+    nn::ExperienceSchema exp = EX_UNWRAP(nn::ExperienceSchema::create(
         {"action", "action_mask", "advantage", "return", "old_value", "old_log_prob"}));
-    nn::TensorRecord record = NN_UNWRAP(nn::TensorRecord::create(
+    nn::TensorRecord record = EX_UNWRAP(nn::TensorRecord::create(
         exp.schema(), {nn::NamedTensor{.name = "action", .value = actions},
                        nn::NamedTensor{.name = "action_mask", .value = mask},
                        nn::NamedTensor{.name = "value_mask", .value = mask},
@@ -86,9 +86,9 @@ bool finite(nn::ComputeEngine& engine, const nn::Tensor& tensor)
                        nn::NamedTensor{.name = "return", .value = returns},
                        nn::NamedTensor{.name = "old_value", .value = old_value},
                        nn::NamedTensor{.name = "old_log_prob", .value = old_logp}}));
-    nn::PolicyBatchView view = NN_UNWRAP(nn::PolicyBatchView::create(record));
+    nn::PolicyBatchView view = EX_UNWRAP(nn::PolicyBatchView::create(record));
 
-    auto ppo_schema = NN_UNWRAP(nn::TensorSchema::create(
+    auto ppo_schema = EX_UNWRAP(nn::TensorSchema::create(
         "ppo_output", {nn::tensor_field("policy", nn::TensorShapeSpec::exact(3, 4)),
                        nn::tensor_field("value", nn::TensorShapeSpec::exact(1, 4))}));
     nn::ClippedPolicyObjective ppo_policy;
@@ -124,7 +124,7 @@ bool finite(nn::ComputeEngine& engine, const nn::Tensor& tensor)
         }
     }
 
-    auto grpo_schema = NN_UNWRAP(nn::TensorSchema::create(
+    auto grpo_schema = EX_UNWRAP(nn::TensorSchema::create(
         "grpo_output", {nn::tensor_field("policy", nn::TensorShapeSpec::exact(3, 4))}));
     const std::vector<nn::GroupSpan> spans{
         nn::GroupSpan{.first_row = 0, .row_count = 2},

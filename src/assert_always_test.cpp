@@ -1,19 +1,19 @@
 // ── assert_always_test — RV-01：前置条件校验在 Release（NDEBUG）下也必须终止 ──
 //
-// 背景：`NN_ASSERT` 是**可选诊断**（NDEBUG 下展开为空），把它用在"断言后仍继续
+// 背景：`EX_ASSERT` 是**可选诊断**（NDEBUG 下展开为空），把它用在"断言后仍继续
 // 解引用/索引被校验对象"的位置 = Release 静默 UB（越界读写 / 空指针解引用）。
-// 修法是把这类点位换成 `NN_ASSERT_ALWAYS` / `NN_FATAL`（两者**无条件**终止并打印
+// 修法是把这类点位换成 `EX_ASSERT_ALWAYS` / `EX_FATAL`（两者**无条件**终止并打印
 // `file:line`），本测试即该修法的负例回归：
 //
 // 覆盖（每个负例经子进程断言，本进程不终止；子进程 stderr 重定向到文件后校验）：
-//   ① `MatrixT::at` 越界            → NN_FATAL（algebra_matrix.hpp）
-//   ② 未绑定引擎的 `Model::engine()` → NN_FATAL（model_container.hpp）
-//   ③ `sample_next_token_` 空 logits → NN_ASSERT_ALWAYS（compute_layer_base.hpp）
-//   ④ 未 init 的层调 forward（→ engine_ref）→ NN_FATAL（compute_layer_base.hpp）
+//   ① `MatrixT::at` 越界            → EX_FATAL（algebra_matrix.hpp）
+//   ② 未绑定引擎的 `Model::engine()` → EX_FATAL（model_container.hpp）
+//   ③ `sample_next_token_` 空 logits → EX_ASSERT_ALWAYS（compute_layer_base.hpp）
+//   ④ 未 init 的层调 forward（→ engine_ref）→ EX_FATAL（compute_layer_base.hpp）
 //
 // 断言口径（三条同时满足才算通过）：退出码非零 + 打印 `<tag> failed at` +
 // 紧跟 `file:line`（冒号后是数字）+ 携带该点位自己的消息。tag 必须是新的
-// `NN_ASSERT_ALWAYS` / `NN_FATAL`（而不是旧的 NN_ASSERT 路径）——后者在 NDEBUG
+// `EX_ASSERT_ALWAYS` / `EX_FATAL`（而不是旧的 EX_ASSERT 路径）——后者在 NDEBUG
 // 下根本不打印，本断言因此**在 Release 与 Debug 两种构建下都有效**。
 //
 // 子进程模式：--crash-matrix-at / --crash-model-unbound / --crash-empty-logits
@@ -33,7 +33,7 @@
 #include <sys/wait.h>
 #endif
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include "test_common.hpp"
 import nn.cli;
@@ -60,8 +60,8 @@ constexpr int kSkip = -1;   // std::system 无法启动子进程（区别于任�
 std::string g_self;                              // argv[0]：子进程自举用
 const char* kLogPath = "nn_assert_always_child.log";   // 子进程 stderr 落地
 
-const char* kTagAssert = "NN_ASSERT_ALWAYS failed at";
-const char* kTagFatal = "NN_FATAL failed at";
+const char* kTagAssert = "EX_ASSERT_ALWAYS failed at";
+const char* kTagFatal = "EX_FATAL failed at";
 
 int run_self(const char* arg)
 {
@@ -183,8 +183,8 @@ int main(int argc, char* argv[])
         }
         if (mode == "--crash-layer-uninit")
         {
-            // 未 init(engine) 的层 → engine_ref() → NN_FATAL（Release 下旧行为是
-            // NN_ASSERT 为空、随后 `return *engine_` 空解引用）
+            // 未 init(engine) 的层 → engine_ref() → EX_FATAL（Release 下旧行为是
+            // EX_ASSERT 为空、随后 `return *engine_` 空解引用）
             nn::Linear lin(3, 2);
             auto eng_owner = nn::create_cpu_engine();
             nn::ComputeEngine& eng = *eng_owner;
@@ -196,7 +196,7 @@ int main(int argc, char* argv[])
     }
 
     std::puts("=== assert_always (RV-01：前置条件校验在 NDEBUG 下也终止) ===");
-    std::printf("[info] NDEBUG=%d（NN_ASSERT_ALWAYS/NN_FATAL 与构建类型无关）\n",
+    std::printf("[info] NDEBUG=%d（EX_ASSERT_ALWAYS/EX_FATAL 与构建类型无关）\n",
 #ifdef NDEBUG
                 1
 #else
@@ -205,8 +205,8 @@ int main(int argc, char* argv[])
     );
 
     // 正例：条件成立时宏不得有任何副作用
-    NN_ASSERT_ALWAYS(2 + 2 == 4, "算术条件成立");
-    CHECK(true, "NN_ASSERT_ALWAYS 条件成立时不终止");
+    EX_ASSERT_ALWAYS(2 + 2 == 4, "算术条件成立");
+    CHECK(true, "EX_ASSERT_ALWAYS 条件成立时不终止");
 
     // 负例三件（详见文件头）
     check_crash_case("--crash-matrix-at", kTagFatal, "MatrixT::at index out of range",

@@ -1,8 +1,8 @@
 # apply_prop_braced.ps1 — 花括号作用域守卫：
 #   { auto r = <expr>; if (!r) return std::unexpected(r.error()); }
-#   → { NN_TRY(r, <expr>); }
+#   → { EX_TRY(r, <expr>); }
 # 保留外层花括号（原本就是局部作用域）。同时覆盖 { if (!r) return ...; } ？
-# 不覆盖——r 声明在别处时应走 NN_TRY_CHECK，但那种前面已处理。这里只处理
+# 不覆盖——r 声明在别处时应走 EX_TRY_CHECK，但那种前面已处理。这里只处理
 # 声明+守卫都在花括号内的单行形态。
 param([switch]$DryRun)
 $ErrorActionPreference = 'Stop'
@@ -18,7 +18,7 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         $script:n = 0
         $text = $re.Replace($orig, { param($m)
             $script:n++
-            $m.Groups[1].Value + '{ NN_TRY(' + $m.Groups[2].Value + ', ' + $m.Groups[3].Value + '); }'
+            $m.Groups[1].Value + '{ EX_TRY(' + $m.Groups[2].Value + ', ' + $m.Groups[3].Value + '); }'
         })
         if ($text -ne $orig) {
             $tf++
@@ -29,4 +29,4 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         }
     }
 }
-Write-Output ("TOTAL braced-prop -> NN_TRY = {0} files={1} (DryRun={2})" -f $tot, $tf, $DryRun)
+Write-Output ("TOTAL braced-prop -> EX_TRY = {0} files={1} (DryRun={2})" -f $tot, $tf, $DryRun)

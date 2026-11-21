@@ -1,6 +1,6 @@
 # apply_prop_oneline.ps1 — A 批单行守卫：if (!x) return std::unexpected(x.error());
-#   → NN_TRY_CHECK(x);
-# 也覆盖单行 init 守卫：if (auto x = f(); !x) return std::unexpected(x.error()); → NN_TRY(x, f());
+#   → EX_TRY_CHECK(x);
+# 也覆盖单行 init 守卫：if (auto x = f(); !x) return std::unexpected(x.error()); → EX_TRY(x, f());
 param([switch]$DryRun)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -19,11 +19,11 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         $script:a = 0; $script:b = 0
         $text = $reB.Replace($text, { param($m)
             $script:b++
-            $m.Groups[1].Value + 'NN_TRY(' + $m.Groups[2].Value + ', ' + $m.Groups[3].Value + ');'
+            $m.Groups[1].Value + 'EX_TRY(' + $m.Groups[2].Value + ', ' + $m.Groups[3].Value + ');'
         })
         $text = $reA.Replace($text, { param($m)
             $script:a++
-            $m.Groups[1].Value + 'NN_TRY_CHECK(' + $m.Groups[2].Value + ');'
+            $m.Groups[1].Value + 'EX_TRY_CHECK(' + $m.Groups[2].Value + ');'
         })
         if ($text -ne $orig) {
             $tf++
@@ -34,4 +34,4 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         }
     }
 }
-Write-Output ("TOTAL guardA(NN_TRY_CHECK)={0} guardB(NN_TRY)={1} files={2} (DryRun={3})" -f $ta, $tb, $tf, $DryRun)
+Write-Output ("TOTAL guardA(EX_TRY_CHECK)={0} guardB(EX_TRY)={1} files={2} (DryRun={3})" -f $ta, $tb, $tf, $DryRun)

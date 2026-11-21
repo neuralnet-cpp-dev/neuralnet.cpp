@@ -10,7 +10,7 @@
 //   [5] 数值梯度检查（grad_query 与 grad_memory 各一轮，CPU 小规模）
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -228,7 +228,7 @@ void test_gradcheck()
     auto eval = [&]() -> nn::Scalar
     {
         auto y = xattn.forward_pair(q, m);
-        NN_ASSERT_ALWAYS(y, "gradcheck eval: forward_pair failed");
+        EX_ASSERT_ALWAYS(y, "gradcheck eval: forward_pair failed");
         auto ym = download(*engine, *y);
         const auto sp = ym.span();
         nn::Scalar loss = 0;
@@ -263,7 +263,7 @@ void test_gradcheck()
         auto tm = download(*engine, t);
         tm.span()[idx] = v;
         auto cp = engine->copy_from(t, tm);
-        NN_ASSERT_ALWAYS(cp, "gradcheck perturb: copy_from failed");
+        EX_ASSERT_ALWAYS(cp, "gradcheck perturb: copy_from failed");
     };
 
     const nn::Scalar base_q = q.cols() > 0 ? nn::Scalar{0} : nn::Scalar{0};

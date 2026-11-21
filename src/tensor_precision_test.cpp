@@ -11,7 +11,7 @@
 //   6. engine.reshape 保持精度与数据（D10：reshape 移入引擎；元素数不匹配报错）
 //   7. shape_str 包含精度信息
 //   8. f16 存储数据经下载升位后与宿主参考逐元素一致（f16→f32 精确无损）
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cstdio>
 #include <cstring>
 #include <limits>   // RV-02：形状溢出负例（size_t 上限）
@@ -191,7 +191,7 @@ void test_reshape_preserves_precision(nn::ComputeEngine& eng)
     if (reshaped32_r)
         CHECK(reshaped32_r->precision() == nn::Precision::F32, "f32 reshape precision");
 
-    // 元素数不匹配 → Result 错误（原 NN_ASSERT 升级为可检查错误）
+    // 元素数不匹配 → Result 错误（原 EX_ASSERT 升级为可检查错误）
     auto bad_r = eng.reshape(t32, 5, 7);
     CHECK(!bad_r, "reshape element-count mismatch rejected");
 

@@ -11,7 +11,7 @@
 // 任意表达式未必被扫描覆盖，故只在 CPU 上验证。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include "test_common.hpp"   // M1 访问收口：upload（宿主 Matrix 进引擎张量）
 
@@ -66,7 +66,7 @@ Scalar max_abs_diff(const Matrix& a, const Matrix& b)
 }
 
 // 从引擎取回 CPU Matrix
-bool to_cpu(ComputeEngine& eng, const nn::Result<Tensor>& r, Matrix& out)
+bool to_cpu(ComputeEngine& eng, const exstl::Result<Tensor>& r, Matrix& out)
 {
     if (!r)
     {
@@ -90,7 +90,7 @@ int check(ComputeEngine& eng, const std::string& name, const Expr& expr, std::si
 {
     auto r = nn::dsl::compute(eng, expr, rows, cols);
     Matrix got;
-    NN_EXIT(to_cpu(eng, r, got), 1, "[FAIL] ");
+    EX_EXIT(to_cpu(eng, r, got), 1, "[FAIL] ");
     const Scalar err = max_abs_diff(ref, got);
     const bool ok = err <= tol;
     std::cout << "[" << (ok ? "PASS" : "FAIL") << "] " << name << "  err=" << std::scientific

@@ -1,8 +1,8 @@
-// ── parallel_test — core_parallel.hpp：顶层并行算法（阈值回落语义）─────────
+﻿// ── parallel_test — core_parallel.hpp：顶层并行算法（阈值回落语义）─────────
 // 覆盖：
 //   1. for_each / transform（一元/二元）/ transform_reduce（一元/二元）在
-//      小输入（< PARALLEL_THRESHOLD，串行回落）下与串行参考逐元素一致
-//   2. 大输入（≥ PARALLEL_THRESHOLD，真并行路径）结果与串行参考一致
+//      小输入（< exstl::PARALLEL_THRESHOLD，串行回落）下与串行参考逐元素一致
+//   2. 大输入（≥ exstl::PARALLEL_THRESHOLD，真并行路径）结果与串行参考一致
 //   3. 空区间 / 单元素边界
 //   4. parallel_for_samples 的 0/1 样本串行回落
 //   5. 并行 vs 串行对拍的确定性（transform_reduce 用整数求和，精确对拍）
@@ -19,15 +19,16 @@
 int g_fail = 0;
 
 #include "test_common.hpp"
+#include <exstl/parallel.hpp>
 import nn.core;
 
 namespace
 {
 
-// PARALLEL_THRESHOLD = 524288（core_config.hpp）。测试用两档规模：
+// exstl::PARALLEL_THRESHOLD = 524288（core_config.hpp）。测试用两档规模：
 //   小 = 阈值/16（必然串行回落）、大 = 阈值 + 阈值/8（必然真并行）
-constexpr std::size_t kSmall = nn::PARALLEL_THRESHOLD / 16;
-constexpr std::size_t kLarge = nn::PARALLEL_THRESHOLD + nn::PARALLEL_THRESHOLD / 8;
+constexpr std::size_t kSmall = exstl::PARALLEL_THRESHOLD / 16;
+constexpr std::size_t kLarge = exstl::PARALLEL_THRESHOLD + exstl::PARALLEL_THRESHOLD / 8;
 
 void test_for_each()
 {
@@ -35,18 +36,18 @@ void test_for_each()
     for (std::size_t kN : {kSmall, kLarge})
     {
         std::vector<int> hits(kN, 0);
-        nn::for_each(hits.begin(), hits.end(), [](int& v) { ++v; });
+        exstl::for_each(hits.begin(), hits.end(), [](int& v) { ++v; });
         bool full = true;
         for (std::size_t i = 0; i < kN; ++i)
             if (hits[i] != 1) full = false;
-        CHECK(full, (kN >= nn::PARALLEL_THRESHOLD ? "大输入全并行覆盖" : "小输入串行覆盖"));
+        CHECK(full, (kN >= exstl::PARALLEL_THRESHOLD ? "大输入全并行覆盖" : "小输入串行覆盖"));
     }
     // 空 / 单元素
     std::vector<int> empty;
-    nn::for_each(empty.begin(), empty.end(), [](int& v) { ++v; });
+    exstl::for_each(empty.begin(), empty.end(), [](int& v) { ++v; });
     CHECK(true, "空区间不崩溃");
     std::vector<int> one{0};
-    nn::for_each(one.begin(), one.end(), [](int& v) { ++v; });
+    exstl::for_each(one.begin(), one.end(), [](int& v) { ++v; });
     CHECK(one[0] == 1, "单元素");
 }
 
@@ -57,14 +58,14 @@ void test_transform()
     {
         const std::vector<float> in(kN, 2.5f);
         std::vector<float> out(kN, 0.0f);
-        nn::transform(in.begin(), in.end(), out.begin(), [](float x) { return x + 1.0f; });
+        exstl::transform(in.begin(), in.end(), out.begin(), [](float x) { return x + 1.0f; });
         bool ok = true;
         for (std::size_t i = 0; i < kN; ++i)
             if (out[i] != 3.5f) ok = false;
         CHECK(ok, "一元 transform 逐元素一致");
 
         std::vector<float> out2(kN, 0.0f);
-        nn::transform(in.begin(), in.end(), out.begin(), out2.begin(),
+        exstl::transform(in.begin(), in.end(), out.begin(), out2.begin(),
                       [](float a, float b) { return a * b; });
         bool ok2 = true;
         for (std::size_t i = 0; i < kN; ++i)
@@ -82,14 +83,14 @@ void test_transform_reduce()
         std::iota(v.begin(), v.end(), 1);                 // 1..kN
         const long long ref = static_cast<long long>(kN) * (kN + 1) / 2;
 
-        const long long sum = nn::transform_reduce(
+        const long long sum = exstl::transform_reduce(
             v.begin(), v.end(), 0LL, [](long long a, long long b) { return a + b; },
             [](int x) { return static_cast<long long>(x); });
-        CHECK(sum == ref, kN >= nn::PARALLEL_THRESHOLD ? "一元 transform_reduce 大输入（并行）"
+        CHECK(sum == ref, kN >= exstl::PARALLEL_THRESHOLD ? "一元 transform_reduce 大输入（并行）"
                                                        : "一元 transform_reduce 小输入（串行）");
 
         // 二元：v 与自身点积的和
-        const long long sq = nn::transform_reduce(
+        const long long sq = exstl::transform_reduce(
             v.begin(), v.end(), v.begin(), 0LL, [](long long a, long long b) { return a + b; },
             [](int a, int b) { return static_cast<long long>(a) * b; });
         // Σ i² = n(n+1)(2n+1)/6
@@ -102,16 +103,16 @@ void test_parallel_for_samples_fallback()
 {
     std::printf("parallel_for_samples 串行回落:\n");
     std::atomic<int> calls{0};
-    nn::parallel_for_samples(0, [&](std::size_t) { ++calls; });
+    exstl::parallel_for_samples(0, [&](std::size_t) { ++calls; });
     CHECK(calls.load() == 0, "0 样本不调用回调");
-    nn::parallel_for_samples(1,
+    exstl::parallel_for_samples(1,
                              [&](std::size_t i)
                              {
                                  if (i == 0) ++calls;
                              });
     CHECK(calls.load() == 1, "1 样本串行回落且索引 0");
     std::vector<int> hits(16, 0);
-    nn::parallel_for_samples(16, [&](std::size_t i) { ++hits[i]; });
+    exstl::parallel_for_samples(16, [&](std::size_t i) { ++hits[i]; });
     bool full = true;
     for (int h : hits)
         if (h != 1) full = false;
@@ -125,7 +126,7 @@ void test_parallel_for_blocks()
     for (std::size_t kN : {std::size_t{3}, kSmall, kLarge})
     {
         std::vector<int> hits(kN, 0);
-        nn::parallel_for_blocks(hits.begin(), hits.end(), [](int& v) { ++v; });
+        exstl::parallel_for_blocks(hits.begin(), hits.end(), [](int& v) { ++v; });
         bool full = true;
         for (std::size_t i = 0; i < kN; ++i)
             if (hits[i] != 1) full = false;

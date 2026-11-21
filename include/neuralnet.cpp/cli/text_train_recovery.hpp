@@ -28,7 +28,7 @@
 #include <utility>
 #include <vector>
 
-#include "neuralnet.cpp/core_errors.hpp"           // nn::Result / NN_TRY
+#include <exstl/errors.hpp>           // exstl::Result / EX_TRY
 #include "neuralnet.cpp/compute_engine.hpp"        // nn::ComputeEngine
 #include "neuralnet.cpp/compute_layer_base.hpp"    // nn::ModelRole / model_role_name
 #include "neuralnet.cpp/domain_gpt.hpp"            // build_gpt_model_from_spec
@@ -63,7 +63,7 @@ struct ResumeStateAdoption
     bool shape_adopted = false;// 形状/架构已按文件 spec 改写（两种角色都成立）
 };
 
-[[nodiscard]] inline nn::Result<ResumeStateAdoption>
+[[nodiscard]] inline exstl::Result<ResumeStateAdoption>
 adopt_resume_state(TrainConfig& cfg, std::ostream& out, std::ostream& err)
 {
     ResumeStateAdoption result;
@@ -128,7 +128,7 @@ adopt_resume_state(TrainConfig& cfg, std::ostream& out, std::ostream& err)
     auto s_up = std::move(*state_r);
     auto* s_ptr = dynamic_cast<nn::TextTrainState*>(s_up.get());
     if (s_ptr == nullptr)
-        NN_FAIL("断点 " + cfg.resume_path + " 的训练状态不是文本域（kind=" +
+        EX_FAIL("断点 " + cfg.resume_path + " 的训练状态不是文本域（kind=" +
                 std::string(s_up->state_kind()) + "），--resume 文本训练不接受");
     nn::TextTrainState s = std::move(*s_ptr);
 
@@ -141,7 +141,7 @@ adopt_resume_state(TrainConfig& cfg, std::ostream& out, std::ostream& err)
             if (!given.empty()) given += " ";
             given += f;
         }
-        NN_FAIL(
+        EX_FAIL(
             "错误: --resume " + cfg.resume_path +
             " 是训练断点（.nnckpt，带训练状态段）⇒ 形状/配方/计数器一律由断点决定，"
             "不得再由命令行给出。\n  检测到显式输入: " +
@@ -174,7 +174,7 @@ adopt_resume_state(TrainConfig& cfg, std::ostream& out, std::ostream& err)
         // docs/internal/30：旧状态的 batch_size 是 micro-batch；还原成等效 global。
         // 旧断点若落在累积中间，pending gradients 不在文件里，只能从最近的
         // 已完成 update 边界继续。
-        if (s.recipe.accum_steps == 0) NN_FAIL("旧断点的 accum_steps=0，无法转换 batch_size 语义");
+        if (s.recipe.accum_steps == 0) EX_FAIL("旧断点的 accum_steps=0，无法转换 batch_size 语义");
         cfg.batch_size = static_cast<std::size_t>(s.recipe.batch_size * s.recipe.accum_steps);
         if (s.recipe.accum_steps > 0) s.counters.step_in_epoch /= s.recipe.accum_steps;
         s.recipe.batch_size = static_cast<std::uint64_t>(cfg.batch_size);
@@ -214,13 +214,13 @@ adopt_resume_state(TrainConfig& cfg, std::ostream& out, std::ostream& err)
 // 数据集一变 ⇒ 窗口数变 ⇒ steps_per_epoch 变 ⇒ step 级调度的 total_steps、
 // `global_step` 的语义、epoch 边界**同时**改变 ⇒ "同一断点 + 不同数据集"
 // 不存在正确的续训语义。合法出口 = 从 `.nnmodel` 开新一轮。
-[[nodiscard]] inline nn::Result<void> verify_dataset_identity(const nn::DatasetIdentity& saved,
+[[nodiscard]] inline exstl::Result<void> verify_dataset_identity(const nn::DatasetIdentity& saved,
                                                               const nn::DatasetIdentity& current,
                                                               const std::string& resume_path)
 {
     const std::string why = nn::dataset_mismatch_reason(saved, current);
     if (why.empty()) return {};
-    NN_FAIL("错误: --resume 的数据集与断点不一致（内容身份变了 ⇒ 窗口网格 / step 号语义 / "
+    EX_FAIL("错误: --resume 的数据集与断点不一致（内容身份变了 ⇒ 窗口网格 / step 号语义 / "
             "lr 曲线形状全变，续训不存在正确语义）:\n" +
             why + "\n  断点记录的路径: " + saved.path + "\n  本次使用的路径: " + current.path +
             "\n  断点文件: " + resume_path +
@@ -232,14 +232,14 @@ adopt_resume_state(TrainConfig& cfg, std::ostream& out, std::ostream& err)
 // ── 载入优化器状态（续训路径；建优化器之后调用）──────────────────────────
 // 优化器身份（种类/超参）已由状态段写回 cfg ⇒ 张量数量与形状必须对上，
 // 对不上由 `Optimizer::load_state` 明确报错（不静默冷启动）。
-[[nodiscard]] inline nn::Result<void> load_optimizer_state(nn::ComputeEngine& engine,
+[[nodiscard]] inline exstl::Result<void> load_optimizer_state(nn::ComputeEngine& engine,
                                                            const std::string& path,
                                                            nn::Optimizer& optimizer,
                                                            std::ostream& out)
 {
-    NN_TRY(loaded, nn::load_train_state(engine, path));
+    EX_TRY(loaded, nn::load_train_state(engine, path));
     optimizer.set_state_step(loaded->state->optimizer_step);
-    NN_TRY_CHECK(optimizer.load_state(loaded->optimizer_blobs));
+    EX_TRY_CHECK(optimizer.load_state(loaded->optimizer_blobs));
     out << "已恢复优化器状态: " << loaded->optimizer_blobs.size() << " 个张量"
         << "，步计数 " << loaded->state->optimizer_step << "（" << loaded->state->recipe.optimizer
         << "）\n";
@@ -256,7 +256,7 @@ struct TextTrainResume
 
 // ── 恢复流程：角色门禁 → 读规格 → 按规格重建模型 → 载入参数 ──────────────
 // out/err 语义与旧 main 一致（进度走 out，提示与警告走 err）。
-[[nodiscard]] inline nn::Result<TextTrainResume>
+[[nodiscard]] inline exstl::Result<TextTrainResume>
 resume_text_train(nn::ComputeEngine& engine, const TrainConfig& cfg, nn::Model& model,
                   nn::ModelSpec& spec, std::ostream& out, std::ostream& err)
 {
@@ -279,7 +279,7 @@ resume_text_train(nn::ComputeEngine& engine, const TrainConfig& cfg, nn::Model& 
     if (file_spec.is_rapt())
     {
         out << "从模型文件读取 RAPT 规格\n";
-        NN_TRY_MSG(build_result, "从断点重建 RAPT 模型失败",
+        EX_TRY_MSG(build_result, "从断点重建 RAPT 模型失败",
                    nn::build_rapt_model_from_spec(engine, file_spec, cfg.precision));
         model = std::move(*build_result);
         spec = file_spec;
@@ -295,7 +295,7 @@ resume_text_train(nn::ComputeEngine& engine, const TrainConfig& cfg, nn::Model& 
         else if (fg->pos_encoding == nn::PosEncodingType::RoPE)
             out << "从模型文件读取 RoPE GPT 规格\n";
         else out << "从模型文件读取 GPT 规格\n";
-        NN_TRY_MSG(build_result, "从断点重建 GPT 模型失败",
+        EX_TRY_MSG(build_result, "从断点重建 GPT 模型失败",
                    nn::build_gpt_model_from_spec(engine, file_spec, cfg.precision));
         model = std::move(*build_result);
         spec = file_spec;

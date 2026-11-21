@@ -28,7 +28,7 @@
 #include <utility>
 #include <vector>
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -856,7 +856,7 @@ void print_help(const char* prog)
 
 size_t parse_size(const char* val)
 {
-    NN_EXIT(val, 0);
+    EX_EXIT(val, 0);
     return static_cast<size_t>(std::strtoull(val, nullptr, 10));
 }
 
@@ -947,7 +947,7 @@ int main(int argc, char* argv[])
     // 选择引擎（CPU/GPU），失败硬报错不回退
     if (cfg.inner < 1) cfg.inner = 1;
     auto engine_r = nn::cli::create_engine(nn::cli::EngineConfig{cfg.gpu});
-    NN_EXIT(engine_r, 2, "引擎创建失败: %s\n");
+    EX_EXIT(engine_r, 2, "引擎创建失败: %s\n");
     ComputeEngine& engine = **engine_r;
     const bool op_mode = !cfg.ops.empty();
     std::printf("=== layer_bench (%s%s) ===\n", cfg.gpu ? "GPU" : "CPU",

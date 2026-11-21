@@ -7,7 +7,7 @@
 //   [4] hooks 顺序、buffer clear 策略、非法 sampler/config 错误。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -41,7 +41,7 @@ nn::TensorSchema rollout_schema()
     auto r = nn::TensorSchema::create(
         "rollout", {nn::tensor_field("x", nn::TensorShapeSpec::exact(1, 1), true,
                                      nn::Precision::F32, nn::TensorPlacement::CPU)});
-    NN_ASSERT_ALWAYS(r, "rollout schema");
+    EX_ASSERT_ALWAYS(r, "rollout schema");
     return std::move(*r);
 }
 
@@ -56,11 +56,11 @@ public:
 
     explicit CountingSource(nn::ComputeEngine& engine) : engine_(engine), schema_(rollout_schema()) {}
 
-    [[nodiscard]] nn::Result<nn::TensorRecord> rollout(nn::DeterministicRng& rng) override
+    [[nodiscard]] exstl::Result<nn::TensorRecord> rollout(nn::DeterministicRng& rng) override
     {
         ++calls;
         const nn::Scalar value = static_cast<nn::Scalar>(rng.next_u64() % 100000u);
-        NN_TRY(tensor, nn::upload_span(engine_, 1, 1, nn::Precision::F32,
+        EX_TRY(tensor, nn::upload_span(engine_, 1, 1, nn::Precision::F32,
                                                std::span<const nn::Scalar>(&value, 1)));
         return nn::TensorRecord::create(schema_, {nn::NamedTensor{.name = "x", .value = *tensor}});
     }
@@ -69,7 +69,7 @@ public:
 class BadSizeSampler final : public nn::BatchSampler
 {
 public:
-    [[nodiscard]] nn::Result<std::vector<std::size_t>> sample(std::size_t, std::size_t,
+    [[nodiscard]] exstl::Result<std::vector<std::size_t>> sample(std::size_t, std::size_t,
                                                               nn::DeterministicRng&) override
     { return std::vector<std::size_t>{}; }
 };
@@ -77,7 +77,7 @@ public:
 class OutOfRangeSampler final : public nn::BatchSampler
 {
 public:
-    [[nodiscard]] nn::Result<std::vector<std::size_t>> sample(std::size_t, std::size_t batch_size,
+    [[nodiscard]] exstl::Result<std::vector<std::size_t>> sample(std::size_t, std::size_t batch_size,
                                                               nn::DeterministicRng&) override
     {
         std::vector<std::size_t> indices(batch_size, 9999);
@@ -92,36 +92,36 @@ struct RunTrace
     std::size_t after_hooks = 0;
 };
 
-nn::Result<void> run_pipeline(nn::RLTrainingPipeline& pipeline, std::size_t updates,
+exstl::Result<void> run_pipeline(nn::RLTrainingPipeline& pipeline, std::size_t updates,
                               nn::ComputeEngine& engine, RunTrace& trace)
 {
     nn::TrainerHooks hooks;
-    hooks.before_update = [&](std::span<const nn::TensorRecord* const> batch) -> nn::Result<void>
+    hooks.before_update = [&](std::span<const nn::TensorRecord* const> batch) -> exstl::Result<void>
     {
         ++trace.before_hooks;
-        if (batch.empty()) NN_FAIL("empty hook batch");
+        if (batch.empty()) EX_FAIL("empty hook batch");
         return {};
     };
-    hooks.after_update = [&](std::span<const nn::TensorRecord* const> batch) -> nn::Result<void>
+    hooks.after_update = [&](std::span<const nn::TensorRecord* const> batch) -> exstl::Result<void>
     {
         ++trace.after_hooks;
-        if (batch.empty()) NN_FAIL("empty hook batch");
+        if (batch.empty()) EX_FAIL("empty hook batch");
         return {};
     };
     return pipeline.run(
         updates,
         [&](std::span<const nn::TensorRecord* const> batch, nn::DeterministicRng&,
-            nn::MetricSink& metrics) -> nn::Result<void>
+            nn::MetricSink& metrics) -> exstl::Result<void>
         {
             double sum = 0;
             for (const nn::TensorRecord* record : batch)
             {
-                NN_TRY(value, record->require("x"));
-                NN_TRY(v, nn::download_vector(engine, **value));
+                EX_TRY(value, record->require("x"));
+                EX_TRY(v, nn::download_vector(engine, **value));
                 trace.batches.push_back((*v)[0]);
                 sum += (*v)[0];
             }
-            NN_TRY_CHECK(metrics.emit(nn::MetricRecord{
+            EX_TRY_CHECK(metrics.emit(nn::MetricRecord{
                 .name = "batch_mean",
                 .value = sum / static_cast<double>(batch.size()),
             }));
@@ -136,7 +136,7 @@ struct PipelineBundle
     nn::RLTrainingPipeline pipeline;
 };
 
-nn::Result<PipelineBundle> make_pipeline(nn::ComputeEngine& engine,
+exstl::Result<PipelineBundle> make_pipeline(nn::ComputeEngine& engine,
                                          std::shared_ptr<nn::MetricSink> metrics,
                                          std::shared_ptr<nn::CheckpointProvider> checkpoints = {},
                                          std::uint64_t seed = 177, bool clear_buffer = false)
@@ -150,7 +150,7 @@ nn::Result<PipelineBundle> make_pipeline(nn::ComputeEngine& engine,
     cfg.checkpoint_every = 3;
     auto source = std::make_unique<CountingSource>(engine);
     CountingSource* source_ptr = source.get();
-    NN_TRY(pipeline,
+    EX_TRY(pipeline,
            nn::RLTrainingPipeline::create(std::move(cfg), std::move(source),
                                           std::make_unique<nn::UniformBatchSampler>(),
                                           std::move(metrics), std::move(checkpoints), seed));
@@ -216,7 +216,7 @@ void test_checkpoint_reproducibility()
     CHECK(resumed->pipeline.update_count() == 5 && resumed->pipeline.rollout_cursor() == 10,
           "restored pipeline counters continue");
 
-    NN_UNWRAP(checkpoints->save_section("custom", "opaque"));
+    EX_UNWRAP(checkpoints->save_section("custom", "opaque"));
     auto custom = checkpoints->load_section("custom");
     CHECK(custom && *custom == "opaque", "checkpoint provider supports custom sections");
 }
@@ -229,12 +229,12 @@ void test_after_update_failure_commits_state()
     if (!bundle) return;
 
     nn::TrainerHooks hooks;
-    hooks.after_update = [](std::span<const nn::TensorRecord* const>) -> nn::Result<void>
-    { NN_FAIL("intentional after_update failure"); };
+    hooks.after_update = [](std::span<const nn::TensorRecord* const>) -> exstl::Result<void>
+    { EX_FAIL("intentional after_update failure"); };
     auto run = bundle->pipeline.run(
         1,
         [](std::span<const nn::TensorRecord* const>, nn::DeterministicRng&,
-           nn::MetricSink&) -> nn::Result<void> { return {}; },
+           nn::MetricSink&) -> exstl::Result<void> { return {}; },
         std::move(hooks));
     CHECK(!run, "after_update failure propagates");
     CHECK(bundle->pipeline.update_count() == 1,

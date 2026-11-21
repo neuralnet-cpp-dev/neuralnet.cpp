@@ -77,12 +77,12 @@ public:
         if (norm2_) norm2_->set_precision_profile(sp.self);
     }
 
-    [[nodiscard]] Result<void> init_impl(ComputeEngine& engine) override
+    [[nodiscard]] exstl::Result<void> init_impl(ComputeEngine& engine) override
     {
-        NN_TRY(r1, self_attn_.init(engine));
-        if (norm1_) { NN_TRY(r, norm1_->init(engine)); }
-        NN_TRY(r2, ff_.init(engine));
-        if (norm2_) { NN_TRY(r, norm2_->init(engine)); }
+        EX_TRY(r1, self_attn_.init(engine));
+        if (norm1_) { EX_TRY(r, norm1_->init(engine)); }
+        EX_TRY(r2, ff_.init(engine));
+        if (norm2_) { EX_TRY(r, norm2_->init(engine)); }
         return {};
     }
 
@@ -118,7 +118,7 @@ public:
     // GPTBlock 可作为“重计算单元”：从保存的块输入重算 forward 重建缓存
     [[nodiscard]] bool recompute_supported() const override { return true; }
 
-    [[nodiscard]] Result<Tensor> forward_recompute(const Tensor& saved_input) override
+    [[nodiscard]] exstl::Result<Tensor> forward_recompute(const Tensor& saved_input) override
     {
         // 临时关闭本块及其子层的 checkpoint 模式，使 forward 重建缓存
         set_checkpoint_mode(false);
@@ -157,10 +157,10 @@ public:
 
     // 导出/导入：委托给通用 ActivationOffloader（见 compute_layer_base.hpp）。
     // 参与 offload 的缓存集合 = 本块 activation_cache()。
-    [[nodiscard]] Result<void> export_activations(ComputeEngine& engine)
+    [[nodiscard]] exstl::Result<void> export_activations(ComputeEngine& engine)
     { return offloader_.export_activations(engine, activation_cache()); }
 
-    [[nodiscard]] Result<void> import_activations(ComputeEngine& engine)
+    [[nodiscard]] exstl::Result<void> import_activations(ComputeEngine& engine)
     { return offloader_.import_activations(engine); }
 
     // 实际 slab 字节数（诊断用；未创建时 0）
@@ -170,22 +170,22 @@ public:
     // 新一轮 forward 入口：上一轮导出未被 backward 消费（推理/评估）时作废
     void discard_offloaded_activations() noexcept { offloader_.discard(); }
 
-    [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
+    [[nodiscard]] exstl::Result<Tensor> forward(const Tensor& input) override
     {
         ComputeEngine& engine = engine_ref();
         // 残差分支 1（Pre-Norm + 自注意力），与 TransformerEncoderLayer/RAPTBlock 同骨架
-        NN_TRY(r2, prenorm_residual_forward_(engine, input, *norm1_, self_attn_, p_.compute));
+        EX_TRY(r2, prenorm_residual_forward_(engine, input, *norm1_, self_attn_, p_.compute));
         Tensor res2 = std::move(*r2);
         if (!checkpoint_mode_) residual2_cache_ = res2;
         // 残差分支 2（Pre-Norm + FFN）
         return prenorm_residual_forward_(engine, res2, *norm2_, ff_, p_.compute);
     }
 
-    [[nodiscard]] Result<Tensor> backward(const Tensor& grad_output) override
+    [[nodiscard]] exstl::Result<Tensor> backward(const Tensor& grad_output) override
     {
         ComputeEngine& engine = engine_ref();
         // activation offload：从 host 恢复激活再反向（替代重计算）
-        if (offloader_.offloaded()) { NN_TRY(im, import_activations(engine)); }
+        if (offloader_.offloaded()) { EX_TRY(im, import_activations(engine)); }
 
         // 两处残差分流 + 子层正反向（与 TransformerEncoderLayer / RAPTBlock 同一骨架）
         return prenorm_residual_backward_(engine, grad_output, *norm1_, self_attn_, *norm2_, ff_,
@@ -198,20 +198,20 @@ public:
     //   x = x + FFN(LN₂(x))
     // 输入: x_new (d_model, 1)
     // 输出: (d_model, 1)
-    [[nodiscard]] Result<Tensor> forward_step(ComputeEngine& engine, const Tensor& x_new,
+    [[nodiscard]] exstl::Result<Tensor> forward_step(ComputeEngine& engine, const Tensor& x_new,
                                               Tensor& k_cache, Tensor& v_cache, std::size_t cur_len)
     {
-        NN_TRY(n1, norm1_->forward(x_new));
+        EX_TRY(n1, norm1_->forward(x_new));
 
-        NN_TRY(a, self_attn_.forward_step(engine, *n1, k_cache, v_cache, cur_len));
+        EX_TRY(a, self_attn_.forward_step(engine, *n1, k_cache, v_cache, cur_len));
 
         auto r2 = dsl::compute(engine, dsl::leaf(x_new) + dsl::leaf(*a), x_new.rows(), x_new.cols(),
                                p_.compute);
-        NN_TRY_CHECK(r2);
+        EX_TRY_CHECK(r2);
 
-        NN_TRY(n2, norm2_->forward(*r2));
+        EX_TRY(n2, norm2_->forward(*r2));
 
-        NN_TRY(f, ff_.forward(*n2));
+        EX_TRY(f, ff_.forward(*n2));
 
         return dsl::compute(engine, dsl::leaf(*r2) + dsl::leaf(*f), r2->rows(), r2->cols(),
                             p_.compute);
@@ -289,7 +289,7 @@ private:
     // 输出精度取 p_.stable —— 与独立 head 的 head_prof.compute = stable 同款
     // 理由（docs 21 §9.2：logits 是最大张量、被 loss 链多次读取，留 f16 会物化
     // 多份 f32 副本 → OOM）。
-    [[nodiscard]] Result<Tensor> head_forward_(ComputeEngine& engine, const Tensor& x)
+    [[nodiscard]] exstl::Result<Tensor> head_forward_(ComputeEngine& engine, const Tensor& x)
     {
         if (!tie_embeddings_) return lm_head_->forward(x);
         return dsl::compute(engine, dsl::matmul(token_emb_, x, /*transA=*/false, /*transB=*/false),
@@ -385,23 +385,23 @@ public:
         if (pos_encoder_) pos_encoder_->set_precision_profile(sp.self);
     }
 
-    [[nodiscard]] Result<void> init_impl(ComputeEngine& engine) override
+    [[nodiscard]] exstl::Result<void> init_impl(ComputeEngine& engine) override
     {
         // 初始化 token_emb_——M2 声明式：N(0, 0.02) 层算参数、引擎填数
         constexpr Scalar emb_init_std = 0.02;
         token_emb_ = engine.create_tensor(vocab_size_, d_model_, p_.param,
                                           InitSpec::normal(0, emb_init_std, kInitSeed));
-        if (!token_emb_.valid()) NN_FAIL("GPTModel: token_emb 初始化失败");
+        if (!token_emb_.valid()) EX_FAIL("GPTModel: token_emb 初始化失败");
         grad_token_emb_ = engine.create_tensor(vocab_size_, d_model_, p_.param, InitSpec::zero());
-        if (!grad_token_emb_.valid()) NN_FAIL("GPTModel: token_emb 梯度缓冲初始化失败");
+        if (!grad_token_emb_.valid()) EX_FAIL("GPTModel: token_emb 梯度缓冲初始化失败");
         // 初始化子层
-        if (pos_encoder_) { NN_TRY(r, pos_encoder_->init(engine)); }
+        if (pos_encoder_) { EX_TRY(r, pos_encoder_->init(engine)); }
         for (auto& block : blocks_)
         {
-            NN_TRY(r, block.init(engine));
+            EX_TRY(r, block.init(engine));
         }
-        if (ln_f_) { NN_TRY(r, ln_f_->init(engine)); }
-        if (!tie_embeddings_) { NN_TRY(r, lm_head_->init(engine)); }
+        if (ln_f_) { EX_TRY(r, ln_f_->init(engine)); }
+        if (!tie_embeddings_) { EX_TRY(r, lm_head_->init(engine)); }
         return {};
     }
 
@@ -457,7 +457,7 @@ public:
         doc_ids_.assign(ids.begin(), ids.end());
     }
 
-    [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
+    [[nodiscard]] exstl::Result<Tensor> forward(const Tensor& input) override
     {
         ComputeEngine& engine = engine_ref();
         // 新一轮 forward：上一轮 offload 的激活若未被 backward 消费（推理/评估
@@ -473,23 +473,23 @@ public:
         // 假定扁平列为 batch-major（b*seq + t）。因此先把输入 (seq, batch) 转置为
         // (batch, seq)，使 gather_rows 的 flat 序即为 batch-major：i = b*seq + t。
         auto input_T = engine.transpose(input);   // (batch, seq)，flat 索引 = b*seq+t
-        NN_TRY_CHECK(input_T);
+        EX_TRY_CHECK(input_T);
 
         // gather_rows(token_emb_, input_T) → (batch*seq, d_model)
         //   row i = token_emb[input_T[i]], i 是 batch-major 索引 b*seq+t
-        NN_TRY(all_emb, engine.gather_rows(token_emb_, *input_T));
+        EX_TRY(all_emb, engine.gather_rows(token_emb_, *input_T));
 
         // ── 2. 保存 token IDs 的 Tensor 拷贝（供 backward 的 scatter_add_rows） ──
         // 用 batch-major 序的 input_T，使 scatter 行号与 grad_T（transpose(grad_x)）对齐。
         // 全程 GPU：clone 在 GPU 内执行，无 PCIe 传输
-        NN_TRY(st_t, engine.clone(*input_T));
+        EX_TRY(st_t, engine.clone(*input_T));
         stored_tokens_tensor_ = std::move(*st_t);
 
         // ── 3. 构造 x: (d_model, batch*seq)（batch-major 列序） ──
-        NN_TRY(all_T, engine.transpose(*all_emb));
+        EX_TRY(all_T, engine.transpose(*all_emb));
 
         // ── 3. 施加位置编码（Learned/Sinusoidal 相加；ALiBi/RoPE 为 no-op） ──
-        NN_TRY(x_result, pos_encoder_->apply(engine, *all_T, batch_size_, seq_len));
+        EX_TRY(x_result, pos_encoder_->apply(engine, *all_T, batch_size_, seq_len));
         // ── 4. 通过 Transformer 块（全批量化，无 per-sample 循环） ──
         Tensor x = std::move(*x_result);
         checkpoint_inputs_.clear();
@@ -503,7 +503,7 @@ public:
             // 该块及其子层以 checkpoint 模式运行（不驻留中间激活）
             if (ckpt && (bi % checkpoint_every_ == 0))
             {
-                NN_TRY(save, engine.clone(x));
+                EX_TRY(save, engine.clone(x));
                 checkpoint_inputs_.push_back(std::move(*save));
                 blocks_[bi].set_checkpoint_mode(true);
             }
@@ -511,7 +511,7 @@ public:
             {
                 blocks_[bi].set_checkpoint_mode(false);
             }
-            NN_TRY(r, blocks_[bi].forward(x));
+            EX_TRY(r, blocks_[bi].forward(x));
             x = std::move(*r);
             // activation offload：forward 后把本块内部激活搬 host-visible，释放 GPU 显存。
             // 混合模式（offload + checkpoint 共存）：checkpoint 块 forward 不驻留激活
@@ -519,30 +519,30 @@ public:
             // 空 slab 而失败）；非 checkpoint 块才导出。
             if (activation_offload_ && !blocks_[bi].checkpoint_mode())
             {
-                NN_TRY(ex, blocks_[bi].export_activations(engine));
+                EX_TRY(ex, blocks_[bi].export_activations(engine));
             }
             // 按间隔 flush，将大录制拆分为多个小提交（防 TDR）
             if (flush_interval_ > 0 && (bi + 1) % flush_interval_ == 0 && bi + 1 < blocks_.size())
             {
-                NN_TRY(fr, engine.flush_batch());
+                EX_TRY(fr, engine.flush_batch());
             }
         }
 
         // ── 5. 最终 LayerNorm/RMSNorm ──
-        NN_TRY(ln, ln_f_->forward(x));
+        EX_TRY(ln, ln_f_->forward(x));
         x = std::move(*ln);
 
         // ── 6. LM Head → (vocab_size, seq*batch) batch-major ──
         // tied：缓存 head 输入（backward 求 dW_emb 用），再走 head_forward_
         if (tie_embeddings_)
         {
-            NN_TRY(hc, engine.clone(x));
+            EX_TRY(hc, engine.clone(x));
             head_input_cache_ = std::move(*hc);
         }
         return head_forward_(engine, x);
     }
 
-    [[nodiscard]] Result<Tensor> backward(const Tensor& grad_output) override
+    [[nodiscard]] exstl::Result<Tensor> backward(const Tensor& grad_output) override
     {
         ComputeEngine& engine = engine_ref();
         const std::size_t seq_len = seq_len_;
@@ -562,7 +562,7 @@ public:
             auto dx = dsl::compute(
                 engine, dsl::matmul(token_emb_, grad_output, /*transA=*/true, /*transB=*/false),
                 d_model_, grad_output.cols(), p_.stable);
-            NN_TRY_CHECK(dx);
+            EX_TRY_CHECK(dx);
             grad_x = std::move(*dx);
             // dW_emb += g·xᵀ —— 与第 5 步的 scatter_add_rows **累加到同一张
             // grad_token_emb_**（token_emb_ 同时充当输入嵌入与输出权重）。
@@ -572,16 +572,16 @@ public:
                                       dsl::matmul(grad_output, head_input_cache_, /*transA=*/false,
                                                   /*transB=*/true),
                                   grad_token_emb_);
-            NN_TRY_CHECK(dw);
+            EX_TRY_CHECK(dw);
         }
         else
         {
-            NN_TRY(b_lm, lm_head_->backward(grad_output));
+            EX_TRY(b_lm, lm_head_->backward(grad_output));
             grad_x = std::move(*b_lm);
         }
 
         // ── 2. LayerNorm/RMSNorm 反向 ──
-        NN_TRY(b_ln, ln_f_->backward(grad_x));
+        EX_TRY(b_ln, ln_f_->backward(grad_x));
         grad_x = std::move(*b_ln);
 
         // ── 3. 逐块反向（全批量化） ──
@@ -596,11 +596,11 @@ public:
                 {
                     const std::size_t seg = idx / checkpoint_every_;
                     // RV-01：越界索引 checkpoint_inputs_[seg] → 无条件终止
-                    NN_ASSERT_ALWAYS(seg < checkpoint_inputs_.size(),
+                    EX_ASSERT_ALWAYS(seg < checkpoint_inputs_.size(),
                                      "GPTModel backward: checkpoint input missing");
-                    NN_TRY(cr, blocks_[idx].forward_recompute(checkpoint_inputs_[seg]));
+                    EX_TRY(cr, blocks_[idx].forward_recompute(checkpoint_inputs_[seg]));
                 }
-                NN_TRY(br, blocks_[idx].backward(grad_x));
+                EX_TRY(br, blocks_[idx].backward(grad_x));
                 grad_x = std::move(*br);
                 // 显存：backward 后**立即释放该块已消费的激活缓存**——否则每块
                 // 激活会驻留到整个 backward 结束（探针实测为 backward 段峰值
@@ -609,7 +609,7 @@ public:
                 blocks_[idx].clear_cache();
                 if (flush_interval_ > 0 && (bi + 1) % flush_interval_ == 0 && bi + 1 < n)
                 {
-                    NN_TRY(fr, engine.flush_batch());
+                    EX_TRY(fr, engine.flush_batch());
                 }
             }
         }
@@ -620,18 +620,18 @@ public:
         // ── 4. 转置 grad_x + pos_grad GPU 计算 ──
         //   grad_x: (d_model, batch*seq)（batch-major 列序）
         //   grad_T = transpose(grad_x) → (total, d_model) — 用于 scatter_add_rows
-        NN_TRY(grad_T, engine.transpose(grad_x));
+        EX_TRY(grad_T, engine.transpose(grad_x));
 
         // 位置编码反向（Learned 累计 grad_pos_emb_；Sinusoidal/ALiBi/RoPE no-op）
-        NN_TRY(pr, pos_encoder_->backward(engine, *grad_T, batch_size_, seq_len_));
+        EX_TRY(pr, pos_encoder_->backward(engine, *grad_T, batch_size_, seq_len_));
 
         // ── 5. scatter_add_rows: grad_token_emb_[tokens] += grad_T ──
-        NN_TRY(sr, engine.scatter_add_rows(grad_token_emb_, stored_tokens_tensor_, *grad_T));
+        EX_TRY(sr, engine.scatter_add_rows(grad_token_emb_, stored_tokens_tensor_, *grad_T));
 
         // grad_input: token IDs 无梯度，返回零张量（仅用于接口一致性）
         Tensor grad_input =
             engine.create_tensor(seq_len, batch_size_, Precision::F32, InitSpec::zero());
-        if (!grad_input.valid()) NN_FAIL("GPT token_emb backward: 梯度张量分配失败");
+        if (!grad_input.valid()) EX_FAIL("GPT token_emb backward: 梯度张量分配失败");
         return grad_input;
     }
 
@@ -690,19 +690,19 @@ public:
     // 流程: token_emb[token] [+ pos_emb[pos]] → N × GPTBlock.forward_step
     //       → ln_f → lm_head → (vocab_size, 1)
     // 每层的 KV cache 由调用方维护，forward_step 只负责写入和计算。
-    [[nodiscard]] Result<Tensor> forward_step(ComputeEngine& engine, std::size_t token_id,
+    [[nodiscard]] exstl::Result<Tensor> forward_step(ComputeEngine& engine, std::size_t token_id,
                                               std::size_t pos, std::vector<Tensor>& k_caches,
                                               std::vector<Tensor>& v_caches, std::size_t cur_len)
     {
         // 1. token embedding 查表 → (1, d_model) → transpose → (d_model, 1)
         std::vector<Scalar> id_v(1);                  // 宿主桥（17 §3 D11）
         id_v[0] = static_cast<Scalar>(token_id);
-        NN_TRY(id_t, nn::upload_span(engine, 1, 1, Precision::F32, std::span(id_v)));
-        NN_TRY(emb, engine.gather_rows(token_emb_, *id_t));
-        NN_TRY(x_new, engine.transpose(*emb));
+        EX_TRY(id_t, nn::upload_span(engine, 1, 1, Precision::F32, std::span(id_v)));
+        EX_TRY(emb, engine.gather_rows(token_emb_, *id_t));
+        EX_TRY(x_new, engine.transpose(*emb));
 
         // 2. 位置编码（Learned/Sinusoidal 相加；ALiBi/RoPE no-op）
-        NN_TRY(x_wp, pos_encoder_->apply_step(engine, *x_new, pos));
+        EX_TRY(x_wp, pos_encoder_->apply_step(engine, *x_new, pos));
         x_new = std::move(*x_wp);
 
         // 3. 逐块增量前向
@@ -710,17 +710,17 @@ public:
         for (std::size_t i = 0; i < blocks_.size(); ++i)
         {
             auto r = blocks_[i].forward_step(engine, x, k_caches[i], v_caches[i], cur_len);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
             x = std::move(*r);
             // 按 flush_interval 拆分提交（防 TDR）
             if (flush_interval_ > 0 && (i + 1) % flush_interval_ == 0 && i + 1 < blocks_.size())
             {
-                NN_TRY(fr, engine.flush_batch());
+                EX_TRY(fr, engine.flush_batch());
             }
         }
 
         // 4. 最终 LayerNorm + LM Head → (vocab_size, 1)
-        NN_TRY(ln, ln_f_->forward(x));
+        EX_TRY(ln, ln_f_->forward(x));
         return head_forward_(engine, *ln);
     }
 
@@ -737,7 +737,7 @@ public:
     // 采样配置版（P0-5）：temperature / top-k / top-p / 重复惩罚 / 种子。
     // `cfg.has_seed = true` 时用 `cfg.seed` 播种 ⇒ 同 prompt + 同 seed 输出
     // 可复现（采样器只消耗一次 dist(rng)，见 sample_next_token_ 的注释）。
-    [[nodiscard]] Result<std::vector<std::size_t>>
+    [[nodiscard]] exstl::Result<std::vector<std::size_t>>
     generate(ComputeEngine& engine, const std::vector<std::size_t>& prompt,
              std::size_t max_new_tokens, const SamplingConfig& cfg,
              std::size_t eos_token_id = static_cast<std::size_t>(-1),
@@ -776,26 +776,26 @@ public:
         // 整段包进单次 begin_batch/end_batch：GPU 下避免 O(seq) 次独立提交
         // （铁律 6）。forward_step 为纯 device-resident（不触发 host 同步），
         // 且内部按 flush_interval_ 调用 flush_batch 防 TDR。
-        auto fill_cache_ = [&](std::size_t start) -> Result<void>
+        auto fill_cache_ = [&](std::size_t start) -> exstl::Result<void>
         {
-            NN_TRY(br, engine.begin_batch());
+            EX_TRY(br, engine.begin_batch());
             for (std::size_t i = start; i < context.size(); ++i)
             {
                 auto r = forward_step(engine, context[i], cur_len, k_caches, v_caches, cur_len);
                 if (!r)
                 {
                     (void)engine.end_batch();  // 出错也收尾，避免录制状态泄漏
-                    NN_TRY_CHECK(r);
+                    EX_TRY_CHECK(r);
                 }
                 last_logits_t = *r;
                 ++cur_len;
             }
-            NN_TRY(er, engine.end_batch());
+            EX_TRY(er, engine.end_batch());
             return {};
         };
 
         {
-            NN_TRY(r, fill_cache_(start_init));
+            EX_TRY(r, fill_cache_(start_init));
         }
 
         for (std::size_t step = 0; step < max_new_tokens; ++step)
@@ -805,21 +805,21 @@ public:
             {
                 for (auto& kc : k_caches)
                 {
-                    NN_TRY(r, engine.zero(kc));
+                    EX_TRY(r, engine.zero(kc));
                 }
                 for (auto& vc : v_caches)
                 {
-                    NN_TRY(r, engine.zero(vc));
+                    EX_TRY(r, engine.zero(vc));
                 }
                 cur_len = 0;
                 const std::size_t keep = seq_len_ - 1;
                 const std::size_t start_new = (context.size() > keep) ? (context.size() - keep) : 0;
-                NN_TRY(r, fill_cache_(start_new));
+                EX_TRY(r, fill_cache_(start_new));
             }
 
             // Sample from last_logits_t (from prefill or previous step)
             auto logits_v = nn::download_vector(engine, last_logits_t);  // 宿主桥
-            NN_TRY_CHECK(logits_v);
+            EX_TRY_CHECK(logits_v);
 
             std::vector<Scalar> last_logits(vocab_size_);
             for (std::size_t v = 0; v < vocab_size_; ++v)
@@ -837,13 +837,13 @@ public:
             generated.push_back(next_token);
 
             // Run forward_step for next_token to write KV cache and get new logits
-            NN_TRY(br, engine.begin_batch());
+            EX_TRY(br, engine.begin_batch());
 
             auto logits_res =
                 forward_step(engine, next_token, cur_len, k_caches, v_caches, cur_len);
-            NN_TRY_CHECK(logits_res);
+            EX_TRY_CHECK(logits_res);
 
-            NN_TRY(er, engine.end_batch());
+            EX_TRY(er, engine.end_batch());
 
             last_logits_t = std::move(*logits_res);
             ++cur_len;
@@ -852,7 +852,7 @@ public:
     }
 
     // 旧签名（纯 temperature 采样）：语义 = SamplingConfig 全默认
-    [[nodiscard]] Result<std::vector<std::size_t>>
+    [[nodiscard]] exstl::Result<std::vector<std::size_t>>
     generate(ComputeEngine& engine, const std::vector<std::size_t>& prompt,
              std::size_t max_new_tokens, Scalar temperature = 1.0,
              std::size_t eos_token_id = static_cast<std::size_t>(-1),

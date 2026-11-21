@@ -15,9 +15,9 @@
 // 按“micro 均值的均值”训练。
 //
 // 推荐用法：
-//     auto session = NN_UNWRAP(nn::TrainingSession::create(std::move(model), cfg));
+//     auto session = EX_UNWRAP(nn::TrainingSession::create(std::move(model), cfg));
 //     for (each micro_batch) {
-//         auto report = NN_UNWRAP(session.train_step(
+//         auto report = EX_UNWRAP(session.train_step(
 //             micro_batch, opts,
 //             [&](nn::Model& model, nn::ComputeEngine& engine, const Batch& batch) {
 //                 ... forward + loss + loss.backward() ...
@@ -36,7 +36,7 @@
 
 #include "compute_engine.hpp"
 #include "compute_optimizer.hpp"
-#include <neuralnet.cpp/core_errors.hpp>
+#include <exstl/errors.hpp>
 #include "model_container.hpp"
 #include "model_serialization.hpp"   // save_checkpoint/resume（issue #37）
 #include "train_state.hpp"           // TrainState / verify_resume（issue #37）
@@ -110,9 +110,9 @@ struct TrainingStepOptions
 
     // backward 已结束、参数尚未更新。返回 true = 中止本次 update（梯度清零，
     // report.aborted = true）；返回错误 = 传播错误并将累积标记为无效。
-    std::function<Result<bool>()> before_update;
+    std::function<exstl::Result<bool>()> before_update;
     // optimizer.step 已成功、zero_grad 之前。适合梯度统计等诊断。
-    std::function<Result<void>()> after_update;
+    std::function<exstl::Result<void>()> after_update;
 };
 
 struct TrainingStepReport
@@ -128,19 +128,19 @@ struct TrainingStepReport
 class TrainingSession
 {
 public:
-    [[nodiscard]] static Result<TrainingSession> create(Model model, TrainingConfig cfg = {})
+    [[nodiscard]] static exstl::Result<TrainingSession> create(Model model, TrainingConfig cfg = {})
     {
         if (!model.engine_bound())
-            NN_FAIL("TrainingSession::create: Model 未绑定引擎"
+            EX_FAIL("TrainingSession::create: Model 未绑定引擎"
                     "（请用 Model(engine) / build_*_model 构建）");
         if (cfg.grad_accum_steps == 0)
-            NN_FAIL("TrainingSession::create: grad_accum_steps 必须 > 0");
+            EX_FAIL("TrainingSession::create: grad_accum_steps 必须 > 0");
 
         if (cfg.checkpoint_every > 0) model.set_checkpoint_every(cfg.checkpoint_every);
         if (cfg.activation_offload)
         {
             if (model.engine().device() != Device::GPU)
-                NN_FAIL("TrainingSession::create: activation_offload 仅支持 GPU 引擎"
+                EX_FAIL("TrainingSession::create: activation_offload 仅支持 GPU 引擎"
                         "（CPU 的 offload 原语是 no-op，请改用 checkpoint_every）");
             model.set_activation_offload(true);
         }
@@ -150,7 +150,7 @@ public:
             create_optimizer(cfg.optimizer, engine, model.parameters(), model.param_gradients(),
                              cfg.lr, cfg.weight_decay, cfg.precision, cfg.beta1, cfg.beta2);
         if (!opt)
-            NN_FAIL("TrainingSession::create: 未知优化器 '" + cfg.optimizer +
+            EX_FAIL("TrainingSession::create: 未知优化器 '" + cfg.optimizer +
                     "'"
                     "（可用: sgd / sgd_momentum / adam / adamw / adamwquant / muon）");
 
@@ -177,14 +177,14 @@ public:
 
     // 核心单步入口。`step_fn` 只在本次调用期间使用，不进入 Session 状态。
     template <class Batch, class StepFn>
-    [[nodiscard]] Result<TrainingStepReport>
+    [[nodiscard]] exstl::Result<TrainingStepReport>
     train_step(const Batch& batch, TrainingStepOptions options, StepFn&& step_fn)
     {
         if (state_.accumulation_dirty)
-            NN_FAIL("TrainingSession::train_step: 上一次失败留下了不完整梯度；"
+            EX_FAIL("TrainingSession::train_step: 上一次失败留下了不完整梯度；"
                     "请先 reset_accumulation()");
         if (options.normalization_units == 0)
-            NN_FAIL("TrainingSession::train_step: normalization_units 必须 > 0");
+            EX_FAIL("TrainingSession::train_step: normalization_units 必须 > 0");
 
         const bool starts_update = state_.microsteps_in_update == 0;
         if (starts_update)
@@ -196,9 +196,9 @@ public:
         else
         {
             if (options.lr && *options.lr != state_.update_lr)
-                NN_FAIL("TrainingSession::train_step: 同一 update 的 lr 发生变化");
+                EX_FAIL("TrainingSession::train_step: 同一 update 的 lr 发生变化");
             if (options.normalization_units != state_.update_normalization_units)
-                NN_FAIL("TrainingSession::train_step: 同一 update 的 "
+                EX_FAIL("TrainingSession::train_step: 同一 update 的 "
                         "normalization_units 发生变化（" +
                         std::to_string(state_.update_normalization_units) + " vs " +
                         std::to_string(options.normalization_units) + "）");
@@ -214,13 +214,13 @@ public:
         if (!out_r)
         {
             state_.accumulation_dirty = true;
-            NN_FAIL(out_r.error());
+            EX_FAIL(out_r.error());
         }
         TrainingStepOutput out = std::move(*out_r);
         if (!out.grad.valid())
         {
             state_.accumulation_dirty = true;
-            NN_FAIL("TrainingSession::train_step: Step 回调返回了空梯度");
+            EX_FAIL("TrainingSession::train_step: Step 回调返回了空梯度");
         }
 
         if (out.gradient_units > 0 && options.normalization_units != out.gradient_units)
@@ -228,7 +228,7 @@ public:
             if (out.gradient_units > options.normalization_units)
             {
                 state_.accumulation_dirty = true;
-                NN_FAIL("TrainingSession::train_step: gradient_units 超出 "
+                EX_FAIL("TrainingSession::train_step: gradient_units 超出 "
                         "normalization_units（" +
                         std::to_string(out.gradient_units) + " > " +
                         std::to_string(options.normalization_units) + "）");
@@ -239,7 +239,7 @@ public:
             if (!sr)
             {
                 state_.accumulation_dirty = true;
-                NN_FAIL(sr.error());
+                EX_FAIL(sr.error());
             }
         }
 
@@ -247,7 +247,7 @@ public:
         if (!bwd)
         {
             state_.accumulation_dirty = true;
-            NN_FAIL(bwd.error());
+            EX_FAIL(bwd.error());
         }
 
         if (out.loss_sum.valid())
@@ -262,7 +262,7 @@ public:
                 if (!ar)
                 {
                     state_.accumulation_dirty = true;
-                    NN_FAIL(ar.error());
+                    EX_FAIL(ar.error());
                 }
             }
             state_.pending_loss_units += out.loss_units;
@@ -272,7 +272,7 @@ public:
         if (!end_r)
         {
             state_.accumulation_dirty = true;
-            NN_FAIL(end_r.error());
+            EX_FAIL(end_r.error());
         }
         ++state_.microsteps_in_update;
 
@@ -291,12 +291,12 @@ public:
             if (!stop_r)
             {
                 state_.accumulation_dirty = true;
-                NN_FAIL(stop_r.error());
+                EX_FAIL(stop_r.error());
             }
             if (*stop_r)
             {
                 auto rr = reset_accumulation();
-                NN_TRY_CHECK(rr);
+                EX_TRY_CHECK(rr);
                 TrainingStepReport report;
                 report.aborted = true;
                 report.optimizer_step = state_.optimizer_step;
@@ -305,7 +305,7 @@ public:
         }
 
         auto update_r = finish_update_(options);
-        NN_TRY_CHECK(update_r);
+        EX_TRY_CHECK(update_r);
 
         TrainingStepReport report;
         report.parameters_updated = true;
@@ -320,14 +320,14 @@ public:
     // 具名多输出版本：更新/累积/归一化/裁剪语义与 train_step 完全一致，唯一差别
     // 是 step_fn 返回 GradientBundle 并走 Model::backward_named。
     template <class Batch, class StepFn>
-    [[nodiscard]] Result<TrainingStepReport>
+    [[nodiscard]] exstl::Result<TrainingStepReport>
     train_named_step(const Batch& batch, TrainingStepOptions options, StepFn&& step_fn)
     {
         if (state_.accumulation_dirty)
-            NN_FAIL("TrainingSession::train_named_step: 上一次失败留下了不完整"
+            EX_FAIL("TrainingSession::train_named_step: 上一次失败留下了不完整"
                     "梯度；请先 reset_accumulation()");
         if (options.normalization_units == 0)
-            NN_FAIL("TrainingSession::train_named_step: normalization_units "
+            EX_FAIL("TrainingSession::train_named_step: normalization_units "
                     "必须 > 0");
 
         const bool starts_update = state_.microsteps_in_update == 0;
@@ -340,10 +340,10 @@ public:
         else
         {
             if (options.lr && *options.lr != state_.update_lr)
-                NN_FAIL("TrainingSession::train_named_step: 同一 update 的 lr "
+                EX_FAIL("TrainingSession::train_named_step: 同一 update 的 lr "
                         "发生变化");
             if (options.normalization_units != state_.update_normalization_units)
-                NN_FAIL("TrainingSession::train_named_step: 同一 update 的 "
+                EX_FAIL("TrainingSession::train_named_step: 同一 update 的 "
                         "normalization_units 发生变化（" +
                         std::to_string(state_.update_normalization_units) + " vs " +
                         std::to_string(options.normalization_units) + "）");
@@ -356,13 +356,13 @@ public:
         if (!out_r)
         {
             state_.accumulation_dirty = true;
-            NN_FAIL(out_r.error());
+            EX_FAIL(out_r.error());
         }
         NamedTrainingStepOutput out = std::move(*out_r);
         if (out.gradients.size() == 0)
         {
             state_.accumulation_dirty = true;
-            NN_FAIL("TrainingSession::train_named_step: Step 回调返回了空梯度包");
+            EX_FAIL("TrainingSession::train_named_step: Step 回调返回了空梯度包");
         }
 
         if (out.gradient_units > 0 && options.normalization_units != out.gradient_units)
@@ -370,7 +370,7 @@ public:
             if (out.gradient_units > options.normalization_units)
             {
                 state_.accumulation_dirty = true;
-                NN_FAIL("TrainingSession::train_named_step: gradient_units "
+                EX_FAIL("TrainingSession::train_named_step: gradient_units "
                         "超出 normalization_units（" +
                         std::to_string(out.gradient_units) + " > " +
                         std::to_string(options.normalization_units) + "）");
@@ -381,13 +381,13 @@ public:
             {
                 const FieldHandle handle{out.gradients.schema().fingerprint(), i};
                 auto grad_r = out.gradients.require(handle);
-                NN_TRY_CHECK(grad_r);
+                EX_TRY_CHECK(grad_r);
                 if (*grad_r == nullptr) continue;
                 auto sr = engine().scale_inplace(**grad_r, scale);
                 if (!sr)
                 {
                     state_.accumulation_dirty = true;
-                    NN_FAIL(sr.error());
+                    EX_FAIL(sr.error());
                 }
             }
         }
@@ -396,7 +396,7 @@ public:
         if (!bwd)
         {
             state_.accumulation_dirty = true;
-            NN_FAIL(bwd.error());
+            EX_FAIL(bwd.error());
         }
 
         if (out.loss_sum.valid())
@@ -411,7 +411,7 @@ public:
                 if (!ar)
                 {
                     state_.accumulation_dirty = true;
-                    NN_FAIL(ar.error());
+                    EX_FAIL(ar.error());
                 }
             }
             state_.pending_loss_units += out.loss_units;
@@ -421,7 +421,7 @@ public:
         if (!end_r)
         {
             state_.accumulation_dirty = true;
-            NN_FAIL(end_r.error());
+            EX_FAIL(end_r.error());
         }
         ++state_.microsteps_in_update;
 
@@ -440,12 +440,12 @@ public:
             if (!stop_r)
             {
                 state_.accumulation_dirty = true;
-                NN_FAIL(stop_r.error());
+                EX_FAIL(stop_r.error());
             }
             if (*stop_r)
             {
                 auto rr = reset_accumulation();
-                NN_TRY_CHECK(rr);
+                EX_TRY_CHECK(rr);
                 TrainingStepReport report;
                 report.aborted = true;
                 report.optimizer_step = state_.optimizer_step;
@@ -454,7 +454,7 @@ public:
         }
 
         auto update_r = finish_update_(options);
-        NN_TRY_CHECK(update_r);
+        EX_TRY_CHECK(update_r);
 
         TrainingStepReport report;
         report.parameters_updated = true;
@@ -467,7 +467,7 @@ public:
     }
 
     // 失败后显式丢弃不完整 update。正常情况下 train_step 在 update 边界自动清零。
-    [[nodiscard]] Result<void> reset_accumulation()
+    [[nodiscard]] exstl::Result<void> reset_accumulation()
     {
         clear_accumulation_state_();
         auto b = engine().begin_batch();
@@ -481,17 +481,17 @@ public:
     }
 
     // ── 低层逃生接口（自定义训练器/诊断）────────────────────────────────
-    [[nodiscard]] Result<void> zero_grad() { return model_.zero_grad(); }
+    [[nodiscard]] exstl::Result<void> zero_grad() { return model_.zero_grad(); }
 
-    [[nodiscard]] Result<void> clip_grads()
+    [[nodiscard]] exstl::Result<void> clip_grads()
     {
         if (cfg_.clip_grad_norm <= 0) return {};
         return opt_->clip_grad_norm(cfg_.clip_grad_norm);
     }
 
-    [[nodiscard]] Result<void> step()
+    [[nodiscard]] exstl::Result<void> step()
     {
-        NN_TRY(r, opt_->step());
+        EX_TRY(r, opt_->step());
         ++state_.optimizer_step;
         return {};
     }
@@ -530,7 +530,7 @@ public:
     // 状态 → 以 Checkpoint 角色落盘（blob 计数由 save_model 按实参回填，
     // 调用方不再需要手动同步）。`state` 的域字段（数据集身份等）由调用方
     // 预填；本入口不覆盖它们。
-    [[nodiscard]] Result<void> save_checkpoint(const std::string& path, const ModelSpec& spec,
+    [[nodiscard]] exstl::Result<void> save_checkpoint(const std::string& path, const ModelSpec& spec,
                                                TrainState& state,
                                                const std::string& tokenizer_data = {})
     {
@@ -539,7 +539,7 @@ public:
         state.counters.lr = static_cast<double>(state_.current_lr);
         state.optimizer_step = opt_->state_step();
         std::vector<Tensor> blobs;
-        NN_TRY(er, opt_->save_state(blobs));
+        EX_TRY(er, opt_->save_state(blobs));
         const CheckpointState ckpt{&state, blobs};
         return save_model(path, model_, spec, tokenizer_data, ModelRole::Checkpoint, ckpt);
     }
@@ -552,15 +552,15 @@ public:
     //
     // 顺序即契约（issue #43）：权重载入放在校验之后，Strict 校验失败时模型
     // 参数保持调用前原样，不存在"半提交"（参数已改写却返回错误）。
-    [[nodiscard]] Result<std::unique_ptr<TrainState>>
+    [[nodiscard]] exstl::Result<std::unique_ptr<TrainState>>
     resume(const std::string& path, const TrainState* current = nullptr,
            ResumePolicy policy = ResumePolicy::Strict)
     {
-        NN_TRY(loaded, load_train_state(engine(), path));
-        if (current != nullptr) { NN_TRY(vr, verify_resume(*loaded->state, *current, policy)); }
-        NN_TRY(lm, load_model(path, model_, nullptr, nullptr, WeightLoadIntent::Trainable));
+        EX_TRY(loaded, load_train_state(engine(), path));
+        if (current != nullptr) { EX_TRY(vr, verify_resume(*loaded->state, *current, policy)); }
+        EX_TRY(lm, load_model(path, model_, nullptr, nullptr, WeightLoadIntent::Trainable));
         opt_->set_state_step(loaded->state->optimizer_step);
-        NN_TRY(ls, opt_->load_state(loaded->optimizer_blobs));
+        EX_TRY(ls, opt_->load_state(loaded->optimizer_blobs));
         // 会话镜像 = 优化器权威 t（不是 TrainState.counters.global_step：后者是
         // "下一步位置"的绝对步号，与 Adam 的偏置修正计数不是同一量——issue #42）。
         state_.optimizer_step = opt_->state_step();
@@ -584,7 +584,7 @@ private:
             if (engine_ != nullptr) (void)engine_->end_batch();
         }
 
-        [[nodiscard]] Result<void> finish()
+        [[nodiscard]] exstl::Result<void> finish()
         {
             ComputeEngine* e = engine_;
             engine_ = nullptr;
@@ -596,7 +596,7 @@ private:
         ComputeEngine* engine_;
     };
 
-    [[nodiscard]] Result<void> finish_update_(const TrainingStepOptions& options)
+    [[nodiscard]] exstl::Result<void> finish_update_(const TrainingStepOptions& options)
     {
         auto b = engine().begin_batch();
         if (!b) return b;

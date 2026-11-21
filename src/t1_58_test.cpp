@@ -19,7 +19,7 @@
 // ───────────────────────────────────────────────────────────────────────────
 
 #include <memory>
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cstdio>
 #include <cstdlib>
 #include <bit>
@@ -101,7 +101,7 @@ void test_precision_set()
 }
 
 // ── [2] 能力校验反例（构建/初始化期报错）─────────────────────────────────
-nn::Result<void> add_linear_with_profile(nn::ComputeEngine& eng, const nn::PrecisionProfile& p)
+exstl::Result<void> add_linear_with_profile(nn::ComputeEngine& eng, const nn::PrecisionProfile& p)
 {
     nn::Model model(eng);
     model.set_default_precision_profile(p);
@@ -831,7 +831,7 @@ int main(int argc, char* argv[])
         nn::cli::EngineConfig ec;
         ec.use_gpu = true;
         auto eng_r = nn::cli::create_engine(ec);
-        NN_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
+        EX_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
         if (!test_training(**eng_r, "GPU")) g_failures++;
         if (!test_preset_t1_58(**eng_r, "GPU")) g_failures++;
     }

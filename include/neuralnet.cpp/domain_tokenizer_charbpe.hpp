@@ -25,7 +25,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include <neuralnet.cpp/core_errors.hpp>   // Result / NN_FAIL / NN_TRY
+#include <exstl/errors.hpp>   // Result / EX_FAIL / EX_TRY
 
 #include "domain_tokenizer_base.hpp"
 #include "domain_tokenizer_bpe.hpp"   // make_tokenizer 工厂需引用 BPETokenizer
@@ -105,9 +105,9 @@ public:
         return tok;
     }
 
-    Result<void> train(const std::string& text) { return train(text, Config{}); }
+    exstl::Result<void> train(const std::string& text) { return train(text, Config{}); }
 
-    Result<void> train(const std::string& text, const Config& config)
+    exstl::Result<void> train(const std::string& text, const Config& config)
     {
         auto log = config.log ? config.log : LogFn{[](std::string_view) { /* 静默 */ }};
 
@@ -183,7 +183,7 @@ public:
         // ── 0. 校验最小词表大小（4 特殊 + 256 ASCII 兜底） ──────
         if (config.vocab_size < MIN_VOCAB_SIZE)
         {
-            NN_FAIL("CharBPE vocab_size too small: minimum is " + std::to_string(MIN_VOCAB_SIZE) +
+            EX_FAIL("CharBPE vocab_size too small: minimum is " + std::to_string(MIN_VOCAB_SIZE) +
                     " (4 special + 256 ASCII fallback), got " + std::to_string(config.vocab_size));
         }
 
@@ -517,7 +517,7 @@ protected:
 
 public:
     // ── 旧 JSON 词表读取（模型 v5 内嵌词表 / dataset_convert vocab 用）──
-    [[nodiscard]] Result<void> load_from_string(const std::string& content) override
+    [[nodiscard]] exstl::Result<void> load_from_string(const std::string& content) override
     {
         vocab_.clear();
         merges_.clear();
@@ -622,64 +622,64 @@ load_tokenizer_from_string(const std::string& json_content)
 }
 
 // 从词表 kvrec（无文件标签）创建已加载的 tokenizer
-[[nodiscard]] inline Result<std::unique_ptr<Tokenizer>>
+[[nodiscard]] inline exstl::Result<std::unique_ptr<Tokenizer>>
 load_tokenizer_from_kvrec(const KeyValueRecord& rec)
 {
     std::string type_str;
-    if (!rec.get("type", type_str)) NN_FAIL("词表 kvrec 缺少 type 字段");
+    if (!rec.get("type", type_str)) EX_FAIL("词表 kvrec 缺少 type 字段");
     auto tok = make_tokenizer(type_str);
-    if (!tok) NN_FAIL("未知分词器类型: " + type_str);
-    NN_TRY_CHECK(tok->load_from_kvrec(rec));
+    if (!tok) EX_FAIL("未知分词器类型: " + type_str);
+    EX_TRY_CHECK(tok->load_from_kvrec(rec));
     return tok;
 }
 
 // 从词表文件镜像字节创建已加载的 tokenizer：
 // .nnvocab 字节（[label "NNVC"][词表 kvrec v2]）或旧 JSON 字符串，按内容嗅探。
 // 模型内嵌词表（v5 JSON / v6 kvrec）经此加载。
-[[nodiscard]] inline Result<std::unique_ptr<Tokenizer>>
+[[nodiscard]] inline exstl::Result<std::unique_ptr<Tokenizer>>
 load_tokenizer_from_bytes(const std::string& content)
 {
     if (content.size() >= 4 && content.compare(0, 4, NNVOCAB_MAGIC, 4) == 0)
     {
-        NN_TRY(rec, parse_nnvocab(content));
+        EX_TRY(rec, parse_nnvocab(content));
         return load_tokenizer_from_kvrec(*rec);
     }
     if (!content.empty() && content[0] == '{')
     {
         auto tok = load_tokenizer_from_string(content);
-        if (!tok) NN_FAIL("无法识别分词器类型（旧 JSON 词表）");
+        if (!tok) EX_FAIL("无法识别分词器类型（旧 JSON 词表）");
         return tok;
     }
-    NN_FAIL("无法识别的词表数据（既不是 .nnvocab 也不是 JSON 词表）");
+    EX_FAIL("无法识别的词表数据（既不是 .nnvocab 也不是 JSON 词表）");
 }
 
 // 模型内嵌词表按**模型版本**分派（模型格式的一部分，零破坏）：
 // v5 及以下 = 内嵌 JSON 字符串；v6 起 = .nnvocab 文件镜像字节（kvrec v2）。
 //（版本常量在 model_serialization.hpp 的 MODEL_VERSION；此处按字面 6 分派，
 //  避免分词器域反向依赖模型序列化头。）
-[[nodiscard]] inline Result<std::unique_ptr<Tokenizer>>
+[[nodiscard]] inline exstl::Result<std::unique_ptr<Tokenizer>>
 load_tokenizer_from_model_blob(const std::string& content, std::uint32_t model_version)
 {
-    if (content.empty()) NN_FAIL("模型未嵌入词表数据");
+    if (content.empty()) EX_FAIL("模型未嵌入词表数据");
     if (model_version >= 6)
     {
-        NN_TRY(rec, parse_nnvocab(content));
+        EX_TRY(rec, parse_nnvocab(content));
         return load_tokenizer_from_kvrec(*rec);
     }
     auto tok = load_tokenizer_from_string(content);
-    if (!tok) NN_FAIL("无法识别分词器类型（模型内嵌 JSON 词表）");
+    if (!tok) EX_FAIL("无法识别分词器类型（模型内嵌 JSON 词表）");
     return tok;
 }
 
 // 从 .nnvocab 词表文件创建已加载的 tokenizer。
 // 旧 JSON 词表不直读：报错并提示 `dataset_convert vocab`（裁决 #7）。
-[[nodiscard]] inline Result<std::unique_ptr<Tokenizer>>
+[[nodiscard]] inline exstl::Result<std::unique_ptr<Tokenizer>>
 load_tokenizer_from_file(const std::string& path)
 {
     std::ifstream ifs(path, std::ios::binary);
-    if (!ifs) NN_FAIL("Cannot read: " + path);
+    if (!ifs) EX_FAIL("Cannot read: " + path);
     std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-    NN_TRY(rec, parse_nnvocab(content));
+    EX_TRY(rec, parse_nnvocab(content));
     return load_tokenizer_from_kvrec(*rec);
 }
 

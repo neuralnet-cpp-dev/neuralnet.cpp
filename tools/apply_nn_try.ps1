@@ -1,5 +1,5 @@
 # apply_nn_try.ps1 — 把 L2 层里 `auto X = f(); if (!X) return std::unexpected(X.error());`
-# 形态机械收敛为 NN_TRY(X, f()); / NN_TRY_CHECK(X);
+# 形态机械收敛为 EX_TRY(X, f()); / EX_TRY_CHECK(X);
 # 只做**逐字等价**改写：模式不匹配的行一律不动。
 param(
     [switch]$DryRun

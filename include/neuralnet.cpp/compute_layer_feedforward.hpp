@@ -65,22 +65,22 @@ public:
         if (subln) sub_norm_ = make_norm_layer(d_ff, subln_norm_type);
     }
 
-    [[nodiscard]] Result<void> init_impl(ComputeEngine& engine) override
+    [[nodiscard]] exstl::Result<void> init_impl(ComputeEngine& engine) override
     {
-        NN_TRY(r1, fc1_->init(engine));
-        NN_TRY(r2, fc2_->init(engine));
+        EX_TRY(r1, fc1_->init(engine));
+        EX_TRY(r2, fc2_->init(engine));
         // M6 段 C：激活子层也是 Layer（engine 由 init 绑定），必须一并 init——
         // 否则 forward 里调 gelu_/swiglu_.forward() 会在 engine_ref() 处 fail-fast。
         {
-            NN_TRY(r, gelu_.init(engine));
+            EX_TRY(r, gelu_.init(engine));
         }
         {
-            NN_TRY(r, swiglu_.init(engine));
+            EX_TRY(r, swiglu_.init(engine));
         }
         {
-            NN_TRY(r, relu2glu_.init(engine));
+            EX_TRY(r, relu2glu_.init(engine));
         }
-        if (sub_norm_) { NN_TRY(r, sub_norm_->init(engine)); }
+        if (sub_norm_) { EX_TRY(r, sub_norm_->init(engine)); }
         return {};
     }
 
@@ -179,54 +179,54 @@ public:
         return r;
     }
 
-    [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
+    [[nodiscard]] exstl::Result<Tensor> forward(const Tensor& input) override
     {
-        NN_TRY(h1, fc1_->forward(input));
+        EX_TRY(h1, fc1_->forward(input));
         Tensor h2_out;
         if (use_swiglu_)
         {
-            NN_TRY(h2, swiglu_.forward(*h1));
+            EX_TRY(h2, swiglu_.forward(*h1));
             h2_out = std::move(*h2);
         }
         else if (use_relu2_)
         {
-            NN_TRY(h2, relu2glu_.forward(*h1));
+            EX_TRY(h2, relu2glu_.forward(*h1));
             h2_out = std::move(*h2);
         }
         else
         {
-            NN_TRY(h2, gelu_.forward(*h1));
+            EX_TRY(h2, gelu_.forward(*h1));
             h2_out = std::move(*h2);
         }
         // SubLN：中间激活归一化后再进输出投影（关 = 直通，逐位不变）
         if (sub_norm_)
         {
-            NN_TRY(sn, sub_norm_->forward(h2_out));
+            EX_TRY(sn, sub_norm_->forward(h2_out));
             h2_out = std::move(*sn);
         }
         return fc2_->forward(h2_out);
     }
 
-    [[nodiscard]] Result<Tensor> backward(const Tensor& grad_output) override
+    [[nodiscard]] exstl::Result<Tensor> backward(const Tensor& grad_output) override
     {
-        NN_TRY(b2, fc2_->backward(grad_output));
+        EX_TRY(b2, fc2_->backward(grad_output));
         Tensor g = std::move(*b2);
         if (sub_norm_)
         {
-            NN_TRY(gs, sub_norm_->backward(g));
+            EX_TRY(gs, sub_norm_->backward(g));
             g = std::move(*gs);
         }
         if (use_swiglu_)
         {
-            NN_TRY(bg, swiglu_.backward(g));
+            EX_TRY(bg, swiglu_.backward(g));
             return fc1_->backward(*bg);
         }
         if (use_relu2_)
         {
-            NN_TRY(bg, relu2glu_.backward(g));
+            EX_TRY(bg, relu2glu_.backward(g));
             return fc1_->backward(*bg);
         }
-        NN_TRY(bg, gelu_.backward(g));
+        EX_TRY(bg, gelu_.backward(g));
         return fc1_->backward(*bg);
     }
 };

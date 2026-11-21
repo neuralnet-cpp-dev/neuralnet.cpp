@@ -1,6 +1,6 @@
 # apply_fail_guarded.ps1 — 守卫 + Error 源：if (<cond>) return std::unexpected(Error{"..."});
-#   → if (<cond>) NN_FAIL("...");
-# NN_FAIL 含 return，接在 if() 后等价。cond 保留原样（!w_.valid() 等）。
+#   → if (<cond>) EX_FAIL("...");
+# EX_FAIL 含 return，接在 if() 后等价。cond 保留原样（!w_.valid() 等）。
 # 排除 core_assert.hpp（宏定义体，不能改）。
 param([switch]$DryRun)
 $ErrorActionPreference = 'Stop'
@@ -18,7 +18,7 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         $text = $re.Replace($orig, { param($m)
             $script:n++
             $cmt = $m.Groups[4].Value
-            $m.Groups[1].Value + 'NN_FAIL(' + $m.Groups[2].Value + ');' + $(if ($cmt) { ' ' + $cmt } else { '' })
+            $m.Groups[1].Value + 'EX_FAIL(' + $m.Groups[2].Value + ');' + $(if ($cmt) { ' ' + $cmt } else { '' })
         })
         if ($text -ne $orig) {
             $tf++
@@ -29,4 +29,4 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         }
     }
 }
-Write-Output ("TOTAL guarded-Error -> NN_FAIL = {0} files={1} (DryRun={2})" -f $tot, $tf, $DryRun)
+Write-Output ("TOTAL guarded-Error -> EX_FAIL = {0} files={1} (DryRun={2})" -f $tot, $tf, $DryRun)

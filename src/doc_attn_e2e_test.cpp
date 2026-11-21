@@ -18,7 +18,7 @@
 // 用法：doc_attn_test [--gpu]
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <cmath>
 #include <cstdlib>
@@ -128,14 +128,14 @@ int main(int argc, char* argv[])
     nn::cli::EngineConfig ecfg;
     ecfg.use_gpu = use_gpu;
     auto engine_res = nn::cli::create_engine(ecfg, std::cout);
-    NN_EXIT(engine_res, 1, "引擎创建失败: ");
+    EX_EXIT(engine_res, 1, "引擎创建失败: ");
     auto engine = std::move(*engine_res);
     ComputeEngine& eng = *engine;
 
     const std::size_t vocab = 64, d_model = 16, seq = 8, heads = 2, d_ff = 32, layers = 2;
     GPTModel model(vocab, d_model, seq, heads, d_ff, layers, PosEncodingType::Learned,
                    ActivationType::GeLU, NormType::LayerNorm);
-    NN_EXIT(model.init(eng), 1, "GPTModel init 失败: ");
+    EX_EXIT(model.init(eng), 1, "GPTModel init 失败: ");
 
     // batch=2（铁律 5：注意力测试必须覆盖 batch>1）：
     //   样本0 = 文档窗口（doc A 占 0..3、doc B 占 4..7）；

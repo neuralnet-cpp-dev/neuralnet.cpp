@@ -1,4 +1,4 @@
-// ───────────────────────────────────────────────────────────────────────────
+﻿// ───────────────────────────────────────────────────────────────────────────
 //  expr_fold_test.cpp — 分块状态归约（FoldSpec）CPU 语义对拍
 //
 //  覆盖（通用样例走共享构造 expr_fold.hpp、注意力样例走
@@ -37,6 +37,7 @@
 #include <vector>
 
 #include "test_common.hpp" // M1：upload/download（库外经引擎进出张量）
+#include <exstl/threadpool.hpp>
 import nn.engine;
 import nn.expr;
 import nn.layer;
@@ -795,7 +796,7 @@ int test_expr_fold()
             nn::expr::make_fold_softmax_denom(static_cast<std::uint32_t>(K));
         // 分片数 = min(线程池, rows/8)：池 <2 时门控虽开但 n_chunks=1（分支不可达）。
         // 打印实际分片数，避免"跑在单线程机上却误以为覆盖了并行"。
-        const std::size_t workers = nn::global_thread_pool().size();
+        const std::size_t workers = exstl::global_thread_pool().size();
         std::cout << "    行并行门控：线程池 " << workers << " 线程，rows=64 → "
                   << std::min(workers, std::size_t{8}) << " 片（rows*K=262144 ≥ 65536）\n";
         check_gate_parallel(rowsum, 64, "rowsum");

@@ -11,7 +11,7 @@
 #include <iterator>
 #include <string>
 
-#include <neuralnet.cpp/core_errors.hpp>
+#include <exstl/errors.hpp>
 #include "compute_engine.hpp"
 #include "model_container.hpp"
 #include "model_spec.hpp"
@@ -56,14 +56,14 @@ struct GptConfig
 // GPTModel 是一个单一 Layer（内含 TokenEmb+PosEmb+N×GPTBlock+LN+LM Head），
 // 作为 Model 的唯一层。engine 决定权重张量驻留设备。
 // cfg.pos_enc 控制位置编码：Learned(默认)/Sinusoidal/ALiBi
-[[nodiscard]] inline Result<Model> build_gpt_model(ComputeEngine& engine, const GptConfig& cfg)
+[[nodiscard]] inline exstl::Result<Model> build_gpt_model(ComputeEngine& engine, const GptConfig& cfg)
 {
     if (cfg.d_model == 0 || cfg.num_heads == 0 || cfg.seq_len == 0 || cfg.vocab_size == 0)
-        NN_FAIL("GPT model parameters must be positive");
-    if (cfg.d_ff == 0 || cfg.num_layers == 0) NN_FAIL("GPT d_ff and num_layers must be positive");
-    if (cfg.d_model % cfg.num_heads != 0) NN_FAIL("GPT d_model must be divisible by num_heads");
+        EX_FAIL("GPT model parameters must be positive");
+    if (cfg.d_ff == 0 || cfg.num_layers == 0) EX_FAIL("GPT d_ff and num_layers must be positive");
+    if (cfg.d_model % cfg.num_heads != 0) EX_FAIL("GPT d_model must be divisible by num_heads");
     if (cfg.n_head_kv != 0 && (cfg.n_head_kv > cfg.num_heads || cfg.num_heads % cfg.n_head_kv != 0))
-        NN_FAIL("GPT n_head_kv must be a divisor of num_heads (0 = MHA)");
+        EX_FAIL("GPT n_head_kv must be a divisor of num_heads (0 = MHA)");
     Model model(engine);
     {
         auto r =
@@ -71,13 +71,13 @@ struct GptConfig
                                 cfg.num_layers, cfg.pos_enc, cfg.activation, cfg.norm_type,
                                 cfg.precision, cfg.subln, cfg.n_head_kv, cfg.tie_embeddings,
                                 WeightQuant::None, cfg.inference_only);
-        NN_TRY_CHECK(r);
+        EX_TRY_CHECK(r);
     }
     return model;
 }
 
 // ── 构建 GPT 模型（位置参数版本，转发至 GptConfig 版本） ───────
-[[nodiscard]] inline Result<Model>
+[[nodiscard]] inline exstl::Result<Model>
 build_gpt_model(ComputeEngine& engine, std::size_t vocab_size = GPT_VOCAB_SIZE,
                 std::size_t d_model = GPT_D_MODEL, std::size_t seq_len = GPT_SEQ_LEN,
                 std::size_t num_heads = GPT_NUM_HEADS, std::size_t d_ff = GPT_D_FF,
@@ -99,14 +99,14 @@ build_gpt_model(ComputeEngine& engine, std::size_t vocab_size = GPT_VOCAB_SIZE,
 // 用于从二进制文件加载时自动还原架构。
 // 统一的 GPTModel 通过 spec.pos_encoding 区分 Learned/Sinusoidal/ALiBi 模式，
 // 因此无需为 ALiBi 单独提供构建函数。
-[[nodiscard]] inline Result<Model>
+[[nodiscard]] inline exstl::Result<Model>
 build_gpt_model_from_spec(ComputeEngine& engine, const ModelSpec& spec,
                           PrecisionProfile precision = PrecisionProfile{},
                           bool inference_only = false)
 {
     // 接受 GPT 类型（含 ALiBi/RoPE 变体；旧 ALiBi_GPT 数值 type 同归 GptSpec）
     const auto* g = spec.as<GptSpec>();
-    if (g == nullptr) NN_FAIL("Invalid ModelSpec type for GPT: expected GPT or ALiBi_GPT");
+    if (g == nullptr) EX_FAIL("Invalid ModelSpec type for GPT: expected GPT or ALiBi_GPT");
     // ── 三值（T1_58）权重由**规格**决定（权威来源，docs 21 §4.7/§4.8.3）──
     // 与 build_mnist_mlp_model 的加载路径同款：保存过的三值模型必须还原成
     // BitLinear（参数形状相同、语义不同），命令行传进来的 precision 会被规格覆盖。

@@ -1,4 +1,4 @@
-// ── model_spec_validation_test.cpp — ModelSpec 架构校验一致性测试 ──────────
+﻿// ── model_spec_validation_test.cpp — ModelSpec 架构校验一致性测试 ──────────
 //
 // 目的：验证 ModelSpec 架构校验逻辑（load_model 时文件头与模型自身规格比对）。
 //
@@ -19,6 +19,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <exstl/errors.hpp>
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -490,7 +491,7 @@ int run_test()
             { return "MyNet(hidden=" + std::to_string(hidden) + ")"; }
             void write_kv(nn::KeyValueRecord& kv) const override
             { kv.set("hidden", static_cast<std::uint64_t>(hidden)); }
-            [[nodiscard]] nn::Result<void> read_kv(const nn::KeyValueRecord& kv) override
+            [[nodiscard]] exstl::Result<void> read_kv(const nn::KeyValueRecord& kv) override
             {
                 std::uint64_t v = 0;
                 if (kv.get("hidden", v)) hidden = static_cast<std::size_t>(v);
@@ -506,7 +507,7 @@ int run_test()
         const std::string bytes = nn::detail::spec_to_kv(mine).serialize();
         auto kv = nn::KeyValueRecord::parse(bytes);
         expect(bool(kv), "自定义类型 spec kv 可解析", all);
-        auto back = kv ? nn::detail::spec_from_kv(*kv) : nn::Result<nn::ModelSpec>{};
+        auto back = kv ? nn::detail::spec_from_kv(*kv) : exstl::Result<nn::ModelSpec>{};
         expect(bool(back) && back->as<MyNetSpec>() != nullptr &&
                    back->as<MyNetSpec>()->hidden == 42,
                "自定义类型 save → peek 往返（经 ModelRegistry 构造）", all);

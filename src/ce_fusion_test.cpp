@@ -1,4 +1,4 @@
-// ───────────────────────────────────────────────────────────────────────────
+﻿// ───────────────────────────────────────────────────────────────────────────
 //  ce_fusion_test.cpp — 列式 softmax 融合表达式 + 稀疏交叉熵端到端
 //
 //  验证：
@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "test_common.hpp"
+#include <exstl/errors.hpp>
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -169,7 +170,7 @@ int run_case(nn::ComputeEngine& eng, const char* tag)
 
     int fail = 0;
 
-    const auto check = [&](const char* nm, nn::Result<nn::Tensor>&& r, const nn::Matrix& ref)
+    const auto check = [&](const char* nm, exstl::Result<nn::Tensor>&& r, const nn::Matrix& ref)
     {
         if (!r)
         {

@@ -14,7 +14,7 @@
 // 用法: batchnorm_test [--gpu] [--tol <f>]   （--gpu 不可用 → 77 = skip）
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <cmath>
 #include <cstdio>
@@ -122,10 +122,10 @@ bool matrices_equal(const Matrix& a, const Matrix& b)
 Scalar eval_loss(ComputeEngine& engine, nn::Layer& norm, const Tensor& x, const Tensor& go)
 {
     auto y = norm.forward(x);
-    NN_ASSERT_ALWAYS(y, "eval_loss: forward failed");
+    EX_ASSERT_ALWAYS(y, "eval_loss: forward failed");
     auto y_m = engine.to_matrix(*y);
     auto go_m = engine.to_matrix(go);
-    NN_ASSERT_ALWAYS(y_m && go_m, "eval_loss: to_matrix failed");
+    EX_ASSERT_ALWAYS(y_m && go_m, "eval_loss: to_matrix failed");
     return dot(*y_m, *go_m);
 }
 
@@ -628,13 +628,13 @@ int main(int argc, char* argv[])
         nn::cli::EngineConfig ec;
         ec.use_gpu = true;
         auto probe = nn::cli::create_engine(ec);
-        NN_EXIT(probe, 77, "GPU 不可用，跳过: ");
+        EX_EXIT(probe, 77, "GPU 不可用，跳过: ");
     }
 
     nn::cli::EngineConfig ecfg;
     ecfg.use_gpu = use_gpu;
     auto engine_res = nn::cli::create_engine(ecfg, std::cout);
-    NN_EXIT(engine_res, 1, "引擎创建失败: ");
+    EX_EXIT(engine_res, 1, "引擎创建失败: ");
     auto engine = std::move(*engine_res);
     ComputeEngine& eng = *engine;
 

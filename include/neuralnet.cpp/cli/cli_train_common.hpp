@@ -36,7 +36,7 @@
 #include <vector>
 
 #include "neuralnet.cpp/core_config.hpp"      // nn::Scalar
-#include "neuralnet.cpp/core_errors.hpp"  // nn::parse_number
+#include <exstl/errors.hpp>  // exstl::parse_number
 #include "neuralnet.cpp/cli/cli_gpu_option.hpp"
 
 namespace nn::cli
@@ -70,7 +70,7 @@ inline bool parse_train_common_args(int argc, char* argv[], int& i, TrainCommonA
 
     if (arg == "--epochs" && i + 1 < argc)
     {
-        auto v = nn::parse_number<int>(argv[++i]);
+        auto v = exstl::parse_number<int>(argv[++i]);
         if (!v)
         {
             std::cerr << "无效 --epochs: " << v.error().message << "\n";
@@ -86,7 +86,7 @@ inline bool parse_train_common_args(int argc, char* argv[], int& i, TrainCommonA
     }
     if (arg == "--lr" && i + 1 < argc)
     {
-        auto v = nn::parse_number<nn::Scalar>(argv[++i]);
+        auto v = exstl::parse_number<nn::Scalar>(argv[++i]);
         if (!v)
         {
             std::cerr << "无效 --lr: " << v.error().message << "\n";
@@ -97,7 +97,7 @@ inline bool parse_train_common_args(int argc, char* argv[], int& i, TrainCommonA
     }
     if (arg == "--batch-size" && i + 1 < argc)
     {
-        auto v = nn::parse_number<std::size_t>(argv[++i]);
+        auto v = exstl::parse_number<std::size_t>(argv[++i]);
         if (!v)
         {
             std::cerr << "无效 --batch-size: " << v.error().message << "\n";
@@ -125,7 +125,7 @@ inline bool parse_train_common_args(int argc, char* argv[], int& i, TrainCommonA
     }
     if (arg == "--weight-decay" && i + 1 < argc)
     {
-        auto v = nn::parse_number<nn::Scalar>(argv[++i]);
+        auto v = exstl::parse_number<nn::Scalar>(argv[++i]);
         if (!v)
         {
             std::cerr << "无效 --weight-decay: " << v.error().message << "\n";
@@ -136,7 +136,7 @@ inline bool parse_train_common_args(int argc, char* argv[], int& i, TrainCommonA
     }
     if (arg == "--min-lr" && i + 1 < argc)
     {
-        auto v = nn::parse_number<nn::Scalar>(argv[++i]);
+        auto v = exstl::parse_number<nn::Scalar>(argv[++i]);
         if (!v)
         {
             std::cerr << "无效 --min-lr: " << v.error().message << "\n";
@@ -147,7 +147,7 @@ inline bool parse_train_common_args(int argc, char* argv[], int& i, TrainCommonA
     }
     if (arg == "--warmup-epochs" && i + 1 < argc)
     {
-        auto v = nn::parse_number<int>(argv[++i]);
+        auto v = exstl::parse_number<int>(argv[++i]);
         if (!v)
         {
             std::cerr << "无效 --warmup-epochs: " << v.error().message << "\n";
@@ -164,7 +164,7 @@ inline bool parse_train_common_args(int argc, char* argv[], int& i, TrainCommonA
         cfg.lr_per_epoch.clear();
         while (std::getline(ss, token, ','))
         {
-            auto v = nn::parse_number<nn::Scalar>(token);
+            auto v = exstl::parse_number<nn::Scalar>(token);
             if (!v)
             {
                 std::cerr << "无效 --lr-per-epoch 值: " << v.error().message << "\n";

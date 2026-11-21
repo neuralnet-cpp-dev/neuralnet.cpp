@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-#include <neuralnet.cpp/core_errors.hpp>
+#include <exstl/errors.hpp>
 #include <neuralnet.cpp/precision.hpp>
 
 namespace nn
@@ -180,18 +180,18 @@ private:
         return h == 0 ? 1u : h;
     }
 
-    [[nodiscard]] Result<void> validate_handle_(const FieldHandle& handle,
+    [[nodiscard]] exstl::Result<void> validate_handle_(const FieldHandle& handle,
                                                 std::string_view operation) const
     {
-        if (!handle.valid()) NN_FAIL(std::string(operation) + ": 字段 handle 未初始化");
+        if (!handle.valid()) EX_FAIL(std::string(operation) + ": 字段 handle 未初始化");
         if (handle.schema_fingerprint != fingerprint_)
-            NN_FAIL(std::string(operation) +
+            EX_FAIL(std::string(operation) +
                     ": 字段 handle 属于另一个 schema（"
                     "handle=" +
                     std::to_string(handle.schema_fingerprint) +
                     "，schema=" + std::to_string(fingerprint_) + "；schema 名=" + name_ + "）");
         if (handle.index >= fields_.size())
-            NN_FAIL(std::string(operation) + ": 字段 handle 下标越界（" +
+            EX_FAIL(std::string(operation) + ": 字段 handle 下标越界（" +
                     std::to_string(handle.index) + " >= " + std::to_string(fields_.size()) +
                     "；schema 名=" + name_ + "）");
         return {};
@@ -205,21 +205,21 @@ public:
     TensorSchema& operator=(TensorSchema&&) noexcept = default;
     ~TensorSchema() = default;
 
-    [[nodiscard]] static Result<TensorSchema> create(std::string name,
+    [[nodiscard]] static exstl::Result<TensorSchema> create(std::string name,
                                                      std::vector<TensorFieldSpec> fields)
     {
-        if (name.empty()) NN_FAIL("TensorSchema::create: schema 名不能为空");
-        if (fields.empty()) NN_FAIL("TensorSchema::create: schema '" + name + "' 至少需要一个字段");
+        if (name.empty()) EX_FAIL("TensorSchema::create: schema 名不能为空");
+        if (fields.empty()) EX_FAIL("TensorSchema::create: schema '" + name + "' 至少需要一个字段");
 
         std::unordered_set<std::string_view> field_names;
         field_names.reserve(fields.size());
         for (std::size_t i = 0; i < fields.size(); ++i)
         {
             if (fields[i].name.empty())
-                NN_FAIL("TensorSchema::create: schema '" + name + "' 的第 " + std::to_string(i) +
+                EX_FAIL("TensorSchema::create: schema '" + name + "' 的第 " + std::to_string(i) +
                         " 个字段名为空");
             if (!field_names.insert(fields[i].name).second)
-                NN_FAIL("TensorSchema::create: schema '" + name + "' 含重复字段 '" +
+                EX_FAIL("TensorSchema::create: schema '" + name + "' 含重复字段 '" +
                         fields[i].name + "'");
         }
 
@@ -234,25 +234,25 @@ public:
     [[nodiscard]] bool empty() const noexcept { return fields_.empty(); }
     [[nodiscard]] const std::vector<TensorFieldSpec>& fields() const noexcept { return fields_; }
 
-    [[nodiscard]] Result<const TensorFieldSpec*> field(const FieldHandle& handle) const
+    [[nodiscard]] exstl::Result<const TensorFieldSpec*> field(const FieldHandle& handle) const
     {
-        NN_TRY_CHECK(validate_handle_(handle, "TensorSchema::field"));
+        EX_TRY_CHECK(validate_handle_(handle, "TensorSchema::field"));
         return &fields_[handle.index];
     }
 
     // setup/反序列化期使用；训练热路径应缓存返回的 handle。
-    [[nodiscard]] Result<FieldHandle> field(std::string_view field_name) const
+    [[nodiscard]] exstl::Result<FieldHandle> field(std::string_view field_name) const
     {
-        if (!valid()) NN_FAIL("TensorSchema::field: schema 未初始化");
+        if (!valid()) EX_FAIL("TensorSchema::field: schema 未初始化");
         for (std::size_t i = 0; i < fields_.size(); ++i)
         {
             if (fields_[i].name == field_name) return FieldHandle{fingerprint_, i};
         }
-        NN_FAIL("TensorSchema::field: schema '" + name_ + "' 不含字段 '" + std::string(field_name) +
+        EX_FAIL("TensorSchema::field: schema '" + name_ + "' 不含字段 '" + std::string(field_name) +
                 "'");
     }
 
-    [[nodiscard]] Result<FieldHandle> optional_field(std::string_view field_name) const
+    [[nodiscard]] exstl::Result<FieldHandle> optional_field(std::string_view field_name) const
     {
         if (!valid()) return FieldHandle{};
         for (std::size_t i = 0; i < fields_.size(); ++i)
@@ -262,7 +262,7 @@ public:
         return FieldHandle{};
     }
 
-    [[nodiscard]] Result<void> validate(const FieldHandle& handle) const
+    [[nodiscard]] exstl::Result<void> validate(const FieldHandle& handle) const
     { return validate_handle_(handle, "TensorSchema::validate"); }
 
     [[nodiscard]] bool operator==(const TensorSchema& other) const noexcept
@@ -308,9 +308,9 @@ inline void schema_put_u64(std::string& out, std::uint64_t v)
         out.push_back(static_cast<char>((v >> (i * 8)) & 0xFFu));
 }
 
-[[nodiscard]] inline Result<std::uint32_t> schema_take_u32(std::string_view& in)
+[[nodiscard]] inline exstl::Result<std::uint32_t> schema_take_u32(std::string_view& in)
 {
-    if (in.size() < 4) NN_FAIL("TensorSchema::decode: 截断（u32）");
+    if (in.size() < 4) EX_FAIL("TensorSchema::decode: 截断（u32）");
     std::uint32_t v = 0;
     for (unsigned i = 0; i < 4; ++i)
         v |= static_cast<std::uint32_t>(static_cast<unsigned char>(in[i])) << (i * 8);
@@ -318,9 +318,9 @@ inline void schema_put_u64(std::string& out, std::uint64_t v)
     return v;
 }
 
-[[nodiscard]] inline Result<std::uint64_t> schema_take_u64(std::string_view& in)
+[[nodiscard]] inline exstl::Result<std::uint64_t> schema_take_u64(std::string_view& in)
 {
-    if (in.size() < 8) NN_FAIL("TensorSchema::decode: 截断（u64）");
+    if (in.size() < 8) EX_FAIL("TensorSchema::decode: 截断（u64）");
     std::uint64_t v = 0;
     for (unsigned i = 0; i < 8; ++i)
         v |= static_cast<std::uint64_t>(static_cast<unsigned char>(in[i])) << (i * 8);
@@ -328,10 +328,10 @@ inline void schema_put_u64(std::string& out, std::uint64_t v)
     return v;
 }
 
-[[nodiscard]] inline Result<std::string> schema_take_string(std::string_view& in)
+[[nodiscard]] inline exstl::Result<std::string> schema_take_string(std::string_view& in)
 {
-    NN_TRY(n, schema_take_u32(in));
-    if (*n > in.size()) NN_FAIL("TensorSchema::decode: 字符串长度越界");
+    EX_TRY(n, schema_take_u32(in));
+    if (*n > in.size()) EX_FAIL("TensorSchema::decode: 字符串长度越界");
     std::string out(in.substr(0, *n));
     in.remove_prefix(*n);
     return out;
@@ -340,7 +340,7 @@ inline void schema_put_u64(std::string& out, std::uint64_t v)
 inline void schema_put_string(std::string& out, std::string_view s)
 {
     if (s.size() > std::numeric_limits<std::uint32_t>::max())
-        NN_UNWRAP(false, "TensorSchema::encode: 字符串过长");
+        EX_UNWRAP(false, "TensorSchema::encode: 字符串过长");
     schema_put_u32(out, static_cast<std::uint32_t>(s.size()));
     out.append(s);
 }
@@ -351,7 +351,7 @@ inline void schema_put_string(std::string& out, std::string_view s)
     std::string out("NNS1", 4);
     detail::schema_put_string(out, schema.name());
     if (schema.size() > std::numeric_limits<std::uint32_t>::max())
-        NN_UNWRAP(false, "TensorSchema::encode: 字段数过多");
+        EX_UNWRAP(false, "TensorSchema::encode: 字段数过多");
     detail::schema_put_u32(out, static_cast<std::uint32_t>(schema.size()));
     constexpr std::uint64_t no_axis = std::numeric_limits<std::uint64_t>::max();
     for (const TensorFieldSpec& f : schema.fields())
@@ -369,50 +369,50 @@ inline void schema_put_string(std::string& out, std::string_view s)
     return out;
 }
 
-[[nodiscard]] inline Result<TensorSchema> decode_tensor_schema(std::string_view bytes)
+[[nodiscard]] inline exstl::Result<TensorSchema> decode_tensor_schema(std::string_view bytes)
 {
     if (bytes.size() < 4 || bytes.substr(0, 4) != "NNS1")
-        NN_FAIL("TensorSchema::decode: 魔数不匹配");
+        EX_FAIL("TensorSchema::decode: 魔数不匹配");
     bytes.remove_prefix(4);
-    NN_TRY(name, detail::schema_take_string(bytes));
-    NN_TRY(count, detail::schema_take_u32(bytes));
+    EX_TRY(name, detail::schema_take_string(bytes));
+    EX_TRY(count, detail::schema_take_u32(bytes));
     if (*count > kMaxTensorSchemaFields)
-        NN_FAIL("TensorSchema::decode: 字段数超过上限 " + std::to_string(kMaxTensorSchemaFields));
+        EX_FAIL("TensorSchema::decode: 字段数超过上限 " + std::to_string(kMaxTensorSchemaFields));
     // 每个字段至少包含 name_len + rows + cols + 3 个 flags。
     constexpr std::size_t min_field_bytes = 4 + 8 + 8 + 3;
     if (*count > bytes.size() / min_field_bytes)
-        NN_FAIL("TensorSchema::decode: 字段数与负载长度不一致");
+        EX_FAIL("TensorSchema::decode: 字段数与负载长度不一致");
     std::vector<TensorFieldSpec> fields;
     fields.reserve(*count);
     constexpr std::uint64_t no_axis = std::numeric_limits<std::uint64_t>::max();
     for (std::uint32_t i = 0; i < *count; ++i)
     {
-        NN_TRY(field_name, detail::schema_take_string(bytes));
-        NN_TRY(rows, detail::schema_take_u64(bytes));
-        NN_TRY(cols, detail::schema_take_u64(bytes));
-        if (bytes.size() < 3) NN_FAIL("TensorSchema::decode: 截断（field flags）");
+        EX_TRY(field_name, detail::schema_take_string(bytes));
+        EX_TRY(rows, detail::schema_take_u64(bytes));
+        EX_TRY(cols, detail::schema_take_u64(bytes));
+        if (bytes.size() < 3) EX_FAIL("TensorSchema::decode: 截断（field flags）");
         const unsigned char required = static_cast<unsigned char>(bytes[0]);
         const unsigned char precision_tag = static_cast<unsigned char>(bytes[1]);
         const unsigned char placement = static_cast<unsigned char>(bytes[2]);
         bytes.remove_prefix(3);
-        if (required > 1) NN_FAIL("TensorSchema::decode: required 标志非法");
+        if (required > 1) EX_FAIL("TensorSchema::decode: required 标志非法");
         if (precision_tag > static_cast<unsigned char>(Precision::T1_58) + 1u)
-            NN_FAIL("TensorSchema::decode: precision 标志非法");
+            EX_FAIL("TensorSchema::decode: precision 标志非法");
         if (placement > static_cast<unsigned char>(TensorPlacement::GPU))
-            NN_FAIL("TensorSchema::decode: placement 标志非法");
+            EX_FAIL("TensorSchema::decode: placement 标志非法");
 
         TensorFieldSpec field;
         field.name = std::move(*field_name);
         if (*rows != no_axis)
         {
             if (*rows > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))
-                NN_FAIL("TensorSchema::decode: rows 超出平台范围");
+                EX_FAIL("TensorSchema::decode: rows 超出平台范围");
             field.shape.rows = static_cast<std::size_t>(*rows);
         }
         if (*cols != no_axis)
         {
             if (*cols > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))
-                NN_FAIL("TensorSchema::decode: cols 超出平台范围");
+                EX_FAIL("TensorSchema::decode: cols 超出平台范围");
             field.shape.cols = static_cast<std::size_t>(*cols);
         }
         field.required = required != 0;
@@ -420,7 +420,7 @@ inline void schema_put_string(std::string& out, std::string_view s)
         field.placement = static_cast<TensorPlacement>(placement);
         fields.push_back(std::move(field));
     }
-    if (!bytes.empty()) NN_FAIL("TensorSchema::decode: 尾部存在未消费字节");
+    if (!bytes.empty()) EX_FAIL("TensorSchema::decode: 尾部存在未消费字节");
     return TensorSchema::create(std::move(*name), std::move(fields));
 }
 
@@ -429,33 +429,33 @@ inline void schema_put_string(std::string& out, std::string_view s)
 {
     std::string out("NNL1", 4);
     if (names.size() > std::numeric_limits<std::uint32_t>::max())
-        NN_UNWRAP(false, "encode_tensor_name_list: 名称过多");
+        EX_UNWRAP(false, "encode_tensor_name_list: 名称过多");
     detail::schema_put_u32(out, static_cast<std::uint32_t>(names.size()));
     for (const std::string& name : names)
         detail::schema_put_string(out, name);
     return out;
 }
 
-[[nodiscard]] inline Result<std::vector<std::string>>
+[[nodiscard]] inline exstl::Result<std::vector<std::string>>
 decode_tensor_name_list(std::string_view bytes)
 {
     if (bytes.size() < 4 || bytes.substr(0, 4) != "NNL1")
-        NN_FAIL("decode_tensor_name_list: 魔数不匹配");
+        EX_FAIL("decode_tensor_name_list: 魔数不匹配");
     bytes.remove_prefix(4);
-    NN_TRY(count, detail::schema_take_u32(bytes));
+    EX_TRY(count, detail::schema_take_u32(bytes));
     if (*count > kMaxTensorSchemaFields)
-        NN_FAIL("decode_tensor_name_list: 名称数超过上限 " +
+        EX_FAIL("decode_tensor_name_list: 名称数超过上限 " +
                 std::to_string(kMaxTensorSchemaFields));
     // 每个名称至少有一个 u32 长度前缀。
-    if (*count > bytes.size() / 4) NN_FAIL("decode_tensor_name_list: 名称数与负载长度不一致");
+    if (*count > bytes.size() / 4) EX_FAIL("decode_tensor_name_list: 名称数与负载长度不一致");
     std::vector<std::string> names;
     names.reserve(*count);
     for (std::uint32_t i = 0; i < *count; ++i)
     {
-        NN_TRY(name, detail::schema_take_string(bytes));
+        EX_TRY(name, detail::schema_take_string(bytes));
         names.push_back(std::move(*name));
     }
-    if (!bytes.empty()) NN_FAIL("decode_tensor_name_list: 尾部存在未消费字节");
+    if (!bytes.empty()) EX_FAIL("decode_tensor_name_list: 尾部存在未消费字节");
     return names;
 }
 

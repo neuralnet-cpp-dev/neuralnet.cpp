@@ -9,7 +9,7 @@
 //                        BPE 能学会合并常见中文词组（更适合小模型）
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <chrono>
 #include <iomanip>
@@ -79,7 +79,7 @@ Config parse_args(int argc, char* argv[])
         else if (arg == "--output" && i + 1 < argc) cfg.output_path = argv[++i];
         else if (arg == "--vocab-size" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::size_t>(argv[++i]);
+            auto v = exstl::parse_number<std::size_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --vocab-size: " << v.error().message << "\n";
@@ -96,7 +96,7 @@ Config parse_args(int argc, char* argv[])
         }
         else if (arg == "--min-freq" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::uint32_t>(argv[++i]);
+            auto v = exstl::parse_number<std::uint32_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --min-freq: " << v.error().message << "\n";
@@ -106,7 +106,7 @@ Config parse_args(int argc, char* argv[])
         }
         else if (arg == "--threads" && i + 1 < argc)
         {
-            auto v = nn::parse_number<std::uint32_t>(argv[++i]);
+            auto v = exstl::parse_number<std::uint32_t>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --threads: " << v.error().message << "\n";
@@ -137,7 +137,7 @@ int main(int argc, char* argv[])
     // ── 加载文本 ─────────────────────────────────────────────
     std::cout << "加载文本: " << cfg.text_path << " ..." << std::endl;
     auto text_result = nn::load_text_file(cfg.text_path);
-    NN_EXIT(text_result, 1, "Error: ");
+    EX_EXIT(text_result, 1, "Error: ");
     std::string text = std::move(*text_result);
     if (text.empty())
     {
@@ -172,7 +172,7 @@ int main(int argc, char* argv[])
     // 使用 static_cast 向下转型以调用各子类特有的 train(text, Config) 重载，
     // 避免在基类 Tokenizer 中暴露子类专属的 Config 参数。
     auto t_start = std::chrono::steady_clock::now();
-    nn::Result<void> train_result;
+    exstl::Result<void> train_result;
     if (cfg.tokenizer_type == "charbpe")
     {
         auto& tok = static_cast<nn::CharBPETokenizer&>(*tokenizer);
@@ -196,7 +196,7 @@ int main(int argc, char* argv[])
         train_result = tok.train(text, tcfg);
     }
 
-    NN_EXIT(train_result, 1, "训练失败: ");
+    EX_EXIT(train_result, 1, "训练失败: ");
     auto t_end = std::chrono::steady_clock::now();
     Scalar train_sec = std::chrono::duration<Scalar>(t_end - t_start).count();
 
@@ -206,7 +206,7 @@ int main(int argc, char* argv[])
 
     // ── 保存词表 ─────────────────────────────────────────────
     auto save_result = tokenizer->save(cfg.output_path);
-    NN_EXIT(save_result, 1, "保存词表失败: ");
+    EX_EXIT(save_result, 1, "保存词表失败: ");
     std::cout << "词表已保存: " << cfg.output_path << std::endl;
 
     // ── 打印示例（验证分词效果） ─────────────────────────────

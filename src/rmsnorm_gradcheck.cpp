@@ -11,7 +11,7 @@
 // 用法：rmsnorm_gradcheck [--gpu] [--tol <f>]
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <cmath>
 #include <cstdlib>
@@ -144,7 +144,7 @@ int main(int argc, char* argv[])
     nn::cli::EngineConfig ecfg;
     ecfg.use_gpu = use_gpu;
     auto engine_res = nn::cli::create_engine(ecfg, std::cout);
-    NN_EXIT(engine_res, 1, "引擎创建失败: ");
+    EX_EXIT(engine_res, 1, "引擎创建失败: ");
     auto engine = std::move(*engine_res);
     ComputeEngine& eng = *engine;
 
@@ -157,7 +157,7 @@ int main(int argc, char* argv[])
     std::cout << "  features=" << features << " batch=" << batch << " tol=" << tol << "\n";
 
     RMSNorm norm(features);
-    NN_EXIT(norm.init(eng), 1, "RMSNorm init 失败: ");
+    EX_EXIT(norm.init(eng), 1, "RMSNorm init 失败: ");
 
     std::mt19937_64 rng(123);
     std::uniform_real_distribution<Scalar> dist(-1, 1);
@@ -170,13 +170,13 @@ int main(int argc, char* argv[])
         go_m.span()[i] = dist(rng);
 
     auto x = eng.from_matrix(x_m);
-    NN_EXIT(x, 1, "from_matrix(x) failed\n");
+    EX_EXIT(x, 1, "from_matrix(x) failed\n");
     auto go = eng.from_matrix(go_m);
-    NN_EXIT(go, 1, "from_matrix(go) failed\n");
+    EX_EXIT(go, 1, "from_matrix(go) failed\n");
 
     // ── 前向一次：填充缓存（backward 依赖 forward 缓存） ──
     auto y_fwd = norm.forward(*x);
-    NN_EXIT(y_fwd, 1, "forward failed: ");
+    EX_EXIT(y_fwd, 1, "forward failed: ");
 
     // ── 清零梯度并 backward ──
     auto params = norm.parameters();       // [gamma]
@@ -184,10 +184,10 @@ int main(int argc, char* argv[])
     for (auto& g : grads)
     {
         auto rz = eng.zero(g.get());
-        NN_EXIT(rz, 1, "zero failed\n");
+        EX_EXIT(rz, 1, "zero failed\n");
     }
     auto gx = norm.backward(*go);
-    NN_EXIT(gx, 1, "backward failed: ");
+    EX_EXIT(gx, 1, "backward failed: ");
 
     // ── 验证参数梯度（gamma） ──
     const Scalar eps = 1e-3f;
@@ -195,9 +195,9 @@ int main(int argc, char* argv[])
     for (std::size_t pi = 0; pi < params.size(); ++pi)
     {
         auto p = eng.to_matrix(params[pi].get());
-        NN_EXIT(p, 1, "to_matrix(param) failed\n");
+        EX_EXIT(p, 1, "to_matrix(param) failed\n");
         auto g = eng.to_matrix(grads[pi].get());
-        NN_EXIT(g, 1, "to_matrix(grad) failed\n");
+        EX_EXIT(g, 1, "to_matrix(grad) failed\n");
         std::string name = (pi == 0) ? "gamma" : ("param[" + std::to_string(pi) + "]");
         all_pass &= check_grad_tensor(eng, norm, *x, *go, params[pi].get(), *p, *g, name, eps, tol);
     }
@@ -205,9 +205,9 @@ int main(int argc, char* argv[])
     // ── 验证输入梯度（扰动输入副本本身，前向用该副本） ──
     {
         auto gxm = eng.to_matrix(*gx);
-        NN_EXIT(gxm, 1, "to_matrix(grad_x) failed\n");
+        EX_EXIT(gxm, 1, "to_matrix(grad_x) failed\n");
         auto xt = eng.clone(*x);   // 可写副本，避免扰动原始输入 Tensor
-        NN_EXIT(xt, 1, "clone(x) failed\n");
+        EX_EXIT(xt, 1, "clone(x) failed\n");
         all_pass &= check_grad_tensor(eng, norm, *xt, *go, *xt, x_m, *gxm, "grad_x", eps, tol);
     }
 

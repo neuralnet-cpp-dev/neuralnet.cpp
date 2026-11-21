@@ -14,7 +14,7 @@
 // 退出码：0 = 全部一致；2 = CPU 引擎创建失败；77 = GPU 不可用（ctest SKIP）；
 //         3 = CPU/GPU 不一致。
 // ────────────────────────────────────────────────────────────────────────────
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <cmath>
 #include <iostream>
@@ -39,11 +39,11 @@ using nn::Scalar;
 int main(int argc, char** argv)
 {
     auto cpu_res = nn::cli::create_engine(nn::cli::EngineConfig{}, std::cout);
-    NN_EXIT(cpu_res, 2, "CPU 引擎创建失败: ");
+    EX_EXIT(cpu_res, 2, "CPU 引擎创建失败: ");
     nn::cli::EngineConfig gcfg;
     gcfg.use_gpu = true;
     auto gpu_res = nn::cli::create_engine(gcfg, std::cout);
-    NN_EXIT(gpu_res, 77, "GPU 不可用，跳过: ");
+    EX_EXIT(gpu_res, 77, "GPU 不可用，跳过: ");
     nn::ComputeEngine& cpu = **cpu_res;
     nn::ComputeEngine& gpu = **gpu_res;
 

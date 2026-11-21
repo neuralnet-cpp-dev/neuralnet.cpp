@@ -37,7 +37,7 @@
 #include "neuralnet.cpp/compute_optimizer.hpp"     // nn::Optimizer
 #include "neuralnet.cpp/core_config.hpp"           // nn::Scalar / NN_PROBES_ENABLED
 #include "neuralnet.cpp/core_env.hpp"              // RV-09：环境变量读取唯一入口
-#include "neuralnet.cpp/core_errors.hpp"           // nn::Result / NN_TRY
+#include <exstl/errors.hpp>           // exstl::Result / EX_TRY
 #include "neuralnet.cpp/model_container.hpp"       // nn::Model
 #include "neuralnet.cpp/model_spec.hpp"            // nn::ModelSpec
 #include "neuralnet.cpp/text_trainer.hpp"          // nn::TextTrainer（训练驱动）
@@ -298,7 +298,7 @@ struct TextTrainMemProbe
 // ══════════════════════════════════════════════════════════════════════════
 //  训练入口适配：给 TextTrainer 装 CLI 侧 hooks（诊断/断点），然后跑 fit()
 // ══════════════════════════════════════════════════════════════════════════
-[[nodiscard]] inline nn::Result<nn::TextTrainReport>
+[[nodiscard]] inline exstl::Result<nn::TextTrainReport>
 run_text_train_loop(nn::TextTrainer& trainer, const TrainConfig& cfg, const nn::ModelSpec& spec,
                     const std::string& tokenizer_bytes, const TextTrainMemProbe& mem_probe)
 {
@@ -342,13 +342,13 @@ run_text_train_loop(nn::TextTrainer& trainer, const TrainConfig& cfg, const nn::
     // 定期断点（.nnckpt）：路径派生/记账/状态段序列化都在 CLI 侧。
     auto ckpt_log = std::make_shared<TextTrainCheckpointLog>();
     hooks.on_checkpoint = [&cfg, &spec, &tokenizer_bytes,
-                           ckpt_log](const nn::TextCheckpointRequest& req) -> nn::Result<void>
+                           ckpt_log](const nn::TextCheckpointRequest& req) -> exstl::Result<void>
     {
         const std::size_t before = ckpt_log->failures();
         save_ckpt_with_state(text_train_ckpt_path(cfg.save_path), req.session.model(), spec,
                              tokenizer_bytes, req.state, req.session.optimizer(), *ckpt_log,
                              std::cerr);
-        if (ckpt_log->failures() != before) NN_FAIL("checkpoint 未落盘（记账见 stderr）");
+        if (ckpt_log->failures() != before) EX_FAIL("checkpoint 未落盘（记账见 stderr）");
         return {};
     };
 

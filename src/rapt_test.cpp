@@ -8,7 +8,7 @@
 #include <iostream>
 #include <string>
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #define main test_rapt_gradcheck
 // ── prelude（聚合体头提升）───────────────────────────────────────
@@ -51,7 +51,7 @@ int main(int argc, char* argv[])
         nn::cli::EngineConfig ec;
         ec.use_gpu = true;
         auto probe = nn::cli::create_engine(ec);
-        NN_EXIT(probe, 77, "GPU 不可用，跳过: ");
+        EX_EXIT(probe, 77, "GPU 不可用，跳过: ");
         break;
     }
 

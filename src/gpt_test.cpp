@@ -13,7 +13,7 @@
 // 文本 include 同一头」不合并实体（C2953/C2572 族，上游 microsoft/STL
 // #6436 同类）。故把 flatten（本文件+全部嵌套 .cpp）的头在此先行包含；
 // include guard 幂等，clang/GCC 路径无害。改动此块须同步嵌套文件的头集合。
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <array>
 #include <cmath>
 #include <cstdlib>

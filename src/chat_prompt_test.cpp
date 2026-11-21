@@ -18,7 +18,7 @@
 // 退出码：0 = 通过，1 = 失败，77 = 跳过（未构建 text_infer 时的 CLI 半边）
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
@@ -142,14 +142,14 @@ std::string corpus_text()
            "人工神经网络很有趣。深度学习训练中。\n";
 }
 
-[[nodiscard]] nn::Result<nn::BPETokenizer> train_tokenizer(std::size_t vocab_size)
+[[nodiscard]] exstl::Result<nn::BPETokenizer> train_tokenizer(std::size_t vocab_size)
 {
     nn::BPETokenizer tok;
     nn::BPETokenizer::Config cfg;
     cfg.vocab_size = vocab_size;
     cfg.min_freq = 1;
     cfg.log = [](std::string_view) {};
-    NN_TRY_CHECK(tok.train(corpus_text(), cfg));
+    EX_TRY_CHECK(tok.train(corpus_text(), cfg));
     return tok;
 }
 

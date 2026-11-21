@@ -19,7 +19,7 @@
 // ───────────────────────────────────────────────────────────────────────────
 
 #include <memory>
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -97,7 +97,7 @@ void test_subln_param_count()
     {
         auto m = std::make_unique<nn::GPTModel>(V, D, S, H, FF, L, P, A, nt, nn::PrecisionProfile{},
                                                 subln);
-        NN_EXIT(m->init(eng), 1, "GPTModel init 失败: ");
+        EX_EXIT(m->init(eng), 1, "GPTModel init 失败: ");
         return m;
     };
 
@@ -118,7 +118,7 @@ void test_subln_param_count()
 
     // 默认关：不传 subln 与显式 false 完全同构
     nn::GPTModel def(V, D, S, H, FF, L, P, A, nn::NormType::RMSNorm);
-    NN_EXIT(def.init(eng), 1, "GPTModel(default) init 失败: ");
+    EX_EXIT(def.init(eng), 1, "GPTModel(default) init 失败: ");
     CHECK(count_params(def.parameters()) == n_off, "缺省 subln=false（旧布局逐位一致）");
 }
 
@@ -134,7 +134,7 @@ void test_subln_grad_wiring()
     // FeedForward：参数序 = [fc1.w, fc1.b, fc2.w, fc2.b, sub_norm.gamma]
     {
         nn::FeedForward ff(D, FF, nn::ActivationType::GeLU, /*subln=*/true, nn::NormType::RMSNorm);
-        NN_EXIT(ff.init(eng), 1, "FeedForward init 失败: ");
+        EX_EXIT(ff.init(eng), 1, "FeedForward init 失败: ");
         auto ps = ff.parameters();
         CHECK(ps.size() == 5, "FF 参数条数 = 5（含 sub_norm.gamma）");
         CHECK(ps.size() == 5 && ps[4].get().rows() == FF && ps[4].get().cols() == 1,
@@ -142,12 +142,12 @@ void test_subln_grad_wiring()
 
         auto x = make_tensor(eng, D, B, 0.1f, 0.03f);
         auto y = ff.forward(x);
-        NN_EXIT(y, 1, "FeedForward forward 失败: ");
+        EX_EXIT(y, 1, "FeedForward forward 失败: ");
         CHECK(y->rows() == D && y->cols() == B, "FF 输出形状 (d_model, batch)");
 
         auto g = make_tensor(eng, D, B, 0.5f, -0.01f);
         auto gi = ff.backward(g);
-        NN_EXIT(gi, 1, "FeedForward backward 失败: ");
+        EX_EXIT(gi, 1, "FeedForward backward 失败: ");
         auto gs = ff.param_gradients();
         const double sg = max_abs(download(eng, gs[4].get()));
         std::printf("    FF sub_norm.gamma |grad|max = %.6g\n", sg);
@@ -158,7 +158,7 @@ void test_subln_grad_wiring()
     {
         nn::CausalSelfAttention at(D, H, /*max_len=*/8, /*seq_len=*/S, nn::PosEncodingType::RoPE,
                                    /*subln=*/true, nn::NormType::RMSNorm);
-        NN_EXIT(at.init(eng), 1, "CausalSelfAttention init 失败: ");
+        EX_EXIT(at.init(eng), 1, "CausalSelfAttention init 失败: ");
         auto ps = at.parameters();
         // 参数序 = [w_q.w, w_q.b, w_k.w, w_k.b, w_v.w, w_v.b, w_o.w, w_o.b,
         //           attn_sub_norm.gamma] —— SubLN 追加在**末位**
@@ -169,12 +169,12 @@ void test_subln_grad_wiring()
 
         auto x = make_tensor(eng, D, S * B, 0.1f, 0.01f);
         auto y = at.forward(x);
-        NN_EXIT(y, 1, "CausalSelfAttention forward 失败: ");
+        EX_EXIT(y, 1, "CausalSelfAttention forward 失败: ");
         CHECK(y->rows() == D && y->cols() == S * B, "Attention 输出形状");
 
         auto g = make_tensor(eng, D, S * B, 0.3f, -0.005f);
         auto gi = at.backward(g);
-        NN_EXIT(gi, 1, "CausalSelfAttention backward 失败: ");
+        EX_EXIT(gi, 1, "CausalSelfAttention backward 失败: ");
         auto gs = at.param_gradients();
         const double sg = max_abs(download(eng, gs[k_sub].get()));
         std::printf("    attn sub_norm.gamma |grad|max = %.6g\n", sg);
@@ -192,9 +192,9 @@ void test_subln_changes_forward()
     const std::size_t D = 16, FF = 32, B = 3;
 
     nn::FeedForward off(D, FF, nn::ActivationType::GeLU, /*subln=*/false);
-    NN_EXIT(off.init(eng), 1, "FeedForward(off) init 失败: ");
+    EX_EXIT(off.init(eng), 1, "FeedForward(off) init 失败: ");
     nn::FeedForward on(D, FF, nn::ActivationType::GeLU, /*subln=*/true, nn::NormType::RMSNorm);
-    NN_EXIT(on.init(eng), 1, "FeedForward(on) init 失败: ");
+    EX_EXIT(on.init(eng), 1, "FeedForward(on) init 失败: ");
 
     auto po = off.parameters();   // 4 张
     auto pn = on.parameters();    // 5 张（末位 sub_norm.gamma）
@@ -203,14 +203,14 @@ void test_subln_changes_forward()
     for (std::size_t i = 0; i < 4; ++i)
     {
         const nn::Matrix w = download(eng, po[i].get());
-        NN_EXIT(eng.copy_from(pn[i].get(), w), 1, "拷贝权重失败: ");
+        EX_EXIT(eng.copy_from(pn[i].get(), w), 1, "拷贝权重失败: ");
     }
 
     auto x = make_tensor(eng, D, B, 0.2f, 0.05f);
     auto yo = off.forward(x);
-    NN_EXIT(yo, 1, "forward(off) 失败: ");
+    EX_EXIT(yo, 1, "forward(off) 失败: ");
     auto yn = on.forward(x);
-    NN_EXIT(yn, 1, "forward(on) 失败: ");
+    EX_EXIT(yn, 1, "forward(on) 失败: ");
     const double d = max_abs_diff(download(eng, *yo), download(eng, *yn));
     std::printf("    同权重下 on/off 最大差 = %.6g\n", d);
     CHECK(d > 1e-3, "SubLN 确实改变前向输出（非静默失效）");
@@ -220,9 +220,9 @@ void test_subln_changes_forward()
         nn::Matrix zero(FF, 1);
         for (auto& v : zero.span())
             v = 0.0f;
-        NN_EXIT(eng.copy_from(pn[4].get(), zero), 1, "清零 sub_norm.gamma 失败: ");
+        EX_EXIT(eng.copy_from(pn[4].get(), zero), 1, "清零 sub_norm.gamma 失败: ");
         auto y0 = on.forward(x);
-        NN_EXIT(y0, 1, "forward(gamma=0) 失败: ");
+        EX_EXIT(y0, 1, "forward(gamma=0) 失败: ");
         CHECK(max_abs_diff(download(eng, *yn), download(eng, *y0)) > 1e-3,
               "sub_norm.gamma 真的被前向读取（清零后输出改变）");
     }
@@ -261,11 +261,11 @@ void test_subln_spec_roundtrip()
     nn::Matrix y_ref;
     {
         auto m = nn::build_gpt_model(eng, cfg);
-        NN_EXIT(m, 1, "build_gpt_model 失败: ");
+        EX_EXIT(m, 1, "build_gpt_model 失败: ");
         auto y = m->forward(upload(eng, x_m));
-        NN_EXIT(y, 1, "forward 失败: ");
+        EX_EXIT(y, 1, "forward 失败: ");
         y_ref = download(eng, *y);
-        NN_EXIT(nn::save_model(file, *m, spec), 1, "save_model 失败: ");
+        EX_EXIT(nn::save_model(file, *m, spec), 1, "save_model 失败: ");
     }
 
     {
@@ -280,10 +280,10 @@ void test_subln_spec_roundtrip()
         CHECK(peeked->as<nn::GptSpec>()->subln, "规格记住 subln=true");
 
         auto m2 = nn::build_gpt_model_from_spec(eng, *peeked);
-        NN_EXIT(m2, 1, "build_gpt_model_from_spec 失败: ");
-        NN_EXIT(nn::load_model(file, *m2), 1, "load_model 失败: ");
+        EX_EXIT(m2, 1, "build_gpt_model_from_spec 失败: ");
+        EX_EXIT(nn::load_model(file, *m2), 1, "load_model 失败: ");
         auto y = m2->forward(upload(eng, x_m));
-        NN_EXIT(y, 1, "重建模型 forward 失败: ");
+        EX_EXIT(y, 1, "重建模型 forward 失败: ");
         const double d = max_abs_diff(y_ref, download(eng, *y));
         std::printf("    往返后前向最大差 = %.6g\n", d);
         CHECK(d == 0.0, "往返后前向逐位一致");
@@ -327,11 +327,11 @@ void test_gqa_mha_equivalence(nn::ComputeEngine& eng, const char* tag)
 
     // 声明式初始化是**确定性**的（kInitSeed）→ 同构两层的权重逐位相同
     nn::CausalSelfAttention mha(D, H, 8, S, nn::PosEncodingType::RoPE);
-    NN_EXIT(mha.init(eng), 1, "MHA init 失败: ");
+    EX_EXIT(mha.init(eng), 1, "MHA init 失败: ");
     nn::CausalSelfAttention gqa(D, H, 8, S, nn::PosEncodingType::RoPE,
                                 /*subln=*/false, nn::NormType::LayerNorm,
                                 /*n_head_kv=*/H);
-    NN_EXIT(gqa.init(eng), 1, "GQA(=H) init 失败: ");
+    EX_EXIT(gqa.init(eng), 1, "GQA(=H) init 失败: ");
 
     auto pm = mha.parameters();
     auto pg = gqa.parameters();
@@ -342,7 +342,7 @@ void test_gqa_mha_equivalence(nn::ComputeEngine& eng, const char* tag)
     for (std::size_t i = 0; i < pm.size(); ++i)
     {
         const nn::Matrix w = download(eng, pm[i].get());
-        NN_EXIT(eng.copy_from(pg[i].get(), w), 1, "拷贝权重失败: ");
+        EX_EXIT(eng.copy_from(pg[i].get(), w), 1, "拷贝权重失败: ");
     }
     double wdiff = 0.0;
     for (std::size_t i = 0; i < pm.size(); ++i)
@@ -352,18 +352,18 @@ void test_gqa_mha_equivalence(nn::ComputeEngine& eng, const char* tag)
 
     auto x = make_tensor(eng, D, S * B, 0.15f, 0.02f);
     auto ym = mha.forward(x);
-    NN_EXIT(ym, 1, "MHA forward 失败: ");
+    EX_EXIT(ym, 1, "MHA forward 失败: ");
     auto yg = gqa.forward(x);
-    NN_EXIT(yg, 1, "GQA forward 失败: ");
+    EX_EXIT(yg, 1, "GQA forward 失败: ");
     const double fd = max_abs_diff(download(eng, *ym), download(eng, *yg));
     std::printf("    forward 最大差 = %.6g\n", fd);
     CHECK(fd == 0.0, "n_head_kv=H 的前向与 MHA 逐位一致");
 
     auto g = make_tensor(eng, D, S * B, 0.25f, -0.004f);
     auto bm = mha.backward(g);
-    NN_EXIT(bm, 1, "MHA backward 失败: ");
+    EX_EXIT(bm, 1, "MHA backward 失败: ");
     auto bg = gqa.backward(g);
-    NN_EXIT(bg, 1, "GQA backward 失败: ");
+    EX_EXIT(bg, 1, "GQA backward 失败: ");
     const double bd = max_abs_diff(download(eng, *bm), download(eng, *bg));
     CHECK(bd == 0.0, "n_head_kv=H 的输入梯度与 MHA 逐位一致");
 }
@@ -382,9 +382,9 @@ void test_gqa_head_mapping(nn::ComputeEngine& eng, const char* tag)
 
     nn::CausalSelfAttention gqa(D, H, 8, S, nn::PosEncodingType::RoPE,
                                 /*subln=*/false, nn::NormType::LayerNorm, n_kv);
-    NN_EXIT(gqa.init(eng), 1, "GQA init 失败: ");
+    EX_EXIT(gqa.init(eng), 1, "GQA init 失败: ");
     nn::CausalSelfAttention mha(D, H, 8, S, nn::PosEncodingType::RoPE);
-    NN_EXIT(mha.init(eng), 1, "MHA init 失败: ");
+    EX_EXIT(mha.init(eng), 1, "MHA init 失败: ");
 
     // 参数序（两者一致）：0 w_q.w / 1 w_q.b / 2 w_k.w / 3 w_k.b /
     //                     4 w_v.w / 5 w_v.b / 6 w_o.w / 7 w_o.b
@@ -398,27 +398,27 @@ void test_gqa_head_mapping(nn::ComputeEngine& eng, const char* tag)
 
     // Q/O 直接拷；K/V（w 与 b）按块映射复制行
     for (std::size_t i : {std::size_t{0}, std::size_t{1}, std::size_t{6}, std::size_t{7}})
-        NN_EXIT(eng.copy_from(pm[i].get(), download(eng, pg[i].get())), 1, "拷贝 Q/O 失败: ");
+        EX_EXIT(eng.copy_from(pm[i].get(), download(eng, pg[i].get())), 1, "拷贝 Q/O 失败: ");
     for (std::size_t i : {std::size_t{2}, std::size_t{3}, std::size_t{4}, std::size_t{5}})
     {
         const nn::Matrix Wg = download(eng, pg[i].get());
-        NN_EXIT(eng.copy_from(pm[i].get(), repeat_kv_rows(Wg, d_k, H, n_kv)), 1, "拷贝 K/V 失败: ");
+        EX_EXIT(eng.copy_from(pm[i].get(), repeat_kv_rows(Wg, d_k, H, n_kv)), 1, "拷贝 K/V 失败: ");
     }
 
     auto x = make_tensor(eng, D, S * B, 0.15f, 0.02f);
     auto yg = gqa.forward(x);
-    NN_EXIT(yg, 1, "GQA forward 失败: ");
+    EX_EXIT(yg, 1, "GQA forward 失败: ");
     auto ym = mha.forward(x);
-    NN_EXIT(ym, 1, "MHA(复制) forward 失败: ");
+    EX_EXIT(ym, 1, "MHA(复制) forward 失败: ");
     const double fd = max_abs_diff(download(eng, *yg), download(eng, *ym));
     std::printf("    GQA vs 复制式 MHA：forward 最大差 = %.6g\n", fd);
     CHECK(fd < 1e-5, "前向等价（块映射）");
 
     auto g = make_tensor(eng, D, S * B, 0.2f, -0.003f);
     auto bg = gqa.backward(g);
-    NN_EXIT(bg, 1, "GQA backward 失败: ");
+    EX_EXIT(bg, 1, "GQA backward 失败: ");
     auto bm = mha.backward(g);
-    NN_EXIT(bm, 1, "MHA(复制) backward 失败: ");
+    EX_EXIT(bm, 1, "MHA(复制) backward 失败: ");
     const double bd = max_abs_diff(download(eng, *bg), download(eng, *bm));
     std::printf("    输入梯度最大差 = %.6g\n", bd);
     CHECK(bd < 1e-5, "输入梯度等价（scatter_add_rows 折叠正确）");
@@ -487,11 +487,11 @@ void test_gqa_spec()
     nn::Matrix y_ref;
     {
         auto m = nn::build_gpt_model(eng, cfg);
-        NN_EXIT(m, 1, "build_gpt_model(GQA) 失败: ");
+        EX_EXIT(m, 1, "build_gpt_model(GQA) 失败: ");
         auto y = m->forward(upload(eng, x_m));
-        NN_EXIT(y, 1, "GQA forward 失败: ");
+        EX_EXIT(y, 1, "GQA forward 失败: ");
         y_ref = download(eng, *y);
-        NN_EXIT(nn::save_model(file, *m, spec), 1, "save_model 失败: ");
+        EX_EXIT(nn::save_model(file, *m, spec), 1, "save_model 失败: ");
     }
     {
         auto peeked = nn::peek_model_spec(file);
@@ -503,10 +503,10 @@ void test_gqa_spec()
             return;
         }
         auto m2 = nn::build_gpt_model_from_spec(eng, *peeked);
-        NN_EXIT(m2, 1, "build_gpt_model_from_spec(GQA) 失败: ");
-        NN_EXIT(nn::load_model(file, *m2), 1, "load_model 失败: ");
+        EX_EXIT(m2, 1, "build_gpt_model_from_spec(GQA) 失败: ");
+        EX_EXIT(nn::load_model(file, *m2), 1, "load_model 失败: ");
         auto y = m2->forward(upload(eng, x_m));
-        NN_EXIT(y, 1, "重建模型 forward 失败: ");
+        EX_EXIT(y, 1, "重建模型 forward 失败: ");
         const double d = max_abs_diff(y_ref, download(eng, *y));
         std::printf("    往返后前向最大差 = %.6g\n", d);
         CHECK(d == 0.0, "GQA 往返后前向逐位一致");
@@ -528,7 +528,7 @@ void test_tied_embedding()
                                                 nn::ActivationType::SwiGLU, nn::NormType::RMSNorm,
                                                 nn::PrecisionProfile{}, /*subln=*/false,
                                                 /*n_head_kv=*/0, /*tie=*/tie);
-        NN_EXIT(m->init(eng), 1, "GPTModel init 失败: ");
+        EX_EXIT(m->init(eng), 1, "GPTModel init 失败: ");
         return m;
     };
 
@@ -549,15 +549,15 @@ void test_tied_embedding()
     for (std::size_t i = 0; i < po.size(); ++i)
     {
         const nn::Matrix w = download(eng, po[i].get());
-        NN_EXIT(eng.copy_from(pf[i].get(), w), 1, "拷贝参数失败: ");
+        EX_EXIT(eng.copy_from(pf[i].get(), w), 1, "拷贝参数失败: ");
     }
-    NN_EXIT(eng.copy_from(pf[po.size()].get(), download(eng, po[0].get())), 1,
+    EX_EXIT(eng.copy_from(pf[po.size()].get(), download(eng, po[0].get())), 1,
             "head.w ← token_emb 失败: ");
     {
         nn::Matrix zb(V, 1);
         for (auto& v : zb.span())
             v = 0.0f;
-        NN_EXIT(eng.copy_from(pf[po.size() + 1].get(), zb), 1, "head.b ← 0 失败: ");
+        EX_EXIT(eng.copy_from(pf[po.size() + 1].get(), zb), 1, "head.b ← 0 失败: ");
     }
 
     nn::Matrix x_m(S, B);
@@ -566,18 +566,18 @@ void test_tied_embedding()
     const nn::Tensor x = upload(eng, x_m);
 
     auto y_on = on->forward(x);
-    NN_EXIT(y_on, 1, "tied forward 失败: ");
+    EX_EXIT(y_on, 1, "tied forward 失败: ");
     auto y_off = off->forward(x);
-    NN_EXIT(y_off, 1, "非 tied forward 失败: ");
+    EX_EXIT(y_off, 1, "非 tied forward 失败: ");
     const double fd = max_abs_diff(download(eng, *y_on), download(eng, *y_off));
     std::printf("    tied vs 等价非 tied：forward 最大差 = %.6g\n", fd);
     CHECK(fd < 1e-5, "tied 前向 = 独立 head（权重 = 嵌入、bias=0）");
 
     auto g = make_tensor(eng, V, N, 0.01f, 0.0003f);
     auto b_on = on->backward(g);
-    NN_EXIT(b_on, 1, "tied backward 失败: ");
+    EX_EXIT(b_on, 1, "tied backward 失败: ");
     auto b_off = off->backward(g);
-    NN_EXIT(b_off, 1, "非 tied backward 失败: ");
+    EX_EXIT(b_off, 1, "非 tied backward 失败: ");
 
     // token_emb 的梯度必须 = 嵌入侧(scatter) + head 侧(dW)，即"累加"而非覆盖
     const nn::Matrix gt = download(eng, on->param_gradients()[0].get());
@@ -637,11 +637,11 @@ void test_tied_spec()
     nn::Matrix y_ref;
     {
         auto m = nn::build_gpt_model(eng, cfg);
-        NN_EXIT(m, 1, "build_gpt_model(tied) 失败: ");
+        EX_EXIT(m, 1, "build_gpt_model(tied) 失败: ");
         auto y = m->forward(upload(eng, x_m));
-        NN_EXIT(y, 1, "tied forward 失败: ");
+        EX_EXIT(y, 1, "tied forward 失败: ");
         y_ref = download(eng, *y);
-        NN_EXIT(nn::save_model(file, *m, spec), 1, "save_model 失败: ");
+        EX_EXIT(nn::save_model(file, *m, spec), 1, "save_model 失败: ");
     }
     {
         auto peeked = nn::peek_model_spec(file);
@@ -653,10 +653,10 @@ void test_tied_spec()
             return;
         }
         auto m2 = nn::build_gpt_model_from_spec(eng, *peeked);
-        NN_EXIT(m2, 1, "build_gpt_model_from_spec(tied) 失败: ");
-        NN_EXIT(nn::load_model(file, *m2), 1, "load_model 失败: ");
+        EX_EXIT(m2, 1, "build_gpt_model_from_spec(tied) 失败: ");
+        EX_EXIT(nn::load_model(file, *m2), 1, "load_model 失败: ");
         auto y = m2->forward(upload(eng, x_m));
-        NN_EXIT(y, 1, "重建模型 forward 失败: ");
+        EX_EXIT(y, 1, "重建模型 forward 失败: ");
         const double d = max_abs_diff(y_ref, download(eng, *y));
         std::printf("    往返后前向最大差 = %.6g\n", d);
         CHECK(d == 0.0, "tied 往返后前向逐位一致");
@@ -673,7 +673,7 @@ void test_relu2_activation()
     const std::size_t FF = 6, B = 3, R = 2 * FF;
 
     nn::ReLU2GLU gl(FF);
-    NN_EXIT(gl.init(eng), 1, "ReLU2GLU init 失败: ");
+    EX_EXIT(gl.init(eng), 1, "ReLU2GLU init 失败: ");
     CHECK(std::string(gl.layer_name()) == "ReLU2GLU", "层名 = ReLU2GLU");
     CHECK(gl.parameters().empty(), "纯激活无参数");
 
@@ -683,7 +683,7 @@ void test_relu2_activation()
         x.span()[i] = static_cast<float>(static_cast<int>(i % 7) - 3) * 0.5f;
 
     auto y = gl.forward(upload(eng, x));
-    NN_EXIT(y, 1, "ReLU2GLU forward 失败: ");
+    EX_EXIT(y, 1, "ReLU2GLU forward 失败: ");
     const nn::Matrix ym = download(eng, *y);
     CHECK(ym.rows() == FF && ym.cols() == B, "输出形状 (d_ff, batch)");
     double fmax = 0.0;
@@ -702,7 +702,7 @@ void test_relu2_activation()
     for (std::size_t i = 0; i < go.size(); ++i)
         go.span()[i] = 0.25f + static_cast<float>(i % 5) * 0.1f;
     auto gi = gl.backward(upload(eng, go));
-    NN_EXIT(gi, 1, "ReLU2GLU backward 失败: ");
+    EX_EXIT(gi, 1, "ReLU2GLU backward 失败: ");
     const nn::Matrix gim = download(eng, *gi);
     CHECK(gim.rows() == R && gim.cols() == B, "grad 形状 (2·d_ff, batch)");
     double bmax = 0.0;
@@ -748,9 +748,9 @@ void test_relu2_gpt()
         x_m.span()[i] = static_cast<float>(i % V);
 
     auto m = nn::build_gpt_model(eng, cfg);
-    NN_EXIT(m, 1, "build_gpt_model(relu2) 失败: ");
+    EX_EXIT(m, 1, "build_gpt_model(relu2) 失败: ");
     auto y = m->forward(upload(eng, x_m));
-    NN_EXIT(y, 1, "relu2 GPT forward 失败: ");
+    EX_EXIT(y, 1, "relu2 GPT forward 失败: ");
     const nn::Matrix ym = download(eng, *y);
     CHECK(ym.rows() == V && ym.cols() == N, "logits 形状");
     double mx = 0.0;
@@ -760,7 +760,7 @@ void test_relu2_gpt()
 
     auto g = make_tensor(eng, V, N, 0.01f, 0.0002f);
     auto bi = m->backward(g);
-    NN_EXIT(bi, 1, "relu2 GPT backward 失败: ");
+    EX_EXIT(bi, 1, "relu2 GPT backward 失败: ");
 
     // 规格：activation 进 spec_matches
     const nn::ModelSpec spec =
@@ -933,16 +933,16 @@ void test_gpt_ternary_wiring()
     const nn::Tensor xt = upload(eng, data.x);
     nn::CrossEntropyLoss ce;
     ce.set_precision_profile(t1);
-    NN_EXIT(tern->zero_grad(), 1, "zero_grad 失败: ");
+    EX_EXIT(tern->zero_grad(), 1, "zero_grad 失败: ");
     auto logits = tern->forward(xt);
-    NN_EXIT(logits, 1, "三值 GPT forward 失败: ");
+    EX_EXIT(logits, 1, "三值 GPT forward 失败: ");
     auto loss = ce.forward_sparse(eng, *logits, std::span<const std::size_t>(data.labels),
                                   std::span<const nn::Scalar>{}, V);
-    NN_EXIT(loss, 1, "sparse CE 失败: ");
+    EX_EXIT(loss, 1, "sparse CE 失败: ");
     CHECK(std::isfinite(*loss), "三值 GPT 前向 loss 有限");
     auto grad = ce.backward();
-    NN_EXIT(grad, 1, "CE backward 失败: ");
-    NN_EXIT(tern->backward(*grad), 1, "三值 GPT backward 失败: ");
+    EX_EXIT(grad, 1, "CE backward 失败: ");
+    EX_EXIT(tern->backward(*grad), 1, "三值 GPT backward 失败: ");
     double max_g = 0.0;
     std::size_t nonzero = 0;
     for (const auto& g : tern->param_gradients())
@@ -1099,7 +1099,7 @@ int main(int argc, char* argv[])
         nn::cli::EngineConfig ec;
         ec.use_gpu = true;
         auto eng_r = nn::cli::create_engine(ec);
-        NN_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
+        EX_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
         test_gqa_mha_equivalence(**eng_r, "GPU");
         test_gqa_head_mapping(**eng_r, "GPU");
         if (!test_training(**eng_r, "GPU")) g_failures++;

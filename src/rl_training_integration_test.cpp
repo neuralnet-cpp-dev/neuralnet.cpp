@@ -5,7 +5,7 @@
 // 与 policy/value 分支参数实际移动。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>
@@ -38,7 +38,7 @@ nn::Tensor matrix_tensor(nn::ComputeEngine& engine, std::size_t rows, std::size_
                          std::initializer_list<float> values)
 {
     nn::Matrix m(rows, cols);
-    NN_ASSERT_ALWAYS(values.size() == m.size(), "matrix_tensor size");
+    EX_ASSERT_ALWAYS(values.size() == m.size(), "matrix_tensor size");
     auto span = m.span();
     std::size_t i = 0;
     for (float v : values)
@@ -71,7 +71,7 @@ nn::TensorSchema policy_value_schema()
         "rl_policy_value",
         {nn::tensor_field("policy", nn::TensorShapeSpec{.rows = 3, .cols = std::nullopt}),
          nn::tensor_field("value", nn::TensorShapeSpec{.rows = 1, .cols = std::nullopt})});
-    NN_ASSERT_ALWAYS(r, "policy_value schema");
+    EX_ASSERT_ALWAYS(r, "policy_value schema");
     return std::move(*r);
 }
 
@@ -79,7 +79,7 @@ nn::ExperienceSchema experience_schema()
 {
     auto r = nn::ExperienceSchema::create(
         {"action", "action_mask", "advantage", "return", "old_value", "old_log_prob"});
-    NN_ASSERT_ALWAYS(r, "experience schema");
+    EX_ASSERT_ALWAYS(r, "experience schema");
     return std::move(*r);
 }
 
@@ -90,11 +90,11 @@ void test_named_rl_session_update()
     auto output_schema = policy_value_schema();
 
     nn::Model model(*engine);
-    NN_UNWRAP(model.add<nn::Linear>(2, 2));
+    EX_UNWRAP(model.add<nn::Linear>(2, 2));
     auto bundle = std::make_unique<nn::OutputBundleLayer>(output_schema);
-    NN_UNWRAP(bundle->add_port("policy", std::make_unique<nn::Linear>(2, 3)));
-    NN_UNWRAP(bundle->add_port("value", std::make_unique<nn::Linear>(2, 1)));
-    NN_UNWRAP(model.add_layer(std::move(bundle)));
+    EX_UNWRAP(bundle->add_port("policy", std::make_unique<nn::Linear>(2, 3)));
+    EX_UNWRAP(bundle->add_port("value", std::make_unique<nn::Linear>(2, 1)));
+    EX_UNWRAP(model.add_layer(std::move(bundle)));
 
     auto before = model.forward_named(input);
     CHECK(before.has_value(), "pair model named forward");
@@ -168,13 +168,13 @@ void test_named_rl_session_update()
         auto report = session.train_named_step(
             input, options,
             [&](nn::Model& active, nn::ComputeEngine& engine_ref,
-                const nn::Tensor& batch_input) -> nn::Result<nn::NamedTrainingStepOutput>
+                const nn::Tensor& batch_input) -> exstl::Result<nn::NamedTrainingStepOutput>
             {
-                NN_TRY(outputs, active.forward_named(batch_input));
-                NN_TRY(policy_port, outputs->require("policy"));
-                NN_TRY(value_port, outputs->require("value"));
+                EX_TRY(outputs, active.forward_named(batch_input));
+                EX_TRY(policy_port, outputs->require("policy"));
+                EX_TRY(value_port, outputs->require("value"));
                 nn::PpoObjective ppo(ppo_cfg);
-                NN_TRY(ppo_report,
+                EX_TRY(ppo_report,
                        ppo.evaluate(engine_ref, output_schema, **policy_port, **value_port, *view));
                 losses_finite = losses_finite && std::isfinite(ppo_report->loss);
                 return nn::NamedTrainingStepOutput{

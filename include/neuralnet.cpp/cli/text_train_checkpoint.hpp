@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 
-#include "neuralnet.cpp/core_errors.hpp"          // nn::Result
+#include <exstl/errors.hpp>          // exstl::Result
 #include "neuralnet.cpp/model_container.hpp"      // nn::Model
 #include "neuralnet.cpp/model_serialization.hpp"  // nn::save_model / ModelRole
 #include "neuralnet.cpp/model_spec.hpp"           // nn::ModelSpec
@@ -89,7 +89,7 @@ private:
 // ── 推理模型产出（Model 角色）──────────────────────────────────────────
 // 只含推理所需参数（三值层写打包形态 + τ）；失败即失败：写不出去 = 这一轮训练
 // 对用户没有产出，调用方据此非零退出。
-[[nodiscard]] inline nn::Result<void> save_text_train_model(const std::string& path,
+[[nodiscard]] inline exstl::Result<void> save_text_train_model(const std::string& path,
                                                             nn::Model& model,
                                                             const nn::ModelSpec& spec,
                                                             const std::string& tokenizer_bytes)

@@ -10,7 +10,7 @@
 // 本工具只做格式转换，不做训练相关任何事。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <fstream>
 #include <iostream>
@@ -119,7 +119,7 @@ int convert_vocab(const Config& cfg)
     }
 
     auto save_r = tok->save(cfg.output_path);
-    NN_EXIT(save_r, 1, "写入 .nnvocab 失败: ");
+    EX_EXIT(save_r, 1, "写入 .nnvocab 失败: ");
     std::cout << "词表已转换: " << cfg.input1 << " -> " << cfg.output_path << "（"
               << tok->vocab_size() << " 词）" << std::endl;
     return 0;

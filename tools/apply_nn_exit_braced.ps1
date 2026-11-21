@@ -1,9 +1,9 @@
 # ── apply_nn_exit.ps1 -Braced — B 批第二形态：{ auto r = f(); if (!r) {…return N;} } ──
 #
 #     { auto r = f(); if (!r) { std::cerr << "ctx" << r.error().message << "\n"; return 1; } }
-#   → NN_EXIT(f(), 1, "ctx")
+#   → EX_EXIT(f(), 1, "ctx")
 #
-# 直接给表达式上 NN_EXIT（不需要中间变量 r），语境取打印里第一个含可读文字的
+# 直接给表达式上 EX_EXIT（不需要中间变量 r），语境取打印里第一个含可读文字的
 # 字面量；失败打印是**超集**（ctx + <error.message> + 表达式原文 + file:line）。
 # ─────────────────────────────────────────────────────────────────────────────
 param([switch]$DryRun)
@@ -36,8 +36,8 @@ foreach ($f in (Get-ChildItem (Join-Path $root 'src') -Filter *.cpp)) {
         $script:n++
         $i = $m.Groups[1].Value; $e = $m.Groups['expr'].Value; $k = $m.Groups['code'].Value
         $ctx = Get-Ctx $m.Groups['body'].Value
-        if ($ctx) { $i + 'NN_EXIT(' + $e + ', ' + $k + ', "' + $ctx + '");' }
-        else      { $i + 'NN_EXIT(' + $e + ', ' + $k + ');' }
+        if ($ctx) { $i + 'EX_EXIT(' + $e + ', ' + $k + ', "' + $ctx + '");' }
+        else      { $i + 'EX_EXIT(' + $e + ', ' + $k + ');' }
     })
     if ($text -ne $orig) {
         $files++

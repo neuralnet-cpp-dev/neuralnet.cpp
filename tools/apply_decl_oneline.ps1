@@ -1,5 +1,5 @@
 # apply_decl_oneline.ps1 — 同行 声明+守卫：auto x = <expr>; if (!x) return std::unexpected(x.error());
-#   → NN_TRY(x, <expr>);
+#   → EX_TRY(x, <expr>);
 # 两个语句在一行（分号分隔）。expr 不含分号（正则非贪婪到第一个 ; 后的 if）。
 param([switch]$DryRun)
 $ErrorActionPreference = 'Stop'
@@ -16,7 +16,7 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         $script:n = 0
         $text = $re.Replace($orig, { param($m)
             $script:n++
-            $m.Groups[1].Value + 'NN_TRY(' + $m.Groups[2].Value + ', ' + $m.Groups[3].Value + ');'
+            $m.Groups[1].Value + 'EX_TRY(' + $m.Groups[2].Value + ', ' + $m.Groups[3].Value + ');'
         })
         if ($text -ne $orig) {
             $tf++
@@ -27,4 +27,4 @@ foreach ($r in @('include', 'src', 'tools', 'examples', 'bench')) {
         }
     }
 }
-Write-Output ("TOTAL decl-oneline -> NN_TRY = {0} files={1} (DryRun={2})" -f $tot, $tf, $DryRun)
+Write-Output ("TOTAL decl-oneline -> EX_TRY = {0} files={1} (DryRun={2})" -f $tot, $tf, $DryRun)

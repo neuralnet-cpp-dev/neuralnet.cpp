@@ -53,11 +53,11 @@ public:
     [[nodiscard]] const PrecisionProfile& precision_profile() const noexcept { return p_; }
 
     // forward 计算损失标量，并缓存 backward 所需中间结果
-    [[nodiscard]] virtual Result<Scalar> forward(ComputeEngine& engine, const Tensor& pred,
+    [[nodiscard]] virtual exstl::Result<Scalar> forward(ComputeEngine& engine, const Tensor& pred,
                                                  const Tensor& target) = 0;
 
     // backward 返回对 pred 的梯度
-    [[nodiscard]] virtual Result<Tensor> backward() = 0;
+    [[nodiscard]] virtual exstl::Result<Tensor> backward() = 0;
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -76,32 +76,32 @@ private:
 public:
     MSELoss() = default;
 
-    [[nodiscard]] Result<Scalar> forward(ComputeEngine& engine, const Tensor& pred,
+    [[nodiscard]] exstl::Result<Scalar> forward(ComputeEngine& engine, const Tensor& pred,
                                          const Tensor& target) override
     {
         if (pred.rows() != target.rows() || pred.cols() != target.cols())
-            NN_FAIL("mse loss: shape mismatch");
-        if (pred.size() == 0) NN_FAIL("mse loss: empty input");
+            EX_FAIL("mse loss: shape mismatch");
+        if (pred.size() == 0) EX_FAIL("mse loss: empty input");
         const Scalar total = static_cast<Scalar>(pred.size());
         const Scalar scale = Scalar{2} / total;
 
         // diff = pred - target（逐元素融合）
         auto diff = dsl::compute(engine, dsl::leaf(pred) - dsl::leaf(target), pred.rows(),
                                  pred.cols(), p_.stable);
-        NN_TRY_CHECK(diff);
+        EX_TRY_CHECK(diff);
         // Σ diff²：逐元素链与列归约融合为**单次** dispatch（GPU 上 1 个融合
         // kernel，不物化 diff_sq 中间张量；CPU 该路径更慢，但 GPU 是主战场）。
         // 必须在下面"就地缩放 diff"之前完成（缩放与 diff 共享缓冲）。
         auto col_sum =
             dsl::compute_reduce(engine, dsl::col_reduce_sum(dsl::leaf(*diff) * dsl::leaf(*diff)),
                                 diff->rows(), diff->cols(), p_.stable);
-        NN_TRY_CHECK(col_sum);
+        EX_TRY_CHECK(col_sum);
         // 归约步用 dsl::compute_reduce（col_sum (1,B) → 行归约 (1,1)）
         auto total_t = dsl::compute_reduce(engine, dsl::row_reduce_sum(dsl::leaf(*col_sum)),
                                            col_sum->rows(), col_sum->cols(), p_.stable);
-        NN_TRY_CHECK(total_t);
+        EX_TRY_CHECK(total_t);
         auto total_v = nn::download_vector(engine, *total_t);   // 宿主桥（17 §3 D11）
-        NN_TRY_CHECK(total_v);
+        EX_TRY_CHECK(total_v);
         const Scalar loss = (*total_v)[0] / total;
 
         // grad = diff * (2/N)：2/N 由 RParam 承载（值不进 expr_spec_key，同一
@@ -109,13 +109,13 @@ public:
         // （零额外分配；guard 已用完 diff²，且 grad_input_ 与 diff 共享缓冲
         // ——但此时 diff² 已取用，故不产生"平方被缩放值"的污染）。
         auto grad = dsl::compute_into(engine, dsl::leaf(*diff) * dsl::rparam(scale), *diff);
-        NN_TRY_CHECK(grad);
+        EX_TRY_CHECK(grad);
         grad_input_ = std::move(*diff);
 
         return loss;
     }
 
-    [[nodiscard]] Result<Tensor> backward() override { return grad_input_; }
+    [[nodiscard]] exstl::Result<Tensor> backward() override { return grad_input_; }
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -153,38 +153,38 @@ private:
     //   直接 log(softmax) 在极负 logits/大词表下 softmax→0 → log→-inf，
     //   与 target=0 相乘得 0*(-inf)=NaN；稳定形式中 shifted 与 log(col_sum)
     //   均有限，可避免该 NaN（稠密/软标签路径，稀疏 kernel 已用稳定形式）。
-    [[nodiscard]] Result<DenseSoftmax> softmax_cols_(ComputeEngine& engine,
+    [[nodiscard]] exstl::Result<DenseSoftmax> softmax_cols_(ComputeEngine& engine,
                                                      const Tensor& logits) const
     {
         // col_max 用 dsl::compute_reduce（归约向量 (1,cols)，供下面 col_broadcast）
         auto col_max = dsl::compute_reduce(engine, dsl::col_reduce_max(dsl::leaf(logits)),
                                            logits.rows(), logits.cols(), p_.stable);
-        NN_TRY_CHECK(col_max);
+        EX_TRY_CHECK(col_max);
         // denom = Σ_r exp(logits[r][c] - col_max[c]) 用 IR 表达式
         // （列归约 + ColBroadcast 视图 + exp，单 kernel，不物化 exp 张量）
         auto col_sum = dsl::compute_reduce(
             engine, dsl::col_reduce_sum(dsl::exp(dsl::leaf(logits) - dsl::col_broadcast(*col_max))),
             logits.rows(), logits.cols(), p_.stable);
-        NN_TRY_CHECK(col_sum);
+        EX_TRY_CHECK(col_sum);
         // shifted / softmax / log_softmax 全部用**列广播表达式**：GPU 上各为 1 个
         // 融合 kernel，不产生 (classes,batch) 的中间拷贝（列广播是表达式内的一次
         // 读取，不额外分配、不额外 dispatch）。
         auto shifted = dsl::compute(engine, dsl::leaf(logits) - dsl::col_broadcast(*col_max),
                                     logits.rows(), logits.cols(), p_.stable);
-        NN_TRY_CHECK(shifted);
+        EX_TRY_CHECK(shifted);
         auto softmax =
             dsl::compute(engine, dsl::exp(dsl::leaf(*shifted)) / dsl::col_broadcast(*col_sum),
                          shifted->rows(), shifted->cols(), p_.stable);
-        NN_TRY_CHECK(softmax);
+        EX_TRY_CHECK(softmax);
         // 稳定 log_softmax = shifted - log(col_sum)
         // col_sum ≥ 1（因 max 元素 shifted=0 → exp=1），故 log(col_sum) 有限
         auto log_col_sum = dsl::compute(engine, dsl::log(dsl::leaf(*col_sum)), col_sum->rows(),
                                         col_sum->cols(), p_.stable);
-        NN_TRY_CHECK(log_col_sum);
+        EX_TRY_CHECK(log_col_sum);
         auto log_softmax =
             dsl::compute(engine, dsl::leaf(*shifted) - dsl::col_broadcast(*log_col_sum),
                          shifted->rows(), shifted->cols(), p_.stable);
-        NN_TRY_CHECK(log_softmax);
+        EX_TRY_CHECK(log_softmax);
         return DenseSoftmax{/*softmax=*/std::move(*softmax),
                             /*log_softmax=*/std::move(*log_softmax)};
     }
@@ -192,18 +192,18 @@ private:
 public:
     CrossEntropyLoss() = default;
 
-    [[nodiscard]] Result<Scalar> forward(ComputeEngine& engine, const Tensor& logits,
+    [[nodiscard]] exstl::Result<Scalar> forward(ComputeEngine& engine, const Tensor& logits,
                                          const Tensor& target) override
     {
         const std::size_t classes = logits.rows();
         const std::size_t batch = logits.cols();
 
         if (target.rows() != classes || target.cols() != batch)
-            NN_FAIL("cross_entropy loss: shape mismatch");
-        if (classes == 0 || batch == 0) NN_FAIL("cross_entropy loss: empty input");
+            EX_FAIL("cross_entropy loss: shape mismatch");
+        if (classes == 0 || batch == 0) EX_FAIL("cross_entropy loss: empty input");
         // 1. softmax / log_softmax = softmax_cols(logits)（稳定形式）
         auto sm = softmax_cols_(engine, logits);
-        NN_TRY_CHECK(sm);
+        EX_TRY_CHECK(sm);
         // 2. grad = (softmax - target) / batch
         //    loss = -(1/batch) * Σ target * log_softmax，故
         //    d(loss)/d(logits) = (softmax - one_hot) / batch。
@@ -215,7 +215,7 @@ public:
                                  (dsl::leaf(sm->softmax) - dsl::leaf(target)) *
                                      dsl::rparam(Scalar{1} / static_cast<Scalar>(batch)),
                                  sm->softmax.rows(), sm->softmax.cols(), p_.stable);
-        NN_TRY_CHECK(grad);
+        EX_TRY_CHECK(grad);
         grad_input_ = std::move(*grad);
 
         // 3. log_softmax 已在 softmax_cols_ 内以数值稳定形式算出
@@ -232,18 +232,18 @@ public:
         auto col_s = dsl::compute_reduce(
             engine, dsl::col_reduce_sum(dsl::leaf(target) * dsl::leaf(sm->log_softmax)),
             target.rows(), target.cols(), p_.stable);
-        NN_TRY_CHECK(col_s);
+        EX_TRY_CHECK(col_s);
         // 归约步用 dsl::compute_reduce（(1,B) → (1,1)）
         auto total_t = dsl::compute_reduce(engine, dsl::row_reduce_sum(dsl::leaf(*col_s)),
                                            col_s->rows(), col_s->cols(), Precision::F32);
-        NN_TRY_CHECK(total_t);
+        EX_TRY_CHECK(total_t);
         // 6. loss = -total / batch — 下载标量
         auto total_v = nn::download_vector(engine, *total_t);   // 宿主桥（17 §3 D11）
-        NN_TRY_CHECK(total_v);
+        EX_TRY_CHECK(total_v);
         return -(*total_v)[0] / static_cast<Scalar>(batch);
     }
 
-    [[nodiscard]] Result<Tensor> backward() override { return grad_input_; }
+    [[nodiscard]] exstl::Result<Tensor> backward() override { return grad_input_; }
 
     // ── 稀疏标签版 forward：接受整数标签而非 one-hot 矩阵 ──────────
     //
@@ -269,7 +269,7 @@ public:
     // num_valid_out 回传有效 token 数；loss = -sum / num_valid。
     // 训练热循环用本接口 + engine.submit_scalar_readback 异步取 loss，
     // 避免每 step to_matrix 触发 end_batch + wait_in_flight 全流水线 drain。
-    [[nodiscard]] Result<Tensor> forward_sparse_sum(ComputeEngine& engine, const Tensor& logits,
+    [[nodiscard]] exstl::Result<Tensor> forward_sparse_sum(ComputeEngine& engine, const Tensor& logits,
                                                     std::span<const std::size_t> labels,
                                                     std::span<const Scalar> loss_mask,
                                                     std::size_t vocab_size,
@@ -280,26 +280,26 @@ public:
         const std::size_t total = logits.cols();
 
         if (vocab_size == 0) vocab_size = classes;
-        if (labels.size() != total) NN_FAIL("sparse CE: labels size mismatch");
+        if (labels.size() != total) EX_FAIL("sparse CE: labels size mismatch");
         if (!loss_mask.empty() && loss_mask.size() != total)
-            NN_FAIL("sparse CE: mask size mismatch");
-        if (classes == 0 || total == 0) NN_FAIL("sparse CE: empty input");
+            EX_FAIL("sparse CE: mask size mismatch");
+        if (classes == 0 || total == 0) EX_FAIL("sparse CE: empty input");
         // ── 融合路径（不物化全 softmax；失败直接透传错误，不降级） ──
         return fused_forward_sparse_(engine, logits, labels, loss_mask, vocab_size, num_valid_out,
                                      grad_reuse);
     }
 
     // 同步版稀疏 CE（测试/评估等非热路径）：内部下载标量（宿主桥，17 §3 D11）。
-    [[nodiscard]] Result<Scalar> forward_sparse(ComputeEngine& engine, const Tensor& logits,
+    [[nodiscard]] exstl::Result<Scalar> forward_sparse(ComputeEngine& engine, const Tensor& logits,
                                                 std::span<const std::size_t> labels,
                                                 std::span<const Scalar> loss_mask = {},
                                                 std::size_t vocab_size = 0)
     {
         std::size_t num_valid = 0;
         auto sum_t = forward_sparse_sum(engine, logits, labels, loss_mask, vocab_size, num_valid);
-        NN_TRY_CHECK(sum_t);
+        EX_TRY_CHECK(sum_t);
         auto sum_v = nn::download_vector(engine, *sum_t);
-        NN_TRY_CHECK(sum_v);
+        EX_TRY_CHECK(sum_v);
         return (num_valid > 0) ? -(*sum_v)[0] / static_cast<Scalar>(num_valid) : Scalar{0};
     }
 
@@ -312,7 +312,7 @@ public:
     //   grad     = (exp(logits - cb(lse)) - select(Row==cb(labels),1,0)) * cb(mask) * inv
     // exp(x−s) ≡ exp(x−m)/l（同一数学值；online 归约改变浮点结合序，容差口径）
     // 派发序：lse → loss_sum → grad（grad_reuse 原地覆写 logits，前两者须先读完）
-    [[nodiscard]] Result<Tensor> fused_forward_sparse_(ComputeEngine& engine, const Tensor& logits,
+    [[nodiscard]] exstl::Result<Tensor> fused_forward_sparse_(ComputeEngine& engine, const Tensor& logits,
                                                        std::span<const std::size_t> labels,
                                                        std::span<const Scalar> loss_mask,
                                                        std::size_t vocab_size,
@@ -329,7 +329,7 @@ public:
         for (std::size_t i = 0; i < total; ++i)
             labels_v[i] = static_cast<Scalar>((labels[i] < vocab_size) ? labels[i] : 0);
         auto labels_t = nn::upload_span(engine, 1, total, Precision::F32, std::span(labels_v));
-        NN_TRY_CHECK(labels_t);
+        EX_TRY_CHECK(labels_t);
         // 2. 有效 mask（总是构造，(1,total) 0/1；含 mask 缺失与 label 越界修正）：
         //    valid = (loss_mask 空 || mask[i]>=0.5) && labels[i] < vocab_size
         std::vector<Scalar> mask_v(total);
@@ -339,7 +339,7 @@ public:
             mask_v[i] = (!masked && labels[i] < vocab_size) ? Scalar{1} : Scalar{0};
         }
         auto mask_t = nn::upload_span(engine, 1, total, Precision::F32, std::span(mask_v));
-        NN_TRY_CHECK(mask_t);
+        EX_TRY_CHECK(mask_t);
         // 3. num_valid（与 mask 判定一致）
         std::size_t num_valid = 0;
         for (std::size_t i = 0; i < total; ++i)
@@ -353,17 +353,17 @@ public:
         //    网格 ← (classes, total) 存储，不物化转置副本（fold 收缩轴 = 词表行）。
         const nn::ExprSpec lse_spec = nn::expr::make_fold_logsumexp(
             classes, nn::expr::trans(static_cast<std::uint32_t>(total)));
-        NN_TRY(fv, nn::validate_expr_spec(lse_spec, 1));
+        EX_TRY(fv, nn::validate_expr_spec(lse_spec, 1));
         Tensor lse_rs;
         {
             NN_PROF_SCOPE("ce.fold");
             auto lse = engine.eval_expr(lse_spec, std::span<const Tensor>{&logits, 1}, total, 1,
                                         p_.stable);
-            NN_TRY_CHECK(lse);
+            EX_TRY_CHECK(lse);
             // (total,1) → (1,total)：reshape 零拷贝（GPU 元数据重贴；CPU 小拷贝），
             // 供下方 loss/grad 两条链按列广播（ColBroadcast 读 b[c]）取用
             auto lse_rs_r = engine.reshape(*lse, 1, total);
-            NN_TRY_CHECK(lse_rs_r);
+            EX_TRY_CHECK(lse_rs_r);
             lse_rs = std::move(*lse_rs_r);
         }
         // 5. loss_sum = Σ_c (logits[label[c]][c] − lse[c])·mask[c]（无效列已乘 0）
@@ -386,7 +386,7 @@ public:
                                                                dsl::col_broadcast(lse_rs)) *
                                                               dsl::col_broadcast(*mask_t)),
                                           1, total, Precision::F32);
-            NN_TRY_CHECK(tr);
+            EX_TRY_CHECK(tr);
             total_t = std::move(*tr);
         }
         // 6. grad[r][c] = (exp(logits−lse) − [r==label[c]]) · mask[c] / num_valid
@@ -410,13 +410,13 @@ public:
                 grad_reuse->cols() == total && grad_reuse->precision() == logits.precision())
             {
                 auto w = dsl::compute_into(engine, grad_expr, *grad_reuse);
-                NN_TRY_CHECK(w);
+                EX_TRY_CHECK(w);
                 grad_input_ = *grad_reuse;
             }
             else
             {
                 auto grad = dsl::compute(engine, grad_expr, classes, total, p_.stable);
-                NN_TRY_CHECK(grad);
+                EX_TRY_CHECK(grad);
                 grad_input_ = std::move(*grad);
             }
         }

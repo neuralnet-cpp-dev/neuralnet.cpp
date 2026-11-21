@@ -36,27 +36,27 @@ private:
     {
     }
 
-    [[nodiscard]] Result<Tensor*> value_(const FieldHandle& handle)
+    [[nodiscard]] exstl::Result<Tensor*> value_(const FieldHandle& handle)
     {
-        NN_TRY_CHECK(schema_.validate(handle));
+        EX_TRY_CHECK(schema_.validate(handle));
         return values_[handle.index].valid() ? &values_[handle.index] : nullptr;
     }
 
-    [[nodiscard]] Result<const Tensor*> value_(const FieldHandle& handle) const
+    [[nodiscard]] exstl::Result<const Tensor*> value_(const FieldHandle& handle) const
     {
-        NN_TRY_CHECK(schema_.validate(handle));
+        EX_TRY_CHECK(schema_.validate(handle));
         return values_[handle.index].valid() ? &values_[handle.index] : nullptr;
     }
 
-    [[nodiscard]] static Result<void> validate_value_(const TensorFieldSpec& field,
+    [[nodiscard]] static exstl::Result<void> validate_value_(const TensorFieldSpec& field,
                                                       const Tensor& value)
     {
-        if (!value.valid()) NN_FAIL("NamedTensorSet: 字段 '" + field.name + "' 是无效张量");
+        if (!value.valid()) EX_FAIL("NamedTensorSet: 字段 '" + field.name + "' 是无效张量");
         if (!field.shape.accepts(value.rows(), value.cols()))
-            NN_FAIL("NamedTensorSet: 字段 '" + field.name + "' 形状不匹配（期望 " +
+            EX_FAIL("NamedTensorSet: 字段 '" + field.name + "' 形状不匹配（期望 " +
                     field.shape.to_string() + "，实际 " + value.shape_str() + "）");
         if (field.precision && *field.precision != value.precision())
-            NN_FAIL("NamedTensorSet: 字段 '" + field.name + "' 精度不匹配（期望 " +
+            EX_FAIL("NamedTensorSet: 字段 '" + field.name + "' 精度不匹配（期望 " +
                     precision_name(*field.precision) + "，实际 " +
                     precision_name(value.precision()) + "）");
         if (field.placement != TensorPlacement::Any)
@@ -64,7 +64,7 @@ private:
             const TensorPlacement actual =
                 value.device() == Device::CPU ? TensorPlacement::CPU : TensorPlacement::GPU;
             if (field.placement != actual)
-                NN_FAIL("NamedTensorSet: 字段 '" + field.name + "' 设备不匹配（期望 " +
+                EX_FAIL("NamedTensorSet: 字段 '" + field.name + "' 设备不匹配（期望 " +
                         tensor_placement_name(field.placement) + "，实际 " +
                         tensor_placement_name(actual) + "）");
         }
@@ -79,10 +79,10 @@ public:
     NamedTensorSet& operator=(NamedTensorSet&&) noexcept = default;
     ~NamedTensorSet() = default;
 
-    [[nodiscard]] static Result<NamedTensorSet> create(TensorSchema schema,
+    [[nodiscard]] static exstl::Result<NamedTensorSet> create(TensorSchema schema,
                                                        std::vector<NamedTensor> tensors)
     {
-        if (!schema.valid()) NN_FAIL("NamedTensorSet::create: schema 未初始化");
+        if (!schema.valid()) EX_FAIL("NamedTensorSet::create: schema 未初始化");
 
         std::vector<Tensor> ordered(schema.size());
         std::vector<bool> seen(schema.size(), false);
@@ -91,14 +91,14 @@ public:
         for (const NamedTensor& nt : tensors)
         {
             auto h_r = schema.optional_field(nt.name);
-            NN_TRY_CHECK(h_r);
+            EX_TRY_CHECK(h_r);
             if (!h_r->valid())
-                NN_FAIL("NamedTensorSet::create: schema '" + schema.name() + "' 不认识字段 '" +
+                EX_FAIL("NamedTensorSet::create: schema '" + schema.name() + "' 不认识字段 '" +
                         nt.name + "'");
             if (seen[h_r->index])
-                NN_FAIL("NamedTensorSet::create: 字段 '" + nt.name + "' 重复出现");
+                EX_FAIL("NamedTensorSet::create: 字段 '" + nt.name + "' 重复出现");
             seen[h_r->index] = true;
-            NN_TRY_CHECK(validate_value_(schema.fields()[h_r->index], nt.value));
+            EX_TRY_CHECK(validate_value_(schema.fields()[h_r->index], nt.value));
             ordered[h_r->index] = nt.value;
             ++matched;
         }
@@ -106,10 +106,10 @@ public:
         for (std::size_t i = 0; i < schema.size(); ++i)
         {
             if (!seen[i] && schema.fields()[i].required)
-                NN_FAIL("NamedTensorSet::create: schema '" + schema.name() + "' 缺少必需字段 '" +
+                EX_FAIL("NamedTensorSet::create: schema '" + schema.name() + "' 缺少必需字段 '" +
                         schema.fields()[i].name + "'");
         }
-        if (tensors.size() != matched) NN_FAIL("NamedTensorSet::create: 输入字段计数不一致");
+        if (tensors.size() != matched) EX_FAIL("NamedTensorSet::create: 输入字段计数不一致");
 
         return NamedTensorSet(std::move(schema), std::move(ordered));
     }
@@ -118,21 +118,21 @@ public:
     [[nodiscard]] std::size_t size() const noexcept { return values_.size(); }
     [[nodiscard]] bool empty() const noexcept { return values_.empty(); }
 
-    [[nodiscard]] Result<FieldHandle> field(std::string_view name) const
+    [[nodiscard]] exstl::Result<FieldHandle> field(std::string_view name) const
     { return schema_.field(name); }
 
-    [[nodiscard]] Result<FieldHandle> optional_field(std::string_view name) const
+    [[nodiscard]] exstl::Result<FieldHandle> optional_field(std::string_view name) const
     { return schema_.optional_field(name); }
 
-    [[nodiscard]] Result<Tensor*> require(const FieldHandle& handle) { return value_(handle); }
+    [[nodiscard]] exstl::Result<Tensor*> require(const FieldHandle& handle) { return value_(handle); }
 
-    [[nodiscard]] Result<const Tensor*> require(const FieldHandle& handle) const
+    [[nodiscard]] exstl::Result<const Tensor*> require(const FieldHandle& handle) const
     { return value_(handle); }
 
     // setup 期便捷入口；热路径请先缓存 FieldHandle。
-    [[nodiscard]] Result<const Tensor*> require(std::string_view name) const
+    [[nodiscard]] exstl::Result<const Tensor*> require(std::string_view name) const
     {
-        NN_TRY(h, schema_.field(name));
+        EX_TRY(h, schema_.field(name));
         return require(*h);
     }
 
@@ -171,20 +171,20 @@ public:
     GradientBundle& operator=(GradientBundle&&) noexcept = default;
     ~GradientBundle() = default;
 
-    [[nodiscard]] static Result<GradientBundle> create(TensorSchema schema,
+    [[nodiscard]] static exstl::Result<GradientBundle> create(TensorSchema schema,
                                                        std::vector<NamedTensor> gradients)
     {
-        NN_TRY(values, NamedTensorSet::create(std::move(schema), std::move(gradients)));
+        EX_TRY(values, NamedTensorSet::create(std::move(schema), std::move(gradients)));
         return GradientBundle(std::move(*values));
     }
 
     [[nodiscard]] const TensorSchema& schema() const noexcept { return values_.schema(); }
     [[nodiscard]] std::size_t size() const noexcept { return values_.size(); }
-    [[nodiscard]] Result<FieldHandle> field(std::string_view name) const
+    [[nodiscard]] exstl::Result<FieldHandle> field(std::string_view name) const
     { return values_.field(name); }
-    [[nodiscard]] Result<const Tensor*> require(const FieldHandle& handle) const
+    [[nodiscard]] exstl::Result<const Tensor*> require(const FieldHandle& handle) const
     { return values_.require(handle); }
-    [[nodiscard]] Result<Tensor*> require(const FieldHandle& handle)
+    [[nodiscard]] exstl::Result<Tensor*> require(const FieldHandle& handle)
     { return values_.require(handle); }
     [[nodiscard]] const Tensor* find(const FieldHandle& handle) const noexcept
     { return values_.find(handle); }

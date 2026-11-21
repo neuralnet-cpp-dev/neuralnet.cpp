@@ -1,4 +1,4 @@
-// ───────────────────────────────────────────────────────────────────────────
+﻿// ───────────────────────────────────────────────────────────────────────────
 //  tokenizer_consistency_test.cpp — 分词器优化正确性仲裁
 //
 //  阶段2 优化对象与验证：
@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "test_common.hpp"
+#include <exstl/parallel.hpp>
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -326,7 +327,7 @@ std::string make_large_text(const std::vector<std::string>& lines, std::size_t t
 void check_encode_paths(nn::Tokenizer& tok, const std::string& text, const char* label,
                         bool roundtrip)
 {
-    const bool have_pool = nn::global_thread_pool().size() >= 2;
+    const bool have_pool = exstl::global_thread_pool().size() >= 2;
 
     // 顺序基准
     tok.set_encode_threads(1);

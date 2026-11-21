@@ -20,7 +20,7 @@
 // 退出码：0 = 通过，1 = 失败，77 = 跳过（--gpu 且无设备）
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -246,7 +246,7 @@ bool test_bitlinear_forward(nn::ComputeEngine& e, const char* dev)
     nn::PrecisionProfile t1;
     t1.param = nn::Precision::T1_58;
     layer.set_precision_profile(t1);
-    NN_UNWRAP(layer.init(e), "BitLinear init");
+    EX_UNWRAP(layer.init(e), "BitLinear init");
     const nn::Matrix xm = random_matrix(IN, B, 5);
     const nn::Tensor xt = upload(e, xm);
     auto y0 = layer.forward(xt);
@@ -300,7 +300,7 @@ bool test_bitlinear_backward(nn::ComputeEngine& e, const char* dev)
     nn::PrecisionProfile t1;
     t1.param = nn::Precision::T1_58;
     layer.set_precision_profile(t1);
-    NN_UNWRAP(layer.init(e), "BitLinear init");
+    EX_UNWRAP(layer.init(e), "BitLinear init");
     const nn::Matrix xm = random_matrix(IN, B, 9);
     const nn::Matrix dm = random_matrix(OUT, B, 13);
     const nn::Tensor xt = upload(e, xm);
@@ -313,7 +313,7 @@ bool test_bitlinear_backward(nn::ComputeEngine& e, const char* dev)
     auto gx0 = layer.backward(dt);
     CHECK(gx0.has_value(), "backward(f16) 成功");
     if (!gx0.has_value()) return false;
-    NN_UNWRAP(layer.zero_grad(), "zero_grad");
+    EX_UNWRAP(layer.zero_grad(), "zero_grad");
     layer.set_activation_quant(true);
     auto f1 = layer.forward(xt);
     CHECK(f1.has_value(), "forward(int8) 成功");
@@ -484,7 +484,7 @@ int main(int argc, char* argv[])
         nn::cli::EngineConfig ec;
         ec.use_gpu = true;
         auto eng_r = nn::cli::create_engine(ec);
-        NN_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
+        EX_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
         run_all(**eng_r, "GPU");
     }
     else

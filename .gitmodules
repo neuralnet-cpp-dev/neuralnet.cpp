@@ -1,3 +1,6 @@
 [submodule "engine"]
 	path = engine
 	url = git@github.com:neuralnet-cpp-dev/compute.neuralnet.cpp.git
+[submodule "exstl"]
+	path = exstl
+	url = git@github.com:neuralnet-cpp-dev/exstl.git

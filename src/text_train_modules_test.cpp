@@ -19,7 +19,7 @@
 // 退出码：0 = 通过，1 = 失败。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cstddef>
 #include <cstdio>
 #include <filesystem>
@@ -133,12 +133,12 @@ void test_role_gate_and_roundtrip(const std::filesystem::path& dir)
     nn::ComputeEngine& eng = *eng_owner;
     const nn::ModelSpec spec = tiny_spec();
     auto built = nn::build_gpt_model_from_spec(eng, spec);
-    NN_ASSERT_ALWAYS(built, "text_train_modules_test: 构建小 GPT 失败");
+    EX_ASSERT_ALWAYS(built, "text_train_modules_test: 构建小 GPT 失败");
     nn::Model original = std::move(*built);
 
     const std::string model_file = (dir / "gate.nnmodel").string();
     const std::string ckpt_file = (dir / "gate.nnckpt").string();
-    NN_ASSERT_ALWAYS(nn::cli::save_text_train_model(model_file, original, spec, kTokenizerBytes),
+    EX_ASSERT_ALWAYS(nn::cli::save_text_train_model(model_file, original, spec, kTokenizerBytes),
                      "text_train_modules_test: 写推理模型失败");
     nn::cli::TextTrainCheckpointLog log;
     nn::TextTrainState ckpt_state;   // P1-2：断点带训练状态段（本用例不挂优化器状态张量）
@@ -315,11 +315,11 @@ void test_role_gate_and_roundtrip(const std::filesystem::path& dir)
         t_spec.as<nn::GptSpec>()->weight_quant = nn::WeightQuant::T1_58;
         const nn::PrecisionProfile t1 = nn::profile_t1_58();
         auto src_r = nn::build_gpt_model_from_spec(eng, t_spec, t1);
-        NN_ASSERT_ALWAYS(src_r, "text_train_modules_test: 构建三值小 GPT 失败");
+        EX_ASSERT_ALWAYS(src_r, "text_train_modules_test: 构建三值小 GPT 失败");
         nn::Model src = std::move(*src_r);
 
         const std::string t_file = (dir / "ternary.nnmodel").string();
-        NN_ASSERT_ALWAYS(nn::cli::save_text_train_model(t_file, src, t_spec, kTokenizerBytes),
+        EX_ASSERT_ALWAYS(nn::cli::save_text_train_model(t_file, src, t_spec, kTokenizerBytes),
                          "text_train_modules_test: 写三值推理模型失败");
         {
             auto role = nn::peek_model_role(t_file);
@@ -394,7 +394,7 @@ void test_role_gate_and_roundtrip(const std::filesystem::path& dir)
         // 8 步 Adam：backward 可跑（不是只读部署态）、参数确实移动（P1-7 验收）
         auto opt = nn::create_optimizer("adam", eng, t_model.parameters(),
                                         t_model.param_gradients(), 1e-2f, 0.0f, t1);
-        NN_ASSERT_ALWAYS(opt != nullptr, "text_train_modules_test: 建三值优化器失败");
+        EX_ASSERT_ALWAYS(opt != nullptr, "text_train_modules_test: 建三值优化器失败");
         const std::vector<nn::Scalar> before = params_snapshot(eng, t_model);
 
         nn::CrossEntropyLoss ce;
@@ -457,7 +457,7 @@ void test_ckpt_accounting(const std::filesystem::path& dir)
     nn::ComputeEngine& eng = *eng_owner;
     const nn::ModelSpec spec = tiny_spec();
     auto built = nn::build_gpt_model_from_spec(eng, spec);
-    NN_ASSERT_ALWAYS(built, "text_train_modules_test: 构建小 GPT 失败");
+    EX_ASSERT_ALWAYS(built, "text_train_modules_test: 构建小 GPT 失败");
     nn::Model model = std::move(*built);
 
     // 失败路径：断点路径被目录占用 ⇒ 写入必然失败（只记账，不终止）
@@ -492,13 +492,13 @@ void test_train_state_wiring(const std::filesystem::path& dir)
     nn::ComputeEngine& eng = *eng_owner;
     const nn::ModelSpec spec = tiny_spec();
     auto built = nn::build_gpt_model_from_spec(eng, spec, nn::PrecisionProfile{});
-    NN_ASSERT_ALWAYS(built, "test_train_state_wiring: 构建小 GPT 失败");
+    EX_ASSERT_ALWAYS(built, "test_train_state_wiring: 构建小 GPT 失败");
     nn::Model model = std::move(*built);
 
     auto opt = nn::create_optimizer("adam", eng, model.parameters(), model.param_gradients(), 1e-3f,
                                     0.0f, nn::PrecisionProfile{}, 0.9f, 0.999f);
-    NN_ASSERT_ALWAYS(opt != nullptr, "test_train_state_wiring: 建优化器失败");
-    NN_ASSERT_ALWAYS(opt->step(), "test_train_state_wiring: 一步失败");
+    EX_ASSERT_ALWAYS(opt != nullptr, "test_train_state_wiring: 建优化器失败");
+    EX_ASSERT_ALWAYS(opt->step(), "test_train_state_wiring: 一步失败");
 
     nn::cli::TrainConfig cfg;
     cfg.save_path = (dir / "wire.nnmodel").string();
@@ -560,7 +560,7 @@ void test_train_state_wiring(const std::filesystem::path& dir)
     // 重启：新优化器（状态零初始化）→ 载入断点状态 → t 与张量恢复
     auto opt2 = nn::create_optimizer("adam", eng, model.parameters(), model.param_gradients(),
                                      1e-3f, 0.0f, nn::PrecisionProfile{}, 0.9f, 0.999f);
-    NN_ASSERT_ALWAYS(opt2 != nullptr, "test_train_state_wiring: 重建优化器失败");
+    EX_ASSERT_ALWAYS(opt2 != nullptr, "test_train_state_wiring: 重建优化器失败");
     CHECK(opt2->state_step() == 0, "新优化器的步计数器从 0 起（前置条件）");
     std::ostringstream out2;
     auto lr = nn::cli::load_optimizer_state(eng, path.string(), *opt2, out2);
@@ -576,7 +576,7 @@ void test_inference_model_role(const std::filesystem::path& dir)
     nn::ComputeEngine& eng = *eng_owner;
     const nn::ModelSpec spec = tiny_spec();
     auto built = nn::build_gpt_model_from_spec(eng, spec);
-    NN_ASSERT_ALWAYS(built, "text_train_modules_test: 构建小 GPT 失败");
+    EX_ASSERT_ALWAYS(built, "text_train_modules_test: 构建小 GPT 失败");
     nn::Model model = std::move(*built);
 
     const std::string path = (dir / "infer.nnmodel").string();

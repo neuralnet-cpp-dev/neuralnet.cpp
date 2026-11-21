@@ -1,4 +1,4 @@
-// ── train_state_test — v8 训练状态段 + 尾部校验和（P1-2 / P2-1）回归 ─────────
+﻿// ── train_state_test — v8 训练状态段 + 尾部校验和（P1-2 / P2-1）回归 ─────────
 //
 // 验收（docs/internal/18-roadmap.md §4.2 P1-2 + §4.3 P2-1、§8.2 门禁 7）：
 //   老文件缺段 = 冷启动语义；save→load→save 逐字节一致；截断/损坏文件明确报错。
@@ -34,6 +34,7 @@
 
 #define NN_TEST_COUNTER g_fail
 #include "test_common.hpp"
+#include <exstl/errors.hpp>
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -69,7 +70,7 @@ std::filesystem::path scratch_dir()
 [[nodiscard]] nn::ModelSpec tiny_spec()
 { return nn::make_gpt_spec(VOCAB, D_MODEL, SEQ_LEN, HEADS, D_FF, LAYERS); }
 
-[[nodiscard]] nn::Result<nn::Model> make_model(nn::ComputeEngine& engine)
+[[nodiscard]] exstl::Result<nn::Model> make_model(nn::ComputeEngine& engine)
 { return nn::build_gpt_model_from_spec(engine, tiny_spec(), nn::PrecisionProfile{}); }
 
 // ── 参数快照 / 逐位比较（[6] 用；顺序 = parameters()，逐元素 ==）─────────

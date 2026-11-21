@@ -31,7 +31,7 @@
 #include <utility>
 #include <vector>
 
-#include <neuralnet.cpp/core_errors.hpp>   // nn::Result / NN_FAIL / NN_TRY
+#include <exstl/errors.hpp>   // exstl::Result / EX_FAIL / EX_TRY
 
 namespace nn
 {
@@ -53,7 +53,7 @@ public:
 
     // 供给第 step_hint 个 batch（域自己决定来源：数据表 / 在线采集 / rollout）。
     // step_hint 从 0 开始，在一个 epoch（或一轮）内单调推进。
-    [[nodiscard]] virtual Result<BatchAt> next(std::size_t step_hint) = 0;
+    [[nodiscard]] virtual exstl::Result<BatchAt> next(std::size_t step_hint) = 0;
 
     // 每 epoch 步数；nullopt = 无固定 epoch（骨架退化为步进驱动）。
     [[nodiscard]] virtual std::optional<std::size_t> steps_per_epoch() const
@@ -61,7 +61,7 @@ public:
 
     // 断点定位：把内部游标移到 (epoch, start_step)。无固定 epoch 的域用空实现。
     // 有固定 epoch 的域在此重排样本顺序（每 epoch shuffle）。
-    [[nodiscard]] virtual Result<void> rewind(std::size_t /*epoch*/, std::size_t /*start_step*/)
+    [[nodiscard]] virtual exstl::Result<void> rewind(std::size_t /*epoch*/, std::size_t /*start_step*/)
     { return {}; }
 };
 
@@ -77,34 +77,34 @@ class IndexedBatchSource : public BatchSource
 public:
     // 域装配回调：给定本 batch 的样本下标 → 载荷 + 归一化单位。
     // 返回错误 = 装配失败（骨架向上冒泡，训练中止）。
-    using AssembleFn = std::function<Result<std::pair<std::any, std::size_t>>(
+    using AssembleFn = std::function<exstl::Result<std::pair<std::any, std::size_t>>(
         std::span<const std::size_t> indices)>;
 
     // 工厂（参数校验；构造函数私有 —— 与 TrainingSession/TextTrainer 同口径）
-    [[nodiscard]] static Result<IndexedBatchSource> create(std::size_t sample_count,
+    [[nodiscard]] static exstl::Result<IndexedBatchSource> create(std::size_t sample_count,
                                                            std::size_t batch_size,
                                                            std::uint64_t seed, AssembleFn assemble)
     {
-        if (batch_size == 0) NN_FAIL("IndexedBatchSource::create: batch_size 必须 > 0");
+        if (batch_size == 0) EX_FAIL("IndexedBatchSource::create: batch_size 必须 > 0");
         if (sample_count == 0)
-            NN_FAIL("IndexedBatchSource::create: sample_count 必须 > 0（训练集为空）");
-        if (!assemble) NN_FAIL("IndexedBatchSource::create: 装配回调不能为空");
+            EX_FAIL("IndexedBatchSource::create: sample_count 必须 > 0（训练集为空）");
+        if (!assemble) EX_FAIL("IndexedBatchSource::create: 装配回调不能为空");
         return IndexedBatchSource(sample_count, batch_size, seed, std::move(assemble));
     }
 
     // ── BatchSource ────────────────────────────────────────────────────
-    [[nodiscard]] Result<BatchAt> next(std::size_t step_hint) override
+    [[nodiscard]] exstl::Result<BatchAt> next(std::size_t step_hint) override
     {
         const std::size_t steps = *steps_per_epoch();
         if (step_hint >= steps)
-            NN_FAIL("IndexedBatchSource::next: step_hint " + std::to_string(step_hint) +
+            EX_FAIL("IndexedBatchSource::next: step_hint " + std::to_string(step_hint) +
                     " 超出本 epoch 步数 " + std::to_string(steps));
 
         const std::size_t offset = step_hint * batch_size_;
         const std::size_t n = std::min(batch_size_, sample_count_ - offset);
         const std::span<const std::size_t> indices(order_.data() + offset, n);
 
-        NN_TRY(assembled, assemble_(indices));
+        EX_TRY(assembled, assemble_(indices));
         BatchAt out;
         out.samples = n;
         out.units = assembled->second;
@@ -116,11 +116,11 @@ public:
     [[nodiscard]] std::optional<std::size_t> steps_per_epoch() const override
     { return (sample_count_ + batch_size_ - 1) / batch_size_; }
 
-    [[nodiscard]] Result<void> rewind(std::size_t epoch, std::size_t start_step) override
+    [[nodiscard]] exstl::Result<void> rewind(std::size_t epoch, std::size_t start_step) override
     {
         const std::size_t steps = *steps_per_epoch();
         if (start_step > steps)
-            NN_FAIL("IndexedBatchSource::rewind: start_step " + std::to_string(start_step) +
+            EX_FAIL("IndexedBatchSource::rewind: start_step " + std::to_string(start_step) +
                     " 超出每 epoch 步数 " + std::to_string(steps));
         // 单 RNG 流语义：从恒等序起，用同一 RNG 依次重放 0..epoch 共 epoch+1 次
         // shuffle —— 与"每 epoch 顺序推进同一 RNG 流"的取样语义一致，同时

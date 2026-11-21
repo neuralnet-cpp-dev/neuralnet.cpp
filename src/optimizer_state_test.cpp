@@ -14,7 +14,7 @@
 // 退出码：0 = 通过，1 = 失败。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -83,7 +83,7 @@ struct Fixture
             for (std::size_t k = 0; k < s.size(); ++k)
                 s[k] = 0.05f * static_cast<float>((static_cast<int>(k) * 7 + seed * 3) % 11 - 5) +
                        0.001f * static_cast<float>(pi);
-            NN_ASSERT_ALWAYS(engine.copy_from(params[pi], m), "upload params");
+            EX_ASSERT_ALWAYS(engine.copy_from(params[pi], m), "upload params");
         }
     }
 
@@ -99,7 +99,7 @@ struct Fixture
                 const int v = static_cast<int>((k * 13 + step * 29 + pi * 5) % 19) - 9;
                 s[k] = 0.01f * static_cast<float>(v);
             }
-            NN_ASSERT_ALWAYS(engine.copy_from(grads[pi], m), "upload grads");
+            EX_ASSERT_ALWAYS(engine.copy_from(grads[pi], m), "upload grads");
         }
     }
 
@@ -115,7 +115,7 @@ struct Fixture
     void step(nn::Optimizer& opt, std::size_t step_id)
     {
         set_grads(step_id);
-        NN_ASSERT_ALWAYS(opt.step(), "optimizer step");
+        EX_ASSERT_ALWAYS(opt.step(), "optimizer step");
     }
 };
 
@@ -306,7 +306,7 @@ void test_state_mismatch()
     for (std::size_t s = 0; s < 2; ++s)
         fx.step(*opt, s);
     std::vector<nn::Tensor> state;
-    NN_ASSERT_ALWAYS(opt->save_state(state), "save_state");
+    EX_ASSERT_ALWAYS(opt->save_state(state), "save_state");
 
     // 数量少了
     auto too_few = opt->load_state(std::span<const nn::Tensor>(state.data(), state.size() - 1));

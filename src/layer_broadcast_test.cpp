@@ -1,4 +1,4 @@
-// ── layer_broadcast_test — 复合层逐子层默认广播（issue #29）───────────────
+﻿// ── layer_broadcast_test — 复合层逐子层默认广播（issue #29）───────────────
 // 背景：set_precision_profile / set_training / clear_cache 原本没有默认转发，
 // 复合层漏写 = 静默错误（子层留在 f32 / eval 时 Dropout/BN 行为错 / 显存残留）。
 // v1.14.0 起基类默认按 param_children() 转发。本测试锁定：
@@ -11,6 +11,7 @@
 #include <iostream>
 #include <memory>
 #include <vector>
+#include <exstl/errors.hpp>
 import nn.cli;
 import nn.core;
 import nn.dataset;
@@ -43,8 +44,8 @@ namespace
 class RecordingLayer final : public nn::Layer
 {
 public:
-    [[nodiscard]] nn::Result<nn::Tensor> forward(const nn::Tensor& x) override { return x; }
-    [[nodiscard]] nn::Result<nn::Tensor> backward(const nn::Tensor& g) override { return g; }
+    [[nodiscard]] exstl::Result<nn::Tensor> forward(const nn::Tensor& x) override { return x; }
+    [[nodiscard]] exstl::Result<nn::Tensor> backward(const nn::Tensor& g) override { return g; }
     [[nodiscard]] const char* layer_name() const noexcept override { return "RecordingLayer"; }
 
     void set_training(bool t) override
@@ -68,8 +69,8 @@ class CompositeOnlyChildren final : public nn::Layer
 public:
     RecordingLayer a, b;
 
-    [[nodiscard]] nn::Result<nn::Tensor> forward(const nn::Tensor& x) override { return x; }
-    [[nodiscard]] nn::Result<nn::Tensor> backward(const nn::Tensor& g) override { return g; }
+    [[nodiscard]] exstl::Result<nn::Tensor> forward(const nn::Tensor& x) override { return x; }
+    [[nodiscard]] exstl::Result<nn::Tensor> backward(const nn::Tensor& g) override { return g; }
     [[nodiscard]] const char* layer_name() const noexcept override
     { return "CompositeOnlyChildren"; }
 
@@ -81,8 +82,8 @@ protected:
 class NoChildrenLayer final : public nn::Layer
 {
 public:
-    [[nodiscard]] nn::Result<nn::Tensor> forward(const nn::Tensor& x) override { return x; }
-    [[nodiscard]] nn::Result<nn::Tensor> backward(const nn::Tensor& g) override { return g; }
+    [[nodiscard]] exstl::Result<nn::Tensor> forward(const nn::Tensor& x) override { return x; }
+    [[nodiscard]] exstl::Result<nn::Tensor> backward(const nn::Tensor& g) override { return g; }
 };
 
 } // namespace

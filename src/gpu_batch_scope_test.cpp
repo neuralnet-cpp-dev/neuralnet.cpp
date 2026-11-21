@@ -13,7 +13,7 @@
 // 无 Vulkan 构建 / 无 GPU 设备 / 找不到 nn-kernelgen 库 → 返回 77 = ctest SKIP。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <chrono>
 #include <cstdio>
@@ -66,12 +66,12 @@ struct TempCacheFile
 };
 
 // 多 Conv 小模型：issue #28 的触发形态（第二次 Conv 分配处 OOM）
-nn::Result<nn::Model> make_conv_model(nn::ComputeEngine& eng)
+exstl::Result<nn::Model> make_conv_model(nn::ComputeEngine& eng)
 {
     nn::Model m(eng);
     // 位置参数：(in_channels, out_channels, kernel, stride, padding, in_h, in_w)
-    NN_TRY(c1, m.add<nn::Conv2D>(1, 8, 3, 1, 0, 8, 8));
-    NN_TRY(c2, m.add<nn::Conv2D>(8, 16, 3, 1, 0, 6, 6));
+    EX_TRY(c1, m.add<nn::Conv2D>(1, 8, 3, 1, 0, 8, 8));
+    EX_TRY(c2, m.add<nn::Conv2D>(8, 16, 3, 1, 0, 6, 6));
     return m;
 }
 

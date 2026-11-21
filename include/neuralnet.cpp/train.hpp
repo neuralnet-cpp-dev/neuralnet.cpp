@@ -15,12 +15,12 @@
 //
 //     auto engine = nn::create_cpu_engine();      // 或 nn::GpuEngine::create(backend)
 //     nn::Model model(*engine);
-//     NN_UNWRAP(model.add<nn::Linear>(784, 256));
-//     NN_UNWRAP(model.add<nn::ReLU>());
-//     NN_UNWRAP(model.add<nn::Linear>(256, 10));
+//     EX_UNWRAP(model.add<nn::Linear>(784, 256));
+//     EX_UNWRAP(model.add<nn::ReLU>());
+//     EX_UNWRAP(model.add<nn::Linear>(256, 10));
 //
 //     nn::TrainingConfig tcfg; tcfg.optimizer = "adam"; tcfg.lr = 1e-3f;
-//     auto session = NN_UNWRAP(nn::TrainingSession::create(std::move(model), tcfg));
+//     auto session = EX_UNWRAP(nn::TrainingSession::create(std::move(model), tcfg));
 //     nn::CrossEntropyLoss loss_fn;
 //
 //     // 每个 micro-batch：任务回调返回 output grad；Session 管累积/裁剪/update。

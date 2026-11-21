@@ -26,7 +26,7 @@
 #include <utility>
 #include <vector>
 
-#include <neuralnet.cpp/core_errors.hpp>      // nn::Result（read_kv）
+#include <exstl/errors.hpp>      // exstl::Result（read_kv）
 #include <neuralnet.cpp/model_keyvalue_record.hpp>  // nn::KeyValueRecord（write_kv/read_kv）
 
 #include "tensor_schema.hpp"
@@ -158,7 +158,7 @@ public:
     [[nodiscard]] virtual std::string summary(const ModelSpec& shell) const = 0;
     // 类型特有字段落盘（键名与既有扁平布局一致；缺失键读回默认值）
     virtual void write_kv(KeyValueRecord& kv) const = 0;
-    [[nodiscard]] virtual Result<void> read_kv(const KeyValueRecord& kv) = 0;
+    [[nodiscard]] virtual exstl::Result<void> read_kv(const KeyValueRecord& kv) = 0;
 };
 
 // ── MLP ───────────────────────────────────────────────────────────────────
@@ -183,7 +183,7 @@ public:
     }
     [[nodiscard]] std::string summary(const ModelSpec& shell) const override;
     void write_kv(KeyValueRecord& kv) const override;
-    [[nodiscard]] Result<void> read_kv(const KeyValueRecord& kv) override;
+    [[nodiscard]] exstl::Result<void> read_kv(const KeyValueRecord& kv) override;
 };
 
 // ── Transformer（MNIST ViT 风格编码器）────────────────────────────────────
@@ -213,7 +213,7 @@ public:
     }
     [[nodiscard]] std::string summary(const ModelSpec& shell) const override;
     void write_kv(KeyValueRecord& kv) const override;
-    [[nodiscard]] Result<void> read_kv(const KeyValueRecord& kv) override;
+    [[nodiscard]] exstl::Result<void> read_kv(const KeyValueRecord& kv) override;
 };
 
 // ── GPT（含 ALiBi/RoPE 变体；旧 ALiBi_GPT 数值 type 同归本类）──────────────
@@ -255,7 +255,7 @@ public:
     }
     [[nodiscard]] std::string summary(const ModelSpec& shell) const override;
     void write_kv(KeyValueRecord& kv) const override;
-    [[nodiscard]] Result<void> read_kv(const KeyValueRecord& kv) override;
+    [[nodiscard]] exstl::Result<void> read_kv(const KeyValueRecord& kv) override;
 };
 
 // ── CNN（LeNet 风格；MNIST）───────────────────────────────────────────────
@@ -293,7 +293,7 @@ public:
     }
     [[nodiscard]] std::string summary(const ModelSpec& shell) const override;
     void write_kv(KeyValueRecord& kv) const override;
-    [[nodiscard]] Result<void> read_kv(const KeyValueRecord& kv) override;
+    [[nodiscard]] exstl::Result<void> read_kv(const KeyValueRecord& kv) override;
 };
 
 // ── RAPT（ReLU-Linear Attention，causal LM）───────────────────────────────
@@ -325,7 +325,7 @@ public:
     }
     [[nodiscard]] std::string summary(const ModelSpec& shell) const override;
     void write_kv(KeyValueRecord& kv) const override;
-    [[nodiscard]] Result<void> read_kv(const KeyValueRecord& kv) override;
+    [[nodiscard]] exstl::Result<void> read_kv(const KeyValueRecord& kv) override;
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -639,7 +639,7 @@ inline void get_dims(const KeyValueRecord& kv, const char* key, std::vector<std:
 }
 } // namespace spec_kv_detail
 
-inline Result<void> MlpSpec::read_kv(const KeyValueRecord& kv)
+inline exstl::Result<void> MlpSpec::read_kv(const KeyValueRecord& kv)
 {
     using namespace spec_kv_detail;
     get_dims(kv, "layer_dims", layer_dims);
@@ -652,7 +652,7 @@ inline Result<void> MlpSpec::read_kv(const KeyValueRecord& kv)
     return {};
 }
 
-inline Result<void> TransformerSpec::read_kv(const KeyValueRecord& kv)
+inline exstl::Result<void> TransformerSpec::read_kv(const KeyValueRecord& kv)
 {
     using namespace spec_kv_detail;
     get_size(kv, "d_model", d_model);
@@ -672,7 +672,7 @@ inline Result<void> TransformerSpec::read_kv(const KeyValueRecord& kv)
     return {};
 }
 
-inline Result<void> GptSpec::read_kv(const KeyValueRecord& kv)
+inline exstl::Result<void> GptSpec::read_kv(const KeyValueRecord& kv)
 {
     using namespace spec_kv_detail;
     get_size(kv, "vocab_size", vocab_size);
@@ -703,7 +703,7 @@ inline Result<void> GptSpec::read_kv(const KeyValueRecord& kv)
     return {};
 }
 
-inline Result<void> CnnSpec::read_kv(const KeyValueRecord& kv)
+inline exstl::Result<void> CnnSpec::read_kv(const KeyValueRecord& kv)
 {
     using namespace spec_kv_detail;
     get_size(kv, "cnn_in_channels", cnn_in_channels);
@@ -726,7 +726,7 @@ inline Result<void> CnnSpec::read_kv(const KeyValueRecord& kv)
     return {};
 }
 
-inline Result<void> RaptSpec::read_kv(const KeyValueRecord& kv)
+inline exstl::Result<void> RaptSpec::read_kv(const KeyValueRecord& kv)
 {
     using namespace spec_kv_detail;
     get_size(kv, "vocab_size", vocab_size);

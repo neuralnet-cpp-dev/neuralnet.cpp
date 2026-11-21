@@ -23,7 +23,7 @@
 
 #pragma once
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -63,13 +63,13 @@ import nn.train;
 // Tensor 存储与静态直构工厂收归引擎私有后，测试的填数/对拍路径为：
 //   填数：宿主 Matrix 上写好 → upload(eng, m) 生成引擎张量
 //   对拍：download(eng, t) 取回宿主 Matrix（P=F32：f16 精确升位，不丢值）
-// NN_ASSERT_ALWAYS 兜底（与 close_to 同款）：引擎 I/O 失败属测试环境错误，非数值
+// EX_ASSERT_ALWAYS 兜底（与 close_to 同款）：引擎 I/O 失败属测试环境错误，非数值
 // 失败；**Release 测试构建（NDEBUG）下也必须终止**，否则随后的解引用 = UB（RV-01）。
 inline nn::Tensor upload(nn::ComputeEngine& e, const nn::Matrix& m,
                          nn::Precision p = nn::Precision::F32)
 {
     auto r = e.from_matrix(m, p);
-    NN_ASSERT_ALWAYS(r, "upload: engine.from_matrix failed");
+    EX_ASSERT_ALWAYS(r, "upload: engine.from_matrix failed");
     return std::move(*r);
 }
 
@@ -87,7 +87,7 @@ inline nn::Tensor upload(nn::ComputeEngine& e, const nn::MatrixT<nn::Precision::
 inline nn::Matrix download(nn::ComputeEngine& e, const nn::Tensor& t)
 {
     auto r = e.to_matrix(t);   // P=F32 默认：f16 存储精确升位
-    NN_ASSERT_ALWAYS(r, "download: engine.to_matrix failed");
+    EX_ASSERT_ALWAYS(r, "download: engine.to_matrix failed");
     return std::move(*r);
 }
 
@@ -152,7 +152,7 @@ inline nn::Scalar dot(const nn::Matrix& a, const nn::Matrix& b)
 inline bool close_to(const nn::Matrix& a, const nn::Matrix& b, nn::Scalar tol,
                      const std::string& name, std::size_t idx)
 {
-    NN_ASSERT_ALWAYS(a.rows() == b.rows() && a.cols() == b.cols(), "close_to: shape mismatch");
+    EX_ASSERT_ALWAYS(a.rows() == b.rows() && a.cols() == b.cols(), "close_to: shape mismatch");
     nn::Scalar max_abs = 0;
     nn::Scalar max_rel = 0;
     const auto& sa = a.span();

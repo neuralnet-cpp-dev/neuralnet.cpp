@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-#include <neuralnet.cpp/core_errors.hpp>
+#include <exstl/errors.hpp>
 #include "compute_engine.hpp"
 #include "model_container.hpp"
 #include "model_spec.hpp"
@@ -39,15 +39,15 @@ inline constexpr std::size_t MNIST_TF_NUM_LAYERS = 2;
 
 // ── 共享 CSV 行解析工具 ────────────────────────────────────────────────────
 // 解析单行 CSV（逗号分隔的浮点数）为 std::vector<Scalar>
-[[nodiscard]] inline Result<std::vector<Scalar>> parse_csv_line(const std::string& line)
+[[nodiscard]] inline exstl::Result<std::vector<Scalar>> parse_csv_line(const std::string& line)
 {
     std::vector<Scalar> values;
     std::stringstream ss(line);
     std::string token;
     while (std::getline(ss, token, ','))
     {
-        auto v = parse_number<Scalar>(token);
-        if (!v) NN_FAIL("CSV 含无效数字 '" + token + "': " + v.error().message);
+        auto v = exstl::parse_number<Scalar>(token);
+        if (!v) EX_FAIL("CSV 含无效数字 '" + token + "': " + v.error().message);
         values.push_back(*v);
     }
     return values;
@@ -58,12 +58,12 @@ inline constexpr std::size_t MNIST_TF_NUM_LAYERS = 2;
 // 输出：(784, 1) 列向量 Matrix
 // 底层解析实现；上层代码应优先使用 load_image_tensor_from_csv_line
 // （上层统一用 Tensor）。
-[[nodiscard]] inline Result<Matrix> load_image_from_csv_line(const std::string& csv_line)
+[[nodiscard]] inline exstl::Result<Matrix> load_image_from_csv_line(const std::string& csv_line)
 {
     auto values = parse_csv_line(csv_line);
-    NN_TRY_CHECK(values);
+    EX_TRY_CHECK(values);
     if (values->size() != MNIST_INPUT_DIM)
-        NN_FAIL("CSV 必须包含恰好 " + std::to_string(MNIST_INPUT_DIM) +
+        EX_FAIL("CSV 必须包含恰好 " + std::to_string(MNIST_INPUT_DIM) +
                 " 个值，实际: " + std::to_string(values->size()));
     Matrix img(MNIST_INPUT_DIM, 1);
     for (std::size_t i = 0; i < MNIST_INPUT_DIM; ++i)
@@ -74,11 +74,11 @@ inline constexpr std::size_t MNIST_TF_NUM_LAYERS = 2;
 // ── 从 CSV 行加载单张 MNIST 图片为 Tensor ────────────────────────────────
 // 上层统一使用 Tensor：内部调用 load_image_from_csv_line 得到 Matrix 后，
 // 通过 engine.from_matrix 上传至对应设备。
-[[nodiscard]] inline Result<Tensor> load_image_tensor_from_csv_line(const std::string& csv_line,
+[[nodiscard]] inline exstl::Result<Tensor> load_image_tensor_from_csv_line(const std::string& csv_line,
                                                                     ComputeEngine& engine)
 {
     auto mat_r = load_image_from_csv_line(csv_line);
-    NN_TRY_CHECK(mat_r);
+    EX_TRY_CHECK(mat_r);
     return engine.from_matrix(*mat_r);
 }
 
@@ -109,12 +109,12 @@ inline const std::vector<std::size_t>& MNIST_LAYER_DIMS = mnist_layer_dims();
 //   · 其余层   —— 拿 param 归一化为 f32 的 profile（它们不拥有"三值权重"
 //     这个概念，param 槽对其无意义；不归一化会被能力校验以
 //     "层 ReLU 不支持 param=t1_58" 拦下，属误报）。
-[[nodiscard]] inline Result<Model> build_mnist_mlp_model(
+[[nodiscard]] inline exstl::Result<Model> build_mnist_mlp_model(
     ComputeEngine& engine, const std::vector<std::size_t>& layer_dims = MNIST_LAYER_DIMS,
     NormType norm_type = NormType::LayerNorm, PrecisionProfile precision = PrecisionProfile{},
     bool inference_only = false)
 {
-    if (layer_dims.size() < 2) NN_FAIL("MLP layer_dims must have at least 2 elements");
+    if (layer_dims.size() < 2) EX_FAIL("MLP layer_dims must have at least 2 elements");
     const bool ternary = (precision.param == Precision::T1_58);
     PrecisionProfile plain = precision;
     if (ternary) plain.param = Precision::F32;
@@ -132,23 +132,23 @@ inline const std::vector<std::size_t>& MNIST_LAYER_DIMS = mnist_layer_dims();
             // inference_only = 部署构建（免 latent，权重由载入的打包字 + τ 接管）
             auto r = model.add_layer(std::make_unique<BitLinear>(in_dim, out_dim, inference_only),
                                      precision);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
         }
         else
         {
             auto r = model.add<Linear>(in_dim, out_dim);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
         }
 
         if (i < layer_dims.size() - 2)
         {
             {
                 auto r = model.add_layer(make_norm_layer(out_dim, norm_type));
-                NN_TRY_CHECK(r);
+                EX_TRY_CHECK(r);
             }
             {
                 auto r = model.add<GeLU>();
-                NN_TRY_CHECK(r);
+                EX_TRY_CHECK(r);
             }
         }
     }
@@ -163,7 +163,7 @@ inline const std::vector<std::size_t>& MNIST_LAYER_DIMS = mnist_layer_dims();
 //   Linear: d_model → 10（分类头）
 // norm_place：Final（默认，原版 ViT 的 ln_f）/ None（显式关闭 = 旧结构）；
 //   conv/head/both 属 CNN。旧模型文件缺 norm_place 键 → None → 不加。
-[[nodiscard]] inline Result<Model> build_mnist_transformer_model(
+[[nodiscard]] inline exstl::Result<Model> build_mnist_transformer_model(
     ComputeEngine& engine, std::size_t img_size = MNIST_IMG_SIZE,
     std::size_t patch_size = MNIST_PATCH_SIZE, std::size_t d_model = MNIST_TF_D_MODEL,
     std::size_t num_heads = MNIST_TF_NUM_HEADS, std::size_t d_ff = MNIST_TF_D_FF,
@@ -171,13 +171,13 @@ inline const std::vector<std::size_t>& MNIST_LAYER_DIMS = mnist_layer_dims();
     NormType norm_type = NormType::LayerNorm, NormPlace norm_place = NormPlace::Final)
 {
     if (img_size % patch_size != 0)
-        NN_FAIL("MNIST Transformer: img_size must be divisible by patch_size");
+        EX_FAIL("MNIST Transformer: img_size must be divisible by patch_size");
     if (d_model == 0 || num_heads == 0 || d_ff == 0 || num_layers == 0)
-        NN_FAIL("MNIST Transformer: parameters must be positive");
+        EX_FAIL("MNIST Transformer: parameters must be positive");
     if (d_model % num_heads != 0)
-        NN_FAIL("MNIST Transformer: d_model must be divisible by num_heads");
+        EX_FAIL("MNIST Transformer: d_model must be divisible by num_heads");
     if (norm_place != NormPlace::None && norm_place != NormPlace::Final)
-        NN_FAIL("MNIST Transformer: norm_place must be none/final (conv/head/both are CNN-only)");
+        EX_FAIL("MNIST Transformer: norm_place must be none/final (conv/head/both are CNN-only)");
     const std::size_t grid_size = img_size / patch_size;
     const std::size_t num_patches = grid_size * grid_size;
 
@@ -185,16 +185,16 @@ inline const std::vector<std::size_t>& MNIST_LAYER_DIMS = mnist_layer_dims();
     model.set_default_precision_profile(precision);   // 须在 add 之前：权重按精度创建
     {
         auto r = model.add<PatchEmbedding>(img_size, patch_size, d_model);
-        NN_TRY_CHECK(r);
+        EX_TRY_CHECK(r);
     }
     {
         auto r = model.add<TransformerEncoder>(d_model, num_heads, d_ff, num_layers, num_patches,
                                                norm_type, norm_place == NormPlace::Final);
-        NN_TRY_CHECK(r);
+        EX_TRY_CHECK(r);
     }
     {
         auto r = model.add<Linear>(d_model, MNIST_NUM_CLASSES);
-        NN_TRY_CHECK(r);
+        EX_TRY_CHECK(r);
     }
     return model;
 }
@@ -228,7 +228,7 @@ inline const std::vector<std::size_t>& MNIST_LAYER_DIMS = mnist_layer_dims();
 // `inference_only`（免 latent 构建根治）：载入 role=Model 的部署文件时置位，
 // 三值层（BitLinear）不分配 f32 latent（权重由打包字 + τ 接管，见 domain_gpt.hpp
 // 同款开关）。
-[[nodiscard]] inline Result<Model>
+[[nodiscard]] inline exstl::Result<Model>
 build_mnist_model_from_spec(ComputeEngine& engine, const ModelSpec& spec,
                             PrecisionProfile precision = PrecisionProfile{},
                             bool inference_only = false)
@@ -244,7 +244,7 @@ build_mnist_model_from_spec(ComputeEngine& engine, const ModelSpec& spec,
     if (wq == WeightQuant::T1_58)
     {
         if (!spec.is_mlp())
-            NN_FAIL("weight_quant=t1_58 该构建入口只支持 MLP 架构：GPT 走 "
+            EX_FAIL("weight_quant=t1_58 该构建入口只支持 MLP 架构：GPT 走 "
                     "build_gpt_model_from_spec，RAPT 与 MNIST Transformer（ViT 风格）"
                     "的三值接线尚未落地（见 docs/internal/21-quantized-weights.md §4.8.3）");
         precision.param = Precision::T1_58;
@@ -275,7 +275,7 @@ build_mnist_model_from_spec(ComputeEngine& engine, const ModelSpec& spec,
         return model;
     }
 
-    NN_FAIL("Invalid ModelSpec type for MNIST: expected MLP, Transformer, or CNN");
+    EX_FAIL("Invalid ModelSpec type for MNIST: expected MLP, Transformer, or CNN");
 }
 
 } // namespace nn

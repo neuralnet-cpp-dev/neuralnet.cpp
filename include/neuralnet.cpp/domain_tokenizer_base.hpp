@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <algorithm>
 #include <atomic>
@@ -26,9 +26,9 @@
 #include <unordered_set>
 #include <vector>
 
-#include <neuralnet.cpp/core_errors.hpp>     // Result / NN_FAIL / NN_TRY
-#include <neuralnet.cpp/core_parallel.hpp>   // nn::parallel_for_samples（并行预分词）
-#include <neuralnet.cpp/core_threadpool.hpp> // global_thread_pool
+#include <exstl/errors.hpp>     // Result / EX_FAIL / EX_TRY
+#include <exstl/parallel.hpp>   // exstl::parallel_for_samples（并行预分词）
+#include <exstl/threadpool.hpp> // global_thread_pool
 #include <neuralnet.cpp/dataset_format.hpp>  // KeyValueRecord / parse_nnvocab（词表持久化）
 
 namespace nn
@@ -121,19 +121,19 @@ public:
 
     // 词表 kvrec → 词表（load_from_kvrec 与 JSON 的 load_from_string 语义对齐：
     // markers 存在则按存储值绑定、缺省才走 restore_dialogue_markers 推导）
-    [[nodiscard]] virtual Result<void> load_from_kvrec(const KeyValueRecord& rec)
+    [[nodiscard]] virtual exstl::Result<void> load_from_kvrec(const KeyValueRecord& rec)
     {
         std::string type_str;
         if (!rec.get("type", type_str) || type_str != kvrec_type_str())
-            NN_FAIL("词表 kvrec 类型不匹配（期望 " + std::string(kvrec_type_str()) + "，实际 '" +
+            EX_FAIL("词表 kvrec 类型不匹配（期望 " + std::string(kvrec_type_str()) + "，实际 '" +
                     type_str + "'）");
         std::string blob;
-        if (!rec.get("vocab", blob)) NN_FAIL("词表 kvrec 缺少 vocab 字段");
-        NN_TRY(v, decode_vocab_blob(blob));
+        if (!rec.get("vocab", blob)) EX_FAIL("词表 kvrec 缺少 vocab 字段");
+        EX_TRY(v, decode_vocab_blob(blob));
 
         std::vector<std::uint64_t> flat;
         if (rec.get("merges", flat) && flat.size() % 3 != 0)
-            NN_FAIL("词表 kvrec merges 长度错误（须为三元组展平）");
+            EX_FAIL("词表 kvrec merges 长度错误（须为三元组展平）");
         merges_.clear();
         merges_.reserve(flat.size() / 3);
         for (std::size_t i = 0; i + 2 < flat.size(); i += 3)
@@ -163,23 +163,23 @@ public:
     }
 
     // ── 词表文件读写（.nnvocab）────────────────────────────────────────
-    [[nodiscard]] virtual Result<void> save(const std::string& path) const
+    [[nodiscard]] virtual exstl::Result<void> save(const std::string& path) const
     {
         std::ofstream ofs(path, std::ios::binary);
-        if (!ofs) NN_FAIL("Cannot write: " + path);
+        if (!ofs) EX_FAIL("Cannot write: " + path);
         const std::string bytes = write_nnvocab(to_kvrec());
         ofs.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-        if (!ofs) NN_FAIL("Write error while writing: " + path);
+        if (!ofs) EX_FAIL("Write error while writing: " + path);
         return {};
     }
 
-    [[nodiscard]] virtual Result<void> load(const std::string& path)
+    [[nodiscard]] virtual exstl::Result<void> load(const std::string& path)
     {
         std::ifstream ifs(path, std::ios::binary);
-        if (!ifs) NN_FAIL("Cannot read: " + path);
+        if (!ifs) EX_FAIL("Cannot read: " + path);
         std::string content((std::istreambuf_iterator<char>(ifs)),
                             std::istreambuf_iterator<char>());
-        NN_TRY(rec, parse_nnvocab(content));
+        EX_TRY(rec, parse_nnvocab(content));
         return load_from_kvrec(*rec);
     }
 
@@ -198,7 +198,7 @@ public:
 
     // ── 从 JSON 字符串加载（纯内存解析，零磁盘 I/O） ──────────────
     // 子类重写此方法以支持从 JSON 字符串直接加载词表。
-    [[nodiscard]] virtual Result<void> load_from_string(const std::string& json_content) = 0;
+    [[nodiscard]] virtual exstl::Result<void> load_from_string(const std::string& json_content) = 0;
 
     // ── encode 并行度（保序并行，机制见 protected encode_segments_） ──────
     //   0 = 自动（全局线程池全部核心；文本小于阈值时仍走顺序路径）
@@ -954,7 +954,7 @@ protected:
         std::vector<std::size_t> all_ids;
         if (text.empty()) return all_ids;
 
-        auto& pool = global_thread_pool();
+        auto& pool = exstl::global_thread_pool();
         const std::size_t n_threads = (encode_threads_ == 0)
                                           ? pool.size()
                                           : std::min<std::size_t>(encode_threads_, pool.size());
@@ -1034,7 +1034,7 @@ protected:
             return global;
         }
 
-        auto& pool = global_thread_pool();
+        auto& pool = exstl::global_thread_pool();
         if (threads == 0) threads = pool.size();                     // 自动：线程池全部核心
         else if (threads > 1) threads = std::min(threads, pool.size()); // 指定并行度，收敛到池大小
         if (threads <= 1)
@@ -1156,7 +1156,7 @@ encode_docs_parallel(const Tokenizer& tokenizer, const std::vector<std::string>&
     {
         const std::size_t chunk = (total + n_threads - 1) / n_threads;
         const std::size_t n_chunks = (total + chunk - 1) / chunk;
-        parallel_for_samples(n_chunks,
+        exstl::parallel_for_samples(n_chunks,
                              [&](std::size_t c)
                              {
                                  const std::size_t begin = c * chunk;

@@ -7,7 +7,7 @@
 //   [4] group move 后 Session/optimizer TensorRef 仍可训练。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <memory>
 #include <string>
 #include <utility>
@@ -36,22 +36,22 @@ namespace
 nn::TensorSchema role_schema(std::string name)
 {
     auto r = nn::TensorSchema::create(std::move(name), {nn::tensor_field("output")});
-    NN_ASSERT_ALWAYS(r, "role_schema");
+    EX_ASSERT_ALWAYS(r, "role_schema");
     return std::move(*r);
 }
 
-nn::Result<nn::Model> make_model(nn::ComputeEngine& engine, std::string role, std::size_t in = 3,
+exstl::Result<nn::Model> make_model(nn::ComputeEngine& engine, std::string role, std::size_t in = 3,
                                  std::size_t out = 2)
 {
     nn::Model model(engine);
     model.set_output_schema(role_schema("role_" + role));
-    NN_TRY_CHECK(model.add<nn::Linear>(in, out));
+    EX_TRY_CHECK(model.add<nn::Linear>(in, out));
     return model;
 }
 
-nn::Result<nn::TrainingSession> make_session(nn::ComputeEngine& engine, std::string role)
+exstl::Result<nn::TrainingSession> make_session(nn::ComputeEngine& engine, std::string role)
 {
-    NN_TRY(model, make_model(engine, std::move(role)));
+    EX_TRY(model, make_model(engine, std::move(role)));
     nn::TrainingConfig cfg;
     cfg.optimizer = "adamw";
     cfg.lr = 0.01f;
@@ -66,14 +66,14 @@ void train_one_microstep(nn::TrainingSession& session)
     auto report =
         session.train_step(x, opts,
                            [](nn::Model& model, nn::ComputeEngine& engine,
-                              const nn::Tensor& input) -> nn::Result<nn::TrainingStepOutput>
+                              const nn::Tensor& input) -> exstl::Result<nn::TrainingStepOutput>
                            {
-                               NN_TRY(out, model.forward(input));
+                               EX_TRY(out, model.forward(input));
                                nn::MSELoss loss;
                                auto target =
                                    make_tensor(engine, out->rows(), out->cols(), 0.0f, 0.0f);
-                               NN_TRY_CHECK(loss.forward(engine, *out, target));
-                               NN_TRY(grad, loss.backward());
+                               EX_TRY_CHECK(loss.forward(engine, *out, target));
+                               EX_TRY(grad, loss.backward());
                                return nn::TrainingStepOutput{
                                    .grad = std::move(*grad),
                                    .gradient_units = 2,
@@ -157,7 +157,7 @@ void test_rejections()
     {
         CHECK(group.add_readonly_role("help", std::move(*readonly)).has_value(),
               "readonly role added");
-        CHECK(!group.add_readonly_role("help", NN_UNWRAP(make_model(*engine, "help2"))),
+        CHECK(!group.add_readonly_role("help", EX_UNWRAP(make_model(*engine, "help2"))),
               "duplicate readonly role rejected");
     }
 }

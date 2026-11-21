@@ -22,7 +22,7 @@
 #include <cstdio>
 #include <vector>
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include "test_common.hpp"
 import nn.engine;
 import nn.expr;
@@ -41,7 +41,7 @@ int g_fail = 0;
 // ── 参考：逐元素加 bias（CPU span 循环，**独立于**被测的 eval_expr/DSL 路径）──
 nn::Tensor add_bias(nn::ComputeEngine& e, const nn::Tensor& a, const nn::Tensor& bias)
 {
-    NN_ASSERT_ALWAYS(a.rows() == bias.rows() && a.cols() == bias.cols(),
+    EX_ASSERT_ALWAYS(a.rows() == bias.rows() && a.cols() == bias.cols(),
                      "add_bias: shape mismatch");
     nn::Matrix out(a.rows(), a.cols());
     const nn::Matrix ma = download(e, a);

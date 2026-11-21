@@ -128,7 +128,7 @@ public:
         return sup;
     }
 
-    [[nodiscard]] Result<void> init_impl(ComputeEngine& engine) override
+    [[nodiscard]] exstl::Result<void> init_impl(ComputeEngine& engine) override
     {
         // 部署构建（inference_only）：**不分配 latent** —— 权重完全由载入的
         // 打包字 + τ 接管，层直接从 packed-only 只读态起步（免载入期瞬时峰值）。
@@ -142,10 +142,10 @@ public:
             const Scalar limit = std::sqrt(6.0 / static_cast<Scalar>(in_features_ + out_features_));
             latent_w_ = engine.create_tensor(out_features_, in_features_, Precision::F32,
                                              InitSpec::uniform(-limit, limit, kInitSeed));
-            if (!latent_w_.valid()) NN_FAIL("BitLinear: latent 权重初始化失败");
+            if (!latent_w_.valid()) EX_FAIL("BitLinear: latent 权重初始化失败");
         }
         b_ = engine.create_tensor(out_features_, 1, Precision::F32, InitSpec::zero());
-        if (!b_.valid()) NN_FAIL("BitLinear: 偏置初始化失败");
+        if (!b_.valid()) EX_FAIL("BitLinear: 偏置初始化失败");
         // L4：训练态（有 latent）在 init 期就把梯度缓冲分进**持久池**，与
         // latent/bias 同池；留到 backward 的 batch 内首次触发会落进瞬态池，
         // 却全程存活，把池底钉块。部署态（packed_only_）不分配，等
@@ -159,7 +159,7 @@ public:
         if (!packed_only_)
         {
             tau_ = engine.create_tensor(out_features_, 1, Precision::F32, InitSpec::zero());
-            if (!tau_.valid()) NN_FAIL("BitLinear: 尺度缓冲初始化失败");
+            if (!tau_.valid()) EX_FAIL("BitLinear: 尺度缓冲初始化失败");
         }
         return {};
     }
@@ -220,12 +220,12 @@ public:
     // 时解回 2-bit 容器——层只认运行期形态（L2 不碰宿主字节/Matrix）。
     [[nodiscard]] std::size_t param_count() override { return 2; }
 
-    [[nodiscard]] Result<ParamEntry> export_param(std::size_t index, ModelRole role) override
+    [[nodiscard]] exstl::Result<ParamEntry> export_param(std::size_t index, ModelRole role) override
     {
         if (index == 1)   // 偏置：恒 Dense（不做三值量化，BitNet 同款）
             return dense_entry_(b_);
         if (index != 0)
-            NN_FAIL("BitLinear::export_param: 参数下标越界（期望 0/1，实际 " +
+            EX_FAIL("BitLinear::export_param: 参数下标越界（期望 0/1，实际 " +
                     std::to_string(index) + "）");
         ParamEntry e;
         e.rows = out_features_;
@@ -233,7 +233,7 @@ public:
         if (role == ModelRole::Checkpoint)
         {
             if (!latent_w_.valid())
-                NN_FAIL("BitLinear::export_param: 打包只读态没有 latent —— "
+                EX_FAIL("BitLinear::export_param: 打包只读态没有 latent —— "
                         "本模型来自推理文件（.nnmodel），不能按断点角色（.nnckpt）导出");
             e.kind = ParamKind::TernaryLatent;
             e.precision = Precision::F32;
@@ -241,9 +241,9 @@ public:
             return e;
         }
         // 推理角色：打包形态（0.25 B/权重容器 + τ）
-        NN_TRY(q, ensure_quantized());
+        EX_TRY(q, ensure_quantized());
         if (!use_packed_ || !wq_packed_.valid() || !tau_.valid())
-            NN_FAIL("BitLinear::export_param: 打包派生物不可用（缓冲形态被切到 f16 稠密）；"
+            EX_FAIL("BitLinear::export_param: 打包派生物不可用（缓冲形态被切到 f16 稠密）；"
                     "推理文件要求打包形态");
         e.kind = ParamKind::TernaryPacked2;
         e.precision = Precision::F32;   // 容器按 f32 张量承载原始字
@@ -252,17 +252,17 @@ public:
         return e;
     }
 
-    [[nodiscard]] Result<void> import_param(std::size_t index, const ParamEntry& entry) override
+    [[nodiscard]] exstl::Result<void> import_param(std::size_t index, const ParamEntry& entry) override
     {
         if (index == 1)
         {
             if (entry.kind != ParamKind::Dense)
-                NN_FAIL(std::string("BitLinear::import_param: 偏置必须是 Dense，实际 kind=") +
+                EX_FAIL(std::string("BitLinear::import_param: 偏置必须是 Dense，实际 kind=") +
                         param_kind_name(entry.kind));
             return import_into_(b_, entry);
         }
         if (index != 0)
-            NN_FAIL("BitLinear::import_param: 参数下标越界（期望 0/1，实际 " +
+            EX_FAIL("BitLinear::import_param: 参数下标越界（期望 0/1，实际 " +
                     std::to_string(index) + "）");
         switch (entry.kind)
         {
@@ -274,14 +274,14 @@ public:
                 // 默认打包缓冲形态；量化缓存作废（首次 forward 会重算）。
                 latent_w_ = engine_ref().create_tensor(out_features_, in_features_, Precision::F32,
                                                        InitSpec::zero());
-                NN_UNWRAP(latent_w_.valid(), "BitLinear: latent 恢复失败");
+                EX_UNWRAP(latent_w_.valid(), "BitLinear: latent 恢复失败");
                 packed_only_ = false;
                 use_packed_ = true;
                 ensure_quant_buffer_();
                 ensure_grad_();   // L4：恢复可训练时补建梯度缓冲（载入期，持久池）
             }
             quant_valid_ = false;
-            NN_TRY_CHECK(import_into_(latent_w_, entry));
+            EX_TRY_CHECK(import_into_(latent_w_, entry));
             // ── P1-7：反量化 warm start（aux = 文件里的 τ）────────────────
             // 反量化本身在序列化层（宿主侧逐位解码；L2 不碰宿主字节/Matrix），
             // 层这边只做**播种**：直接用文件 τ 重建打包派生物。这样首次
@@ -292,9 +292,9 @@ public:
             // 的 latent_row_scale：非零位置 |L| = τ·K/n ≥ τ > 0.5τ）。
             if (!entry.aux.valid()) return {};   // .nnckpt 语义：无 τ，首 forward 自行量化
             if (entry.aux.precision() != Precision::F32)
-                NN_FAIL("BitLinear::import_param: 反量化 warm start 的 τ 必须是 f32");
+                EX_FAIL("BitLinear::import_param: 反量化 warm start 的 τ 必须是 f32");
             if (entry.aux.rows() != out_features_ || entry.aux.cols() != 1)
-                NN_FAIL("BitLinear::import_param: τ 形状与层不匹配（期望 " +
+                EX_FAIL("BitLinear::import_param: τ 形状与层不匹配（期望 " +
                         std::to_string(out_features_) + "x1）");
             tau_ = entry.aux;
             // 播种的是**打包**缓存 ⇒ 把缓冲形态钉成打包（覆盖此前的 A/B
@@ -302,7 +302,7 @@ public:
             force_pack_ = 1;
             use_packed_ = true;
             ensure_quant_buffer_();
-            NN_TRY(packed, engine_ref().trit_pack(latent_w_, tau_));
+            EX_TRY(packed, engine_ref().trit_pack(latent_w_, tau_));
             wq_packed_ = std::move(*packed);
             quant_epoch_ = latent_w_.write_epoch();
             quant_valid_ = true;
@@ -311,14 +311,14 @@ public:
         }
         case ParamKind::TernaryPacked2:
         {
-            if (!entry.aux.valid()) NN_FAIL("BitLinear::import_param: 打包形态缺少 τ（aux）");
+            if (!entry.aux.valid()) EX_FAIL("BitLinear::import_param: 打包形态缺少 τ（aux）");
             const std::size_t wpr = nn::trit_pack::words_per_row(in_features_);
             if (entry.rows != out_features_ || entry.payload.rows() != out_features_ ||
                 entry.payload.cols() != wpr)
-                NN_FAIL("BitLinear::import_param: 打包字形状与层不匹配（期望 " +
+                EX_FAIL("BitLinear::import_param: 打包字形状与层不匹配（期望 " +
                         std::to_string(out_features_) + "x" + std::to_string(wpr) + "）");
             if (entry.aux.rows() != out_features_ || entry.aux.cols() != 1)
-                NN_FAIL("BitLinear::import_param: τ 形状与层不匹配（期望 " +
+                EX_FAIL("BitLinear::import_param: τ 形状与层不匹配（期望 " +
                         std::to_string(out_features_) + "x1）");
             // 打包只读态：只保留打包字 + τ（推理足迹 0.25 B/权重 + τ）
             force_pack_ = 1;
@@ -334,7 +334,7 @@ public:
             return {};
         }
         default:
-            NN_FAIL(std::string("BitLinear::import_param: 不接受该参数形态（kind=") +
+            EX_FAIL(std::string("BitLinear::import_param: 不接受该参数形态（kind=") +
                     param_kind_name(entry.kind) + "，可接受 {TernaryLatent, TernaryPacked2}）");
         }
     }
@@ -356,15 +356,15 @@ public:
     // 载入"打包字 + τ"并把本层切成**只读推理**态：释放 latent（这一项就是部署态
     // 的全部收益：4 B/权重 → 0）、释放梯度与 f16 稠密缓冲。τ 一并载入是为了
     // **逐位复现**训练时的有效权重 τ∘W（重新量化会得到 mean|trit|·τ 的比例差异）。
-    [[nodiscard]] Result<void> load_packed_weights(Tensor packed_words, Tensor tau)
+    [[nodiscard]] exstl::Result<void> load_packed_weights(Tensor packed_words, Tensor tau)
     {
-        if (!packed_words.valid() || !tau.valid()) NN_FAIL("BitLinear: 部署权重为空张量");
+        if (!packed_words.valid() || !tau.valid()) EX_FAIL("BitLinear: 部署权重为空张量");
         if (packed_words.rows() != out_features_ ||
             packed_words.cols() != nn::trit_pack::words_per_row(in_features_))
-            NN_FAIL("BitLinear: 部署打包字形状与层不匹配（期望 " + std::to_string(out_features_) +
+            EX_FAIL("BitLinear: 部署打包字形状与层不匹配（期望 " + std::to_string(out_features_) +
                     "x" + std::to_string(nn::trit_pack::words_per_row(in_features_)) + "）");
         if (tau.rows() != out_features_ || tau.cols() != 1)
-            NN_FAIL("BitLinear: 部署 τ 形状与层不匹配（期望 " + std::to_string(out_features_) +
+            EX_FAIL("BitLinear: 部署 τ 形状与层不匹配（期望 " + std::to_string(out_features_) +
                     "x1）");
         force_pack_ = 1;
         use_packed_ = true;
@@ -386,7 +386,7 @@ public:
 
     // 导出（部署落盘）用：确保打包派生物与当前 latent 同步。**不改**推理语义，
     // 只在量化缓存失效时补一次量化（与 forward 里的那条路径同一实现）。
-    [[nodiscard]] Result<void> ensure_quantized()
+    [[nodiscard]] exstl::Result<void> ensure_quantized()
     {
         if (needs_quantize_()) return quantize_weights_();
         return {};
@@ -414,22 +414,22 @@ public:
     }
 
     // ── forward：量化（τ + wq）→ 去量化点积 ─────────────────────────────
-    [[nodiscard]] Result<Tensor> forward(const Tensor& input) override
+    [[nodiscard]] exstl::Result<Tensor> forward(const Tensor& input) override
     {
         ComputeEngine& engine = engine_ref();
-        if (input.rows() != in_features_) NN_FAIL("bitlinear forward: input shape mismatch");
+        if (input.rows() != in_features_) EX_FAIL("bitlinear forward: input shape mismatch");
         // 部署态：只允许"打包字 + τ"这条路（引擎不支持三值 GEMM 就没法跑）
         if (packed_only_ && !(use_packed_ && wq_packed_.valid() && tau_.valid()))
-            NN_FAIL("BitLinear(packed-only)：部署态缺少打包权重/τ（载入失败或缓冲被清）");
+            EX_FAIL("BitLinear(packed-only)：部署态缺少打包权重/τ（载入失败或缓冲被清）");
         // int8 激活需要打包权重路径（matmul_q_i8 的解码基于打包容器）
         if (act_quant_ && !(use_packed_ && wq_packed_.valid()))
-            NN_FAIL("BitLinear: int8 激活量化需要打包权重路径（set_ternary_pack_enabled(true)）");
+            EX_FAIL("BitLinear: int8 激活量化需要打包权重路径（set_ternary_pack_enabled(true)）");
         // 缓冲形态：默认跟随引擎能力（分块解码版下训练/解码都不亏，见成员注释）；
         // `set_ternary_pack_enabled` 之后走强制模式。换形态即作废量化缓存。
         sync_buffer_mode_();
         // τ / wq 只在 latent 权重变过时重算（同权重下的 N 次 forward 共享）。
         // 重算失败：直接上抛（不静默沿用上一步的旧缓冲）。
-        if (needs_quantize_()) { NN_TRY(q, quantize_weights_()); }
+        if (needs_quantize_()) { EX_TRY(q, quantize_weights_()); }
 
         // ── int8 激活（W1.58A8，P3）：Y = (τ∘W)·(s∘Q) + b ──────────────
         // s = per-token absmax/127（(1,N)：col_reduce_max(|X|)·(1/127)，docs 21
@@ -440,18 +440,18 @@ public:
         // backward 的 dW 直接反量化 Q 使用（STE）。
         if (act_quant_)
         {
-            NN_TRY(xabs, dsl::compute(engine, dsl::abs(dsl::leaf(input)), input.rows(),
+            EX_TRY(xabs, dsl::compute(engine, dsl::abs(dsl::leaf(input)), input.rows(),
                                       input.cols(), Precision::F32));
-            NN_TRY(sraw, engine.col_reduce_max(*xabs, Precision::F32));
-            NN_TRY(ss, engine.scale_inplace(*sraw, 1.0f / 127.0f));
+            EX_TRY(sraw, engine.col_reduce_max(*xabs, Precision::F32));
+            EX_TRY(ss, engine.scale_inplace(*sraw, 1.0f / 127.0f));
             (void)ss;
-            NN_TRY(xq, engine.quantize_i8(input, *sraw, /*col_scale=*/true));
+            EX_TRY(xq, engine.quantize_i8(input, *sraw, /*col_scale=*/true));
             if (!checkpoint_mode_)
             {
                 input_cache_ = *xq;
                 act_scale_ = *sraw;
             }
-            NN_TRY(y, engine.matmul_q_i8(wq_packed_, tau_, *xq, *sraw, p_.compute));
+            EX_TRY(y, engine.matmul_q_i8(wq_packed_, tau_, *xq, *sraw, p_.compute));
             return dsl::compute(engine, dsl::leaf(*y) + dsl::row_broadcast(b_), out_features_,
                                 input.cols(), p_.compute);
         }
@@ -461,7 +461,7 @@ public:
         // 一次行广播加（原语不带 bias，见 compute_engine.hpp 的说明）。
         if (use_packed_)
         {
-            NN_TRY(y, engine.matmul_q(wq_packed_, tau_, input, p_.compute));
+            EX_TRY(y, engine.matmul_q(wq_packed_, tau_, input, p_.compute));
             return dsl::compute(engine, dsl::leaf(*y) + dsl::row_broadcast(b_), out_features_,
                                 input.cols(), p_.compute);
         }
@@ -472,37 +472,37 @@ public:
     }
 
     // ── backward：STE（把 wq 当常数；梯度回 f32 latent）──────────────────
-    [[nodiscard]] Result<Tensor> backward(const Tensor& grad_output) override
+    [[nodiscard]] exstl::Result<Tensor> backward(const Tensor& grad_output) override
     {
         ComputeEngine& engine = engine_ref();
         if (grad_output.rows() != out_features_)
-            NN_FAIL("bitlinear backward: grad_output shape mismatch");
+            EX_FAIL("bitlinear backward: grad_output shape mismatch");
         if (packed_only_)
-            NN_FAIL("BitLinear(packed-only)：部署态只读（没有 latent 可更新）—— "
+            EX_FAIL("BitLinear(packed-only)：部署态只读（没有 latent 可更新）—— "
                     "本文件是推理部署文件，请用训练文件恢复训练");
         ensure_grad_();   // L4：init 已预分配；此处仅兜底（正常训练不会触发分配）
         if (!tau_.valid() || !input_cache_.valid())
-            NN_FAIL("bitlinear backward: 必须先 forward（τ/输入缓存未建立）");
+            EX_FAIL("bitlinear backward: 必须先 forward（τ/输入缓存未建立）");
         if (act_quant_ && !act_scale_.valid())
-            NN_FAIL("bitlinear backward: int8 激活路径缺 per-token 尺度（必须先 forward）");
+            EX_FAIL("bitlinear backward: int8 激活路径缺 per-token 尺度（必须先 forward）");
 
         // dX = (τ∘W)ᵀ·dY：τ 是逐输出通道的（落在求和维内），必须在内核里按
         // 存储行取 —— 打包路径直接一趟量化 GEMM（顺带省掉了 dy_scaled 中间量）。
         Tensor grad_input;
         if (use_packed_)
         {
-            NN_TRY(gi, engine.matmul_q_t(wq_packed_, tau_, grad_output, in_features_, p_.compute));
+            EX_TRY(gi, engine.matmul_q_t(wq_packed_, tau_, grad_output, in_features_, p_.compute));
             grad_input = std::move(*gi);
         }
         else
         {
             // f16 稠密缓冲路径：τ 先落到 dY 的行上再左乘（等价形式）
-            NN_TRY(dy_scaled,
+            EX_TRY(dy_scaled,
                    dsl::compute(engine, dsl::leaf(grad_output) * dsl::row_broadcast(tau_),
                                 out_features_, grad_output.cols(), p_.compute));
             auto gi = dsl::compute(engine, dsl::matmul(wq_, *dy_scaled, /*transA=*/true, false),
                                    in_features_, grad_output.cols(), p_.compute);
-            NN_TRY_CHECK(gi);
+            EX_TRY_CHECK(gi);
             grad_input = std::move(*gi);
         }
 
@@ -513,15 +513,15 @@ public:
         // （(dY∘s) 的 (out,N)），Q 反量化成 f32 整数后直接 matmul。
         if (act_quant_)
         {
-            NN_TRY(xq32, engine.unpack_i8(input_cache_, grad_output.cols()));
-            NN_TRY(dys, dsl::compute(engine,
+            EX_TRY(xq32, engine.unpack_i8(input_cache_, grad_output.cols()));
+            EX_TRY(dys, dsl::compute(engine,
                                      dsl::leaf(grad_output) * dsl::col_broadcast(act_scale_),
                                      grad_output.rows(), grad_output.cols(), p_.compute));
             auto grad_w_acc = dsl::compute_into(
                 engine,
                 dsl::leaf(grad_w_) + dsl::matmul(*dys, *xq32, false, true) * dsl::row_broadcast(tau_),
                 grad_w_);
-            NN_TRY_CHECK(grad_w_acc);
+            EX_TRY_CHECK(grad_w_acc);
         }
         else
         {
@@ -530,15 +530,15 @@ public:
                 dsl::leaf(grad_w_) +
                     dsl::matmul(grad_output, input_cache_, false, true) * dsl::row_broadcast(tau_),
                 grad_w_);
-            NN_TRY_CHECK(grad_w_acc);
+            EX_TRY_CHECK(grad_w_acc);
         }
 
         // db += Σ_batch dY（归约向量 + 原地累加两步；与 Linear 同款理由：
         // 归约向量输出契约要求输出链只经归约/广播视图访问输入）
-        NN_TRY(gb, dsl::compute_reduce(engine, dsl::row_reduce_sum(dsl::leaf(grad_output)),
+        EX_TRY(gb, dsl::compute_reduce(engine, dsl::row_reduce_sum(dsl::leaf(grad_output)),
                                        grad_output.rows(), grad_output.cols(), p_.compute));
         auto r2 = dsl::compute_into(engine, dsl::leaf(grad_b_) + dsl::leaf(*gb), grad_b_);
-        NN_TRY_CHECK(r2);
+        EX_TRY_CHECK(r2);
 
         return grad_input;
     }
@@ -569,7 +569,7 @@ private:
                     engine.create_tensor(out_features_, nn::trit_pack::words_per_row(in_features_),
                                          Precision::F32, InitSpec::zero());
             // 终止式检查（本函数返回 void）
-            NN_UNWRAP(wq_packed_.valid(), "BitLinear: 打包量化缓冲初始化失败");
+            EX_UNWRAP(wq_packed_.valid(), "BitLinear: 打包量化缓冲初始化失败");
             wq_ = Tensor{};
         }
         else
@@ -577,7 +577,7 @@ private:
             if (!wq_.valid())
                 wq_ = engine.create_tensor(out_features_, in_features_, Precision::F16,
                                            InitSpec::zero());
-            NN_UNWRAP(wq_.valid(), "BitLinear: 量化缓冲初始化失败");
+            EX_UNWRAP(wq_.valid(), "BitLinear: 量化缓冲初始化失败");
             wq_packed_ = Tensor{};
         }
     }
@@ -597,8 +597,8 @@ private:
         grad_w_ =
             engine.create_tensor(out_features_, in_features_, Precision::F32, InitSpec::zero());
         grad_b_ = engine.create_tensor(out_features_, 1, Precision::F32, InitSpec::zero());
-        // 终止式检查（本函数返回 void，不能用 NN_FAIL 的 return 语义）
-        NN_UNWRAP(grad_w_.valid() && grad_b_.valid(), "BitLinear: 梯度缓冲（惰性）初始化失败");
+        // 终止式检查（本函数返回 void，不能用 EX_FAIL 的 return 语义）
+        EX_UNWRAP(grad_w_.valid() && grad_b_.valid(), "BitLinear: 梯度缓冲（惰性）初始化失败");
     }
 
     // 量化派生物是否还有效：写版本相等 ⇒ latent 权重未被写过。
@@ -624,7 +624,7 @@ private:
     //   2) wq ← select(|W|>0.5τ 的正负两侧)      —— compute_into 原地写 f16 缓冲。
     // 合计每步每层 2 次 dispatch（原 3 次）、2 趟权重读（4+4 B/元素）+ 1 趟
     // f16 写（2 B/元素）；见 docs/internal/21 §4.11 的字节账。
-    [[nodiscard]] Result<void> quantize_weights_()
+    [[nodiscard]] exstl::Result<void> quantize_weights_()
     {
         ComputeEngine& engine = engine_ref();
         const Scalar inv_in = Scalar{1} / static_cast<Scalar>(in_features_);
@@ -633,8 +633,8 @@ private:
         // 旧写法 `tau_ = std::move(*tau)` 每步在 batch 内（瞬态池）新建
         // (out,1)，旧缓冲进延迟销毁队列，且持久成员钉住瞬态底材不放 ——
         // T1_58 显存逐 step 累积的根因之一（审查 §1 #L2/#L6）。
-        if (!tau_.valid()) NN_FAIL("BitLinear::quantize_weights_: τ 缓冲未就绪");
-        NN_TRY_CHECK(dsl::compute_reduce_into(
+        if (!tau_.valid()) EX_FAIL("BitLinear::quantize_weights_: τ 缓冲未就绪");
+        EX_TRY_CHECK(dsl::compute_reduce_into(
             engine,
             dsl::row_reduce_sum(dsl::abs(dsl::leaf(latent_w_)) * dsl::rparam(inv_in)),
             out_features_, in_features_, tau_));
@@ -646,8 +646,8 @@ private:
             // 容器必须原地写（init 期已分配）；缺了就报错，不在 batch 内重建。
             if (!wq_packed_.valid()) ensure_quant_buffer_();
             if (!wq_packed_.valid())
-                NN_FAIL("BitLinear::quantize_weights_: 打包容器未就绪（init 未分配）");
-            NN_TRY_CHECK(engine.trit_pack_into(latent_w_, tau_, wq_packed_));
+                EX_FAIL("BitLinear::quantize_weights_: 打包容器未就绪（init 未分配）");
+            EX_TRY_CHECK(engine.trit_pack_into(latent_w_, tau_, wq_packed_));
             quant_epoch_ = latent_w_.write_epoch();
             quant_valid_ = true;
             ++quantize_calls_;
@@ -665,7 +665,7 @@ private:
             dsl::select(dsl::leaf(latent_w_) > hi, Scalar{1},
                         dsl::select(dsl::leaf(latent_w_) < lo, Scalar{-1}, Scalar{0})),
             wq_);
-        NN_TRY_CHECK(r);
+        EX_TRY_CHECK(r);
         // 只有全部成功才登记"派生缓冲对应该写版本"
         quant_epoch_ = latent_w_.write_epoch();
         quant_valid_ = true;

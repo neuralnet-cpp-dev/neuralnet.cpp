@@ -1,12 +1,12 @@
-# ── apply_nn_exit.ps1 — B 批迁移：src/ 手写「失败即退出」样板 → NN_EXIT ──────
+# ── apply_nn_exit.ps1 — B 批迁移：src/ 手写「失败即退出」样板 → EX_EXIT ──────
 #
 # 目标形态（铁律 #1 宏族；见 include/neuralnet.cpp/core_errors.hpp）：
 #     if (!x) { std::cerr << "ctx" << x.error().message << "\n"; return 1; }
-#   → NN_EXIT(x, 1, "ctx")
+#   → EX_EXIT(x, 1, "ctx")
 #     if (!x) return 1;
-#   → NN_EXIT(x, 1)
+#   → EX_EXIT(x, 1)
 #
-# 语义保持：NN_EXIT 打印后 std::exit(code) —— 在 main() 里与 `return code` 等价；
+# 语义保持：EX_EXIT 打印后 std::exit(code) —— 在 main() 里与 `return code` 等价；
 #          打印内容是**超集**（原 ctx + 自带的 <error.message> + 表达式原文 + file:line）。
 #
 # 只处理**一行内**的上述两种形态；条件必须是「标识符」或「标识符(无括号实参)」，
@@ -58,15 +58,15 @@ foreach ($path in $targets) {
         $script:fBrace++
         $i = $m.Groups[1].Value; $c = $m.Groups['cond'].Value; $k = $m.Groups['code'].Value
         $ctx = Get-Ctx $m.Groups['body'].Value
-        if ($ctx) { $i + 'NN_EXIT(' + $c + ', ' + $k + ', "' + $ctx + '");' }
-        else      { $i + 'NN_EXIT(' + $c + ', ' + $k + ');' }
+        if ($ctx) { $i + 'EX_EXIT(' + $c + ', ' + $k + ', "' + $ctx + '");' }
+        else      { $i + 'EX_EXIT(' + $c + ', ' + $k + ');' }
     })
 
     $text = $reBare.Replace($text, {
         param($m)
         $script:fBare++
         $i = $m.Groups[1].Value; $c = $m.Groups['cond'].Value; $k = $m.Groups['code'].Value
-        $i + 'NN_EXIT(' + $c + ', ' + $k + ');'
+        $i + 'EX_EXIT(' + $c + ', ' + $k + ');'
     })
 
     $rel = $path.Substring($root.Length + 1)

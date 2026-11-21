@@ -61,15 +61,15 @@ protected:
     PrecisionProfile p_;
 
     // 校验 params/grads 数量一致（各子类 step() 开头调用）
-    [[nodiscard]] Result<void> validate_sizes_() const
+    [[nodiscard]] exstl::Result<void> validate_sizes_() const
     {
-        if (params_.size() != grads_.size()) NN_FAIL("Optimizer: params/grads size mismatch");
+        if (params_.size() != grads_.size()) EX_FAIL("Optimizer: params/grads size mismatch");
         return {};
     }
 
     // 为每个参数创建同形状的零初始化 Tensor（供 Momentum/Adam/Muon 复用）
     // 精度 = p_.optimizer（状态存储精度，§9.1）
-    [[nodiscard]] Result<std::vector<Tensor>> create_zero_buffers_() const
+    [[nodiscard]] exstl::Result<std::vector<Tensor>> create_zero_buffers_() const
     {
         std::vector<Tensor> buffers;
         buffers.reserve(params_.size());
@@ -77,7 +77,7 @@ protected:
         {
             auto buf = engine_.create_tensor(p.get().rows(), p.get().cols(), p_.optimizer);
             auto r = engine_.zero(buf);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
             buffers.push_back(std::move(buf));
         }
         return buffers;
@@ -86,16 +86,16 @@ protected:
     // ── 构造期资源分配失败记录 ────────────────────────────────────────
     // 构造函数无法返回 Result，故把首次失败原因存下，由 step() 开头经
     // check_ready_() 上抛（铁律 1：禁止 throw/abort，错误一律走 Result）。
-    std::optional<Error> init_error_;
+    std::optional<exstl::Error> init_error_;
 
-    void record_init_error_(Error e)
+    void record_init_error_(exstl::Error e)
     {
         if (!init_error_) init_error_ = std::move(e);
     }
 
-    [[nodiscard]] Result<void> check_ready_() const
+    [[nodiscard]] exstl::Result<void> check_ready_() const
     {
-        if (init_error_) NN_FAIL(*init_error_);
+        if (init_error_) EX_FAIL(*init_error_);
         return {};
     }
 
@@ -104,7 +104,7 @@ protected:
     {
         owner = engine.weak_from_this().lock();
         if (!owner)
-            NN_FATAL("Optimizer: 引擎必须由 shared_ptr 管理"
+            EX_FATAL("Optimizer: 引擎必须由 shared_ptr 管理"
                      "（使用 CpuEngine::create() / GpuEngine::create()）");
         return *owner;
     }
@@ -126,12 +126,12 @@ public:
     // 动态调整学习率（供 OscillationGuard 等自适应调度器使用）
     virtual void set_lr(Scalar lr) = 0;
 
-    [[nodiscard]] virtual Result<void> step() = 0;
+    [[nodiscard]] virtual exstl::Result<void> step() = 0;
 
     // ── 梯度裁剪（max_norm）：全局 L2 范数裁剪 ─────────────────────
     // 计算所有梯度张量的全局 L2 范数，若超过 max_norm 则等比例缩放。
     // 在 step() 之前调用： backward() → clip_grad_norm(max_norm) → step().
-    [[nodiscard]] Result<void> clip_grad_norm(Scalar max_norm)
+    [[nodiscard]] exstl::Result<void> clip_grad_norm(Scalar max_norm)
     {
         if (max_norm <= 0 || grads_.empty()) return {};
 
@@ -143,21 +143,21 @@ public:
             auto& g = g_ref.get();
             // g² = g * g（逐元素乘法）
             auto g_sq_r = dsl::compute(engine_, dsl::leaf(g) * dsl::leaf(g), g.rows(), g.cols());
-            NN_TRY_CHECK(g_sq_r);
+            EX_TRY_CHECK(g_sq_r);
             // 按行求和 → (rows, 1)（dsl::compute_reduce）
             auto row_sums_r = dsl::compute_reduce(engine_, dsl::row_reduce_sum(dsl::leaf(*g_sq_r)),
                                                   g_sq_r->rows(), g_sq_r->cols());
-            NN_TRY_CHECK(row_sums_r);
+            EX_TRY_CHECK(row_sums_r);
             // 按列求和 → (1, 1) 标量张量（dsl::compute_reduce）
             auto col_sum_r =
                 dsl::compute_reduce(engine_, dsl::col_reduce_sum(dsl::leaf(*row_sums_r)),
                                     row_sums_r->rows(), row_sums_r->cols());
-            NN_TRY_CHECK(col_sum_r);
+            EX_TRY_CHECK(col_sum_r);
             if (acc.valid())
             {
                 auto sum_r = dsl::compute(engine_, dsl::leaf(acc) + dsl::leaf(*col_sum_r),
                                           acc.rows(), acc.cols());
-                NN_TRY_CHECK(sum_r);
+                EX_TRY_CHECK(sum_r);
                 acc = std::move(*sum_r);
             }
             else
@@ -169,7 +169,7 @@ public:
         // 仅一次下载获取全局平方和（宿主桥，17 §3 D11）
         std::vector<Scalar> total_buf(acc.rows() * acc.cols());
         auto dl_r = nn::download_span(engine_, acc, std::span(total_buf));
-        NN_TRY_CHECK(dl_r);
+        EX_TRY_CHECK(dl_r);
         const Scalar total_sq = total_buf[0];
 
         Scalar norm = std::sqrt(total_sq);
@@ -181,18 +181,18 @@ public:
         {
             auto r = dsl::compute_into(engine_, dsl::leaf(g_ref.get()) * dsl::rparam(scale),
                                        g_ref.get());
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
         }
         return {};
     }
 
     // 默认实现：将所有梯度清零（所有子类行为一致）
-    [[nodiscard]] virtual Result<void> zero_grad()
+    [[nodiscard]] virtual exstl::Result<void> zero_grad()
     {
         for (auto& g : grads_)
         {
             auto r = engine_.zero(g);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
         }
         return {};
     }
@@ -211,15 +211,15 @@ public:
     //     （同精度零转换、异精度经引擎 cast；与参数形态协议同口径）；
     //   · `state_step()` = 偏置修正计数器（Adam 家族的 `t`）。**丢它 = 重启后
     //     前几百步更新量偏小**（18 §4.2 的"loss 轨迹连续"验收就卡在这里）。
-    [[nodiscard]] virtual Result<void> save_state(std::vector<Tensor>& out) const
+    [[nodiscard]] virtual exstl::Result<void> save_state(std::vector<Tensor>& out) const
     {
         (void)out;   // 默认：无状态（SGD）
         return {};
     }
-    [[nodiscard]] virtual Result<void> load_state(std::span<const Tensor> in)
+    [[nodiscard]] virtual exstl::Result<void> load_state(std::span<const Tensor> in)
     {
         if (!in.empty())
-            NN_FAIL("该优化器没有状态，但文件里的状态张量数 = " + std::to_string(in.size()));
+            EX_FAIL("该优化器没有状态，但文件里的状态张量数 = " + std::to_string(in.size()));
         return {};
     }
     [[nodiscard]] virtual std::uint64_t state_step() const noexcept { return 0; }
@@ -227,11 +227,11 @@ public:
 
 protected:
     // 状态张量回写（`load_state` 的实现件）：形状必须一致；精度不同经引擎 cast。
-    [[nodiscard]] Result<void> restore_state_tensor_(Tensor& dst, const Tensor& src,
+    [[nodiscard]] exstl::Result<void> restore_state_tensor_(Tensor& dst, const Tensor& src,
                                                      const char* what)
     {
         if (dst.rows() != src.rows() || dst.cols() != src.cols())
-            NN_FAIL(std::string("优化器状态形状不匹配（") + what + "）：期望 " +
+            EX_FAIL(std::string("优化器状态形状不匹配（") + what + "）：期望 " +
                     std::to_string(dst.rows()) + "x" + std::to_string(dst.cols()) + "，文件里是 " +
                     std::to_string(src.rows()) + "x" + std::to_string(src.cols()));
         if (dst.precision() == src.precision()) return engine_.copy_into(dst, src);
@@ -258,16 +258,16 @@ public:
 
     void set_lr(Scalar lr) override { lr_ = lr; }
 
-    [[nodiscard]] Result<void> step() override
+    [[nodiscard]] exstl::Result<void> step() override
     {
-        NN_TRY(r, validate_sizes_());
+        EX_TRY(r, validate_sizes_());
         for (std::size_t i = 0; i < params_.size(); ++i)
         {
             // p -= lr * g（目标传递：原地、单 dispatch）
             auto r = dsl::compute_into(
                 engine_, dsl::leaf(params_[i]) + dsl::leaf(grads_[i]) * dsl::rparam(-lr_),
                 params_[i]);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
         }
         return {};
     }
@@ -298,10 +298,10 @@ public:
 
     void set_lr(Scalar lr) override { lr_ = lr; }
 
-    [[nodiscard]] Result<void> step() override
+    [[nodiscard]] exstl::Result<void> step() override
     {
-        NN_TRY(r, check_ready_());
-        NN_TRY(r2, validate_sizes_());
+        EX_TRY(r, check_ready_());
+        EX_TRY(r2, validate_sizes_());
         const Scalar one_minus_beta = Scalar{1} - beta_;
 
         for (std::size_t i = 0; i < params_.size(); ++i)
@@ -311,32 +311,32 @@ public:
                                        dsl::leaf(velocities_[i]) * dsl::rparam(beta_) +
                                            dsl::leaf(grads_[i]) * dsl::rparam(one_minus_beta),
                                        velocities_[i]);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
             // p -= lr * v（原地、单 dispatch）
             r = dsl::compute_into(
                 engine_, dsl::leaf(params_[i]) + dsl::leaf(velocities_[i]) * dsl::rparam(-lr_),
                 params_[i]);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
         }
         return {};
     }
 
     // ── 断点状态（P1-2）：每参数 1 个动量缓冲 ─────────────────────────────
-    [[nodiscard]] Result<void> save_state(std::vector<Tensor>& out) const override
+    [[nodiscard]] exstl::Result<void> save_state(std::vector<Tensor>& out) const override
     {
-        NN_TRY(r, check_ready_());
+        EX_TRY(r, check_ready_());
         for (const auto& v : velocities_)
             out.push_back(v);
         return {};
     }
-    [[nodiscard]] Result<void> load_state(std::span<const Tensor> in) override
+    [[nodiscard]] exstl::Result<void> load_state(std::span<const Tensor> in) override
     {
-        NN_TRY(r, check_ready_());
+        EX_TRY(r, check_ready_());
         if (in.size() != velocities_.size())
-            NN_FAIL("SGD + Momentum 状态张量数不匹配：期望 " + std::to_string(velocities_.size()) +
+            EX_FAIL("SGD + Momentum 状态张量数不匹配：期望 " + std::to_string(velocities_.size()) +
                     "（每参数 1 个），实际 " + std::to_string(in.size()));
         for (std::size_t i = 0; i < in.size(); ++i)
-            NN_TRY_CHECK(restore_state_tensor_(velocities_[i], in[i], "momentum"));
+            EX_TRY_CHECK(restore_state_tensor_(velocities_[i], in[i], "momentum"));
         return {};
     }
 };
@@ -381,7 +381,7 @@ protected:
     //     K1  m = β1*m + (1-β1)*g            （m_ owned，直接重赋值）
     //     K2  v = β2*v + (1-β2)*g²           （v_ owned，直接重赋值）
     //     K3  p -= lr * (inv_bc1*m) / (sqrt(inv_bc2*v)+eps)（p 为模型张量，目标传递原地更新）
-    [[nodiscard]] Result<void> adam_update_(std::size_t i, Scalar inv_bc1, Scalar inv_bc2)
+    [[nodiscard]] exstl::Result<void> adam_update_(std::size_t i, Scalar inv_bc1, Scalar inv_bc2)
     {
         const Scalar one_minus_beta1 = Scalar{1} - beta1_;
         const Scalar one_minus_beta2 = Scalar{1} - beta2_;
@@ -406,14 +406,14 @@ protected:
         // K1: m = β1*m + (1-β1)*g（目标传递：m_[i] 是跨步持久句柄，录制段内
         //   必须 compute_into——compute+move 的输出会在单输出融合中被内联吞掉，
         //   占位永不写入 → 下一步读未初始化内存（pitfalls §2.6/模式 I））
-        NN_TRY(mr, dsl::compute_into(
+        EX_TRY(mr, dsl::compute_into(
                        engine_,
                        dsl::leaf(m_[i]) * dsl::rparam(beta1_) +
                            dsl::leaf(g) * dsl::rparam(one_minus_beta1 * s_scale),
                        m_[i]));
 
         // K2: v = β2*v + (1-β2)*g²（同 K1：into 写回持久状态 v_[i]）
-        NN_TRY(vr, dsl::compute_into(
+        EX_TRY(vr, dsl::compute_into(
                        engine_,
                        dsl::leaf(v_[i]) * dsl::rparam(beta2_) +
                            dsl::leaf(g) * dsl::leaf(g) * dsl::rparam(one_minus_beta2 * s2),
@@ -431,7 +431,7 @@ protected:
         auto r = dsl::compute_into(engine_,
                                    dsl::leaf(params_[i]) - dsl::rparam(lr_) * (up / den),
                                    params_[i]);
-        NN_TRY_CHECK(r);
+        EX_TRY_CHECK(r);
         return {};
     }
 
@@ -472,10 +472,10 @@ public:
 
     void set_lr(Scalar lr) override { lr_ = lr; }
 
-    [[nodiscard]] Result<void> step() override
+    [[nodiscard]] exstl::Result<void> step() override
     {
-        NN_TRY(r, check_ready_());
-        NN_TRY(r2, validate_sizes_());
+        EX_TRY(r, check_ready_());
+        EX_TRY(r2, validate_sizes_());
         // 偏差修正：每步只计算一次（而非每参数重复 pow）
         const std::size_t t_next = t_ + 1;
         const auto [inv_bc1, inv_bc2] = bias_correction_(t_next);
@@ -489,22 +489,22 @@ public:
         //   走图。历史 NaN 根因 = 融合内联图外持有的持久输出 → 读未初始化内存；
         //   修法 = K1/K2 目标传递 + 融合器拒绝拼接 into 节点为非尾。见
         //   docs/contributors/pitfalls.md §2.6/模式 I。）
-        NN_TRY(b, engine_.begin_expr());
+        EX_TRY(b, engine_.begin_expr());
         std::optional<ExprSegment> seg;
         seg.emplace(engine_owner_);
         for (std::size_t i = 0; i < params_.size(); ++i)
         {
-            NN_TRY(ur, adam_update_(i, inv_bc1, inv_bc2));
+            EX_TRY(ur, adam_update_(i, inv_bc1, inv_bc2));
         }
-        NN_TRY_CHECK(seg->end());
+        EX_TRY_CHECK(seg->end());
         t_ = t_next;  // 全部参数成功才推进步数（失败时不推进）
         return {};
     }
 
     // ── 断点状态（P1-2）：每参数 m_[i], v_[i]（交替）+ 偏置修正计数 t_ ─────
-    [[nodiscard]] Result<void> save_state(std::vector<Tensor>& out) const override
+    [[nodiscard]] exstl::Result<void> save_state(std::vector<Tensor>& out) const override
     {
-        NN_TRY(r, check_ready_());
+        EX_TRY(r, check_ready_());
         for (std::size_t i = 0; i < m_.size(); ++i)
         {
             out.push_back(m_[i]);
@@ -512,16 +512,16 @@ public:
         }
         return {};
     }
-    [[nodiscard]] Result<void> load_state(std::span<const Tensor> in) override
+    [[nodiscard]] exstl::Result<void> load_state(std::span<const Tensor> in) override
     {
-        NN_TRY(r, check_ready_());
+        EX_TRY(r, check_ready_());
         if (in.size() != 2 * m_.size())
-            NN_FAIL("Adam 状态张量数不匹配：期望 " + std::to_string(2 * m_.size()) +
+            EX_FAIL("Adam 状态张量数不匹配：期望 " + std::to_string(2 * m_.size()) +
                     "（每参数 m/v 交替），实际 " + std::to_string(in.size()));
         for (std::size_t i = 0; i < m_.size(); ++i)
         {
-            NN_TRY_CHECK(restore_state_tensor_(m_[i], in[2 * i], "m"));
-            NN_TRY_CHECK(restore_state_tensor_(v_[i], in[2 * i + 1], "v"));
+            EX_TRY_CHECK(restore_state_tensor_(m_[i], in[2 * i], "m"));
+            EX_TRY_CHECK(restore_state_tensor_(v_[i], in[2 * i + 1], "v"));
         }
         return {};
     }
@@ -560,10 +560,10 @@ public:
 
     // set_lr 复用 Adam::set_lr（lr_ 为 protected，无需 override）
 
-    [[nodiscard]] Result<void> step() override
+    [[nodiscard]] exstl::Result<void> step() override
     {
-        NN_TRY(r, check_ready_());
-        NN_TRY(r2, validate_sizes_());
+        EX_TRY(r, check_ready_());
+        EX_TRY(r2, validate_sizes_());
         // 偏差修正：每步只计算一次（而非每参数重复 pow）
         const std::size_t t_next = t_ + 1;
         const auto [inv_bc1, inv_bc2] = bias_correction_(t_next);
@@ -575,7 +575,7 @@ public:
         // （先衰减后更新 = AdamW 语义）；两者不连通 → 各自独立 kernel，天然
         // 顺序执行，不会同 kernel 双写 p。
         // （C1 已消灭 2026-11-07：optimizer=f16 跳录制门控已删，见 Adam::step。）
-        NN_TRY(b, engine_.begin_expr());
+        EX_TRY(b, engine_.begin_expr());
         std::optional<ExprSegment> seg;
         seg.emplace(engine_owner_);
         for (std::size_t i = 0; i < params_.size(); ++i)
@@ -583,15 +583,15 @@ public:
             // 权重衰减解耦：p = (1 - lr*wd) * p（目标传递：原地、单 dispatch）
             if (wd_ != Scalar{0})
             {
-                NN_TRY(dr,
+                EX_TRY(dr,
                        dsl::compute_into(engine_, dsl::leaf(params_[i]) * dsl::rparam(decay_factor),
                                          params_[i]));
             }
 
             // Adam 更新
-            NN_TRY(ur, adam_update_(i, inv_bc1, inv_bc2));
+            EX_TRY(ur, adam_update_(i, inv_bc1, inv_bc2));
         }
-        NN_TRY_CHECK(seg->end());
+        EX_TRY_CHECK(seg->end());
         t_ = t_next;  // 全部参数成功才推进步数（失败时不推进）
         return {};
     }
@@ -648,7 +648,7 @@ class AdamWQuant : public Optimizer
     static constexpr Scalar kSafety = Scalar{1.02};
     static constexpr Scalar kScaleFloor = Scalar{1e-24};
 
-    [[nodiscard]] Result<void> init_state_()
+    [[nodiscard]] exstl::Result<void> init_state_()
     {
         m16_.reserve(params_.size());
         v16_.reserve(params_.size());
@@ -658,13 +658,13 @@ class AdamWQuant : public Optimizer
         {
             const std::size_t rows = p.get().rows(), cols = p.get().cols();
             auto m = engine_.create_tensor(rows, cols, Precision::F16, InitSpec::zero());
-            if (!m.valid()) NN_FAIL("AdamWQuant: 一阶矩状态分配失败");
+            if (!m.valid()) EX_FAIL("AdamWQuant: 一阶矩状态分配失败");
             auto v = engine_.create_tensor(rows, cols, Precision::F16, InitSpec::zero());
-            if (!v.valid()) NN_FAIL("AdamWQuant: 二阶矩状态分配失败");
+            if (!v.valid()) EX_FAIL("AdamWQuant: 二阶矩状态分配失败");
             auto sm = engine_.create_tensor(rows, 1, Precision::F32, InitSpec::zero());
-            if (!sm.valid()) NN_FAIL("AdamWQuant: 一阶矩尺度分配失败");
+            if (!sm.valid()) EX_FAIL("AdamWQuant: 一阶矩尺度分配失败");
             auto sv = engine_.create_tensor(rows, 1, Precision::F32, InitSpec::zero());
-            if (!sv.valid()) NN_FAIL("AdamWQuant: 二阶矩尺度分配失败");
+            if (!sv.valid()) EX_FAIL("AdamWQuant: 二阶矩尺度分配失败");
             state_bytes_ += rows * cols * 2u * 2u + rows * 4u * 2u;
             m16_.push_back(std::move(m));
             v16_.push_back(std::move(v));
@@ -676,7 +676,7 @@ class AdamWQuant : public Optimizer
 
     // 单个参数的 AdamW 更新（三 K 的结构与 Adam 同族：K1 一阶矩、K2 二阶矩、
     // K3 参数更新；此处每 K 都多一趟"尺度前进 + f16 归一写回"）
-    [[nodiscard]] Result<void> update_one_(std::size_t i, Scalar inv_bc1, Scalar inv_bc2)
+    [[nodiscard]] exstl::Result<void> update_one_(std::size_t i, Scalar inv_bc1, Scalar inv_bc2)
     {
         const Tensor& g = grads_[i];
         const std::size_t rows = g.rows(), cols = g.cols();
@@ -684,22 +684,22 @@ class AdamWQuant : public Optimizer
         const Scalar one_m_b2 = Scalar{1} - beta2_;
 
         // ── 尺度前进（上界；只依赖 g，不需要新状态的 f32 副本）──────────────
-        NN_TRY(gabs, dsl::compute_reduce(engine_, dsl::row_reduce_max(dsl::abs(dsl::leaf(g))), rows,
+        EX_TRY(gabs, dsl::compute_reduce(engine_, dsl::row_reduce_max(dsl::abs(dsl::leaf(g))), rows,
                                          cols, Precision::F32));
-        NN_TRY(gmax, dsl::compute_reduce(engine_, dsl::row_reduce_max(dsl::leaf(g) * dsl::leaf(g)),
+        EX_TRY(gmax, dsl::compute_reduce(engine_, dsl::row_reduce_max(dsl::leaf(g) * dsl::leaf(g)),
                                          rows, cols, Precision::F32));
         auto sm_new = dsl::compute(engine_,
                                    dsl::max(dsl::leaf(sm_[i]) * dsl::rparam(beta1_) +
                                                 dsl::leaf(*gabs) * dsl::rparam(one_m_b1 * kSafety),
                                             kScaleFloor),
                                    rows, 1, Precision::F32);
-        NN_TRY_CHECK(sm_new);
+        EX_TRY_CHECK(sm_new);
         auto sv_new = dsl::compute(engine_,
                                    dsl::max(dsl::leaf(sv_[i]) * dsl::rparam(beta2_) +
                                                 dsl::leaf(*gmax) * dsl::rparam(one_m_b2 * kSafety),
                                             kScaleFloor),
                                    rows, 1, Precision::F32);
-        NN_TRY_CHECK(sv_new);
+        EX_TRY_CHECK(sv_new);
 
         // ── 状态写回（去量化 → 新状态 → ÷新尺度 → f16 RNE 写回，单 dispatch）──
         auto mw = dsl::compute_into(
@@ -708,14 +708,14 @@ class AdamWQuant : public Optimizer
              dsl::leaf(g) * dsl::rparam(one_m_b1)) /
                 dsl::row_broadcast(*sm_new),
             m16_[i]);
-        NN_TRY_CHECK(mw);
+        EX_TRY_CHECK(mw);
         auto vw = dsl::compute_into(
             engine_,
             (dsl::leaf(v16_[i]) * dsl::row_broadcast(sv_[i]) * dsl::rparam(beta2_) +
              dsl::leaf(g) * dsl::leaf(g) * dsl::rparam(one_m_b2)) /
                 dsl::row_broadcast(*sv_new),
             v16_[i]);
-        NN_TRY_CHECK(vw);
+        EX_TRY_CHECK(vw);
 
         // ── 尺度提交（写回用的是新尺度，故先换再用）────────────────────────
         sm_[i] = std::move(*sm_new);
@@ -732,7 +732,7 @@ class AdamWQuant : public Optimizer
                           dsl::rparam(eps_)) +
                      dsl::rparam(wd_) * dsl::leaf(params_[i])),
             params_[i]);
-        NN_TRY_CHECK(upd);
+        EX_TRY_CHECK(upd);
         return {};
     }
 
@@ -749,16 +749,16 @@ public:
 
     void set_lr(Scalar lr) override { lr_ = lr; }
 
-    [[nodiscard]] Result<void> step() override
+    [[nodiscard]] exstl::Result<void> step() override
     {
-        NN_TRY(r, check_ready_());
-        NN_TRY(r2, validate_sizes_());
+        EX_TRY(r, check_ready_());
+        EX_TRY(r2, validate_sizes_());
         const Scalar n = static_cast<Scalar>(t_ + 1);
         const Scalar inv_bc1 = Scalar{1} / (Scalar{1} - std::pow(beta1_, n));
         const Scalar inv_bc2 = Scalar{1} / (Scalar{1} - std::pow(beta2_, n));
         for (std::size_t i = 0; i < params_.size(); ++i)
         {
-            NN_TRY(u, update_one_(i, inv_bc1, inv_bc2));
+            EX_TRY(u, update_one_(i, inv_bc1, inv_bc2));
         }
         ++t_;   // 全部参数成功才推进步数（与 Adam 同款）
         return {};
@@ -767,9 +767,9 @@ public:
     // ── 断点状态（P1-2）：每参数 4 个（m16/v16 载荷 + sm/sv 逐行尺度）+ t_ ──
     // 载荷是 f16，尺度 f32 —— 文件按张量记录精度，故可直接往返（无需额外
     // 记住"要除以尺度"之类语义：缩放态本身就是状态）。
-    [[nodiscard]] Result<void> save_state(std::vector<Tensor>& out) const override
+    [[nodiscard]] exstl::Result<void> save_state(std::vector<Tensor>& out) const override
     {
-        NN_TRY(r, check_ready_());
+        EX_TRY(r, check_ready_());
         for (std::size_t i = 0; i < m16_.size(); ++i)
         {
             out.push_back(m16_[i]);
@@ -779,18 +779,18 @@ public:
         }
         return {};
     }
-    [[nodiscard]] Result<void> load_state(std::span<const Tensor> in) override
+    [[nodiscard]] exstl::Result<void> load_state(std::span<const Tensor> in) override
     {
-        NN_TRY(r, check_ready_());
+        EX_TRY(r, check_ready_());
         if (in.size() != 4 * m16_.size())
-            NN_FAIL("AdamW（量化状态）状态张量数不匹配：期望 " + std::to_string(4 * m16_.size()) +
+            EX_FAIL("AdamW（量化状态）状态张量数不匹配：期望 " + std::to_string(4 * m16_.size()) +
                     "（每参数 m16/v16/sm/sv），实际 " + std::to_string(in.size()));
         for (std::size_t i = 0; i < m16_.size(); ++i)
         {
-            NN_TRY_CHECK(restore_state_tensor_(m16_[i], in[4 * i], "m16"));
-            NN_TRY_CHECK(restore_state_tensor_(v16_[i], in[4 * i + 1], "v16"));
-            NN_TRY_CHECK(restore_state_tensor_(sm_[i], in[4 * i + 2], "sm"));
-            NN_TRY_CHECK(restore_state_tensor_(sv_[i], in[4 * i + 3], "sv"));
+            EX_TRY_CHECK(restore_state_tensor_(m16_[i], in[4 * i], "m16"));
+            EX_TRY_CHECK(restore_state_tensor_(v16_[i], in[4 * i + 1], "v16"));
+            EX_TRY_CHECK(restore_state_tensor_(sm_[i], in[4 * i + 2], "sm"));
+            EX_TRY_CHECK(restore_state_tensor_(sv_[i], in[4 * i + 3], "sv"));
         }
         return {};
     }
@@ -845,7 +845,7 @@ class AdamWInt8 : public Optimizer
     static constexpr Scalar kSafety = Scalar{1.02};
     static constexpr Scalar kScaleFloor = Scalar{1e-24};
 
-    [[nodiscard]] Result<void> init_state_()
+    [[nodiscard]] exstl::Result<void> init_state_()
     {
         m_packed_.reserve(params_.size());
         v_packed_.reserve(params_.size());
@@ -856,13 +856,13 @@ class AdamWInt8 : public Optimizer
             const std::size_t rows = p.get().rows(), cols = p.get().cols();
             const std::size_t wpr = nn::i8_pack::words_per_row(cols);
             auto m = engine_.create_tensor(rows, wpr, Precision::F32, InitSpec::zero());
-            if (!m.valid()) NN_FAIL("AdamWInt8: 一阶矩状态分配失败");
+            if (!m.valid()) EX_FAIL("AdamWInt8: 一阶矩状态分配失败");
             auto v = engine_.create_tensor(rows, wpr, Precision::F32, InitSpec::zero());
-            if (!v.valid()) NN_FAIL("AdamWInt8: 二阶矩状态分配失败");
+            if (!v.valid()) EX_FAIL("AdamWInt8: 二阶矩状态分配失败");
             auto sm = engine_.create_tensor(rows, 1, Precision::F32, InitSpec::zero());
-            if (!sm.valid()) NN_FAIL("AdamWInt8: 一阶矩尺度分配失败");
+            if (!sm.valid()) EX_FAIL("AdamWInt8: 一阶矩尺度分配失败");
             auto sv = engine_.create_tensor(rows, 1, Precision::F32, InitSpec::zero());
-            if (!sv.valid()) NN_FAIL("AdamWInt8: 二阶矩尺度分配失败");
+            if (!sv.valid()) EX_FAIL("AdamWInt8: 二阶矩尺度分配失败");
             // 容器 = f32 张量承载原始字：rows·wpr·4 B/行 = cols B/行（1 B/元素）
             state_bytes_ += rows * wpr * 4u + rows * wpr * 4u + rows * 4u * 2u;
             m_packed_.push_back(std::move(m));
@@ -873,7 +873,7 @@ class AdamWInt8 : public Optimizer
         return {};
     }
 
-    [[nodiscard]] Result<void> update_one_(std::size_t i, Scalar inv_bc1, Scalar inv_bc2)
+    [[nodiscard]] exstl::Result<void> update_one_(std::size_t i, Scalar inv_bc1, Scalar inv_bc2)
     {
         const Tensor& g = grads_[i];
         const std::size_t rows = g.rows(), cols = g.cols();
@@ -881,26 +881,26 @@ class AdamWInt8 : public Optimizer
         const Scalar one_m_b2 = Scalar{1} - beta2_;
 
         // ── 尺度前进（上界；与 AdamWQuant 同一 DSL 表达式，逐位一致）──────
-        NN_TRY(gabs, dsl::compute_reduce(engine_, dsl::row_reduce_max(dsl::abs(dsl::leaf(g))), rows,
+        EX_TRY(gabs, dsl::compute_reduce(engine_, dsl::row_reduce_max(dsl::abs(dsl::leaf(g))), rows,
                                          cols, Precision::F32));
-        NN_TRY(gmax, dsl::compute_reduce(engine_, dsl::row_reduce_max(dsl::leaf(g) * dsl::leaf(g)),
+        EX_TRY(gmax, dsl::compute_reduce(engine_, dsl::row_reduce_max(dsl::leaf(g) * dsl::leaf(g)),
                                          rows, cols, Precision::F32));
         auto sm_new = dsl::compute(engine_,
                                    dsl::max(dsl::leaf(sm_[i]) * dsl::rparam(beta1_) +
                                                 dsl::leaf(*gabs) * dsl::rparam(one_m_b1 * kSafety),
                                             kScaleFloor),
                                    rows, 1, Precision::F32);
-        NN_TRY_CHECK(sm_new);
+        EX_TRY_CHECK(sm_new);
         auto sv_new = dsl::compute(engine_,
                                    dsl::max(dsl::leaf(sv_[i]) * dsl::rparam(beta2_) +
                                                 dsl::leaf(*gmax) * dsl::rparam(one_m_b2 * kSafety),
                                             kScaleFloor),
                                    rows, 1, Precision::F32);
-        NN_TRY_CHECK(sv_new);
+        EX_TRY_CHECK(sv_new);
 
         // ── 融合状态写回 + 参数更新（领域原语：int8 打包状态必须单内核
         //    解码/编码；数值口径见 compute_engine.hpp 公共入口）──────────────
-        NN_TRY(r, engine_.quantized_adamw_step(params_[i], g, m_packed_[i], v_packed_[i], sm_[i],
+        EX_TRY(r, engine_.quantized_adamw_step(params_[i], g, m_packed_[i], v_packed_[i], sm_[i],
                                                *sm_new, sv_[i], *sv_new, lr_, beta1_, beta2_, eps_,
                                                wd_, inv_bc1, inv_bc2));
 
@@ -923,16 +923,16 @@ public:
 
     void set_lr(Scalar lr) override { lr_ = lr; }
 
-    [[nodiscard]] Result<void> step() override
+    [[nodiscard]] exstl::Result<void> step() override
     {
-        NN_TRY(r, check_ready_());
-        NN_TRY(r2, validate_sizes_());
+        EX_TRY(r, check_ready_());
+        EX_TRY(r2, validate_sizes_());
         const Scalar n = static_cast<Scalar>(t_ + 1);
         const Scalar inv_bc1 = Scalar{1} / (Scalar{1} - std::pow(beta1_, n));
         const Scalar inv_bc2 = Scalar{1} / (Scalar{1} - std::pow(beta2_, n));
         for (std::size_t i = 0; i < params_.size(); ++i)
         {
-            NN_TRY(u, update_one_(i, inv_bc1, inv_bc2));
+            EX_TRY(u, update_one_(i, inv_bc1, inv_bc2));
         }
         ++t_;   // 全部参数成功才推进步数（与 Adam 同款）
         return {};
@@ -940,9 +940,9 @@ public:
 
     // ── 断点状态（P1-2）：每参数 4 个（m/v 打包载荷 + sm/sv 逐行尺度）+ t_ ──
     // 容器/尺度都是 f32 张量（原始字 / 上界），文件按张量记录精度，可直接往返。
-    [[nodiscard]] Result<void> save_state(std::vector<Tensor>& out) const override
+    [[nodiscard]] exstl::Result<void> save_state(std::vector<Tensor>& out) const override
     {
-        NN_TRY(r, check_ready_());
+        EX_TRY(r, check_ready_());
         for (std::size_t i = 0; i < m_packed_.size(); ++i)
         {
             out.push_back(m_packed_[i]);
@@ -952,18 +952,18 @@ public:
         }
         return {};
     }
-    [[nodiscard]] Result<void> load_state(std::span<const Tensor> in) override
+    [[nodiscard]] exstl::Result<void> load_state(std::span<const Tensor> in) override
     {
-        NN_TRY(r, check_ready_());
+        EX_TRY(r, check_ready_());
         if (in.size() != 4 * m_packed_.size())
-            NN_FAIL("AdamWInt8 状态张量数不匹配：期望 " + std::to_string(4 * m_packed_.size()) +
+            EX_FAIL("AdamWInt8 状态张量数不匹配：期望 " + std::to_string(4 * m_packed_.size()) +
                     "（每参数 m_packed/v_packed/sm/sv），实际 " + std::to_string(in.size()));
         for (std::size_t i = 0; i < m_packed_.size(); ++i)
         {
-            NN_TRY_CHECK(restore_state_tensor_(m_packed_[i], in[4 * i], "m_packed"));
-            NN_TRY_CHECK(restore_state_tensor_(v_packed_[i], in[4 * i + 1], "v_packed"));
-            NN_TRY_CHECK(restore_state_tensor_(sm_[i], in[4 * i + 2], "sm"));
-            NN_TRY_CHECK(restore_state_tensor_(sv_[i], in[4 * i + 3], "sv"));
+            EX_TRY_CHECK(restore_state_tensor_(m_packed_[i], in[4 * i], "m_packed"));
+            EX_TRY_CHECK(restore_state_tensor_(v_packed_[i], in[4 * i + 1], "v_packed"));
+            EX_TRY_CHECK(restore_state_tensor_(sm_[i], in[4 * i + 2], "sm"));
+            EX_TRY_CHECK(restore_state_tensor_(sv_[i], in[4 * i + 3], "sv"));
         }
         return {};
     }
@@ -998,7 +998,7 @@ public:
 //
 // 参考：Keller Jordan et al., "Muon: An optimizer for hidden layers in neural networks"
 // ══════════════════════════════════════════════════════════════════════════
-[[nodiscard]] inline Result<Tensor>
+[[nodiscard]] inline exstl::Result<Tensor>
 newton_schulz_orthogonalize(ComputeEngine& engine, const Tensor& G, std::size_t steps = 5,
                             Scalar eps = 1e-7f, Precision prec = Precision::F32)
 {
@@ -1012,16 +1012,16 @@ newton_schulz_orthogonalize(ComputeEngine& engine, const Tensor& G, std::size_t 
     // 再对 (rows,1) 小向量做列归约 → (1,1)
     auto row_sum_norm = dsl::compute_reduce(
         engine, dsl::row_reduce_sum(dsl::leaf(G) * dsl::leaf(G)), G.rows(), G.cols(), prec);
-    NN_TRY_CHECK(row_sum_norm);
+    EX_TRY_CHECK(row_sum_norm);
     // 二级归约（(rows,1) → (1,1)）用 dsl::compute_reduce
     auto total_norm_sq = dsl::compute_reduce(engine, dsl::col_reduce_sum(dsl::leaf(*row_sum_norm)),
                                              row_sum_norm->rows(), row_sum_norm->cols(), prec);
-    NN_TRY_CHECK(total_norm_sq);
+    EX_TRY_CHECK(total_norm_sq);
     // 从 (1,1) Tensor 提取标量值
     // 使用宿主桥下载后取值（一次 PCIe 下载，可接受；17 §3 D11）
     std::vector<Scalar> total_buf(total_norm_sq->rows() * total_norm_sq->cols());
     auto dl_r = nn::download_span(engine, *total_norm_sq, std::span(total_buf));
-    NN_TRY_CHECK(dl_r);
+    EX_TRY_CHECK(dl_r);
     Scalar norm_sq_val = total_buf[0];
     Scalar inv_norm_scalar = Scalar{1} / std::sqrt(norm_sq_val + eps * eps);
 
@@ -1029,7 +1029,7 @@ newton_schulz_orthogonalize(ComputeEngine& engine, const Tensor& G, std::size_t 
     // 1 次分配）
     auto X =
         dsl::compute(engine, dsl::leaf(G) * dsl::rparam(inv_norm_scalar), G.rows(), G.cols(), prec);
-    NN_TRY_CHECK(X);
+    EX_TRY_CHECK(X);
     // 选更小一侧构造母矩阵，避免显存爆炸（Muon 显存 > AdamW 的根因）：
     //   - 短宽/方阵（m ≤ n）：行正交化，母矩阵 A = X·X^T（m×m，m 为短边）
     //   - 高窄矩阵（m > n）：列正交化，母矩阵 G = X^T·X（n×n，n 为短边）
@@ -1051,21 +1051,21 @@ newton_schulz_orthogonalize(ComputeEngine& engine, const Tensor& G, std::size_t 
             // 纯 matmul 经 DSL 直写（scan 的 optimizer dry-run 自动登记结构）
             auto A = dsl::compute(engine,           // A = X·X^T
                                   dsl::matmul(*X, *X, false, true), m, m, prec);
-            NN_TRY_CHECK(A);
+            EX_TRY_CHECK(A);
             auto A_sq = dsl::compute(engine,         // A²
                                      dsl::matmul(*A, *A, false, false), m, m, prec);
-            NN_TRY_CHECK(A_sq);
+            EX_TRY_CHECK(A_sq);
             // A = b·A + c·A²：一次原地目标传递（GPU 上 1 个 kernel）
             auto accA = dsl::compute_into(
                 engine, dsl::leaf(*A) * dsl::rparam(b) + dsl::leaf(*A_sq) * dsl::rparam(c), *A);
-            NN_TRY_CHECK(accA);
+            EX_TRY_CHECK(accA);
             auto BX = dsl::compute(engine,           // B·X
                                    dsl::matmul(*A, *X, false, false), m, n, prec);
-            NN_TRY_CHECK(BX);
+            EX_TRY_CHECK(BX);
             // BX += a·X（原地目标传递：单 dispatch，不额外分配）
             auto accBX =
                 dsl::compute_into(engine, dsl::leaf(*BX) + dsl::leaf(*X) * dsl::rparam(a), *BX);
-            NN_TRY_CHECK(accBX);
+            EX_TRY_CHECK(accBX);
             X = std::move(*BX);
         }
     }
@@ -1079,21 +1079,21 @@ newton_schulz_orthogonalize(ComputeEngine& engine, const Tensor& G, std::size_t 
             // 纯 matmul 经 DSL 直写（同上，scan optimizer dry-run 登记）
             auto Gr = dsl::compute(engine,           // G = X^T·X（n×n）
                                    dsl::matmul(*X, *X, true, false), n, n, prec);
-            NN_TRY_CHECK(Gr);
+            EX_TRY_CHECK(Gr);
             auto Gr_sq = dsl::compute(engine,        // G²
                                       dsl::matmul(*Gr, *Gr, false, false), n, n, prec);
-            NN_TRY_CHECK(Gr_sq);
+            EX_TRY_CHECK(Gr_sq);
             // G = b·G + c·G²（同上：一次原地目标传递，单 kernel）
             auto accG = dsl::compute_into(
                 engine, dsl::leaf(*Gr) * dsl::rparam(b) + dsl::leaf(*Gr_sq) * dsl::rparam(c), *Gr);
-            NN_TRY_CHECK(accG);
+            EX_TRY_CHECK(accG);
             auto XM = dsl::compute(engine,           // X·G
                                    dsl::matmul(*X, *Gr, false, false), m, n, prec);
-            NN_TRY_CHECK(XM);
+            EX_TRY_CHECK(XM);
             // XM += a·X（原地目标传递：单 dispatch）
             auto accXM =
                 dsl::compute_into(engine, dsl::leaf(*XM) + dsl::leaf(*X) * dsl::rparam(a), *XM);
-            NN_TRY_CHECK(accXM);
+            EX_TRY_CHECK(accXM);
             X = std::move(*XM);
         }
     }
@@ -1142,10 +1142,10 @@ public:
 
     void set_lr(Scalar lr) override { lr_ = lr; }
 
-    [[nodiscard]] Result<void> step() override
+    [[nodiscard]] exstl::Result<void> step() override
     {
-        NN_TRY(r, check_ready_());
-        NN_TRY(r2, validate_sizes_());
+        EX_TRY(r, check_ready_());
+        EX_TRY(r2, validate_sizes_());
         for (std::size_t i = 0; i < params_.size(); ++i)
         {
             const Tensor& g = grads_[i];
@@ -1154,7 +1154,7 @@ public:
             auto r = dsl::compute_into(
                 engine_, dsl::leaf(velocities_[i]) * dsl::rparam(momentum_) + dsl::leaf(g),
                 velocities_[i]);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
             // 确定用于正交化的更新方向（Nesterov 时需临时缓冲，否则直接用 v）
             std::optional<Tensor> nesterov_buf;
             if (nesterov_)
@@ -1163,7 +1163,7 @@ public:
                 auto buf = dsl::compute(
                     engine_, dsl::leaf(g) + dsl::leaf(velocities_[i]) * dsl::rparam(momentum_),
                     g.rows(), g.cols(), p_.optimizer);
-                NN_TRY_CHECK(buf);
+                EX_TRY_CHECK(buf);
                 nesterov_buf = std::move(*buf);
             }
             const Tensor& update = nesterov_buf ? *nesterov_buf : velocities_[i];
@@ -1173,7 +1173,7 @@ public:
             {
                 auto ortho_update =
                     newton_schulz_orthogonalize(engine_, update, ns_steps_, ns_eps_, p_.optimizer);
-                NN_TRY_CHECK(ortho_update);
+                EX_TRY_CHECK(ortho_update);
                 // 3. 参数更新: p -= lr * 0.2 * sqrt(max(m,n)) * NS(update)
                 //    NorMuon 论文 / KellerJordan 参考实现的形状缩放：NS 输出谱范数为 1，
                 //    不缩放则等效学习率偏差 0.2*sqrt(max(m,n)) 倍（如 256×768 权重 → 5.5×）
@@ -1185,7 +1185,7 @@ public:
                                       dsl::leaf(params_[i]) +
                                           dsl::leaf(*ortho_update) * dsl::rparam(-lr_ * muon_scale),
                                       params_[i]);
-                NN_TRY_CHECK(r);
+                EX_TRY_CHECK(r);
             }
             else
             {
@@ -1193,28 +1193,28 @@ public:
                 r = dsl::compute_into(engine_,
                                       dsl::leaf(params_[i]) + dsl::leaf(update) * dsl::rparam(-lr_),
                                       params_[i]);
-                NN_TRY_CHECK(r);
+                EX_TRY_CHECK(r);
             }
         }
         return {};
     }
 
     // ── 断点状态（P1-2）：每参数 1 个动量缓冲（Newton-Schulz 的中间量不驻留）──
-    [[nodiscard]] Result<void> save_state(std::vector<Tensor>& out) const override
+    [[nodiscard]] exstl::Result<void> save_state(std::vector<Tensor>& out) const override
     {
-        NN_TRY(r, check_ready_());
+        EX_TRY(r, check_ready_());
         for (const auto& v : velocities_)
             out.push_back(v);
         return {};
     }
-    [[nodiscard]] Result<void> load_state(std::span<const Tensor> in) override
+    [[nodiscard]] exstl::Result<void> load_state(std::span<const Tensor> in) override
     {
-        NN_TRY(r, check_ready_());
+        EX_TRY(r, check_ready_());
         if (in.size() != velocities_.size())
-            NN_FAIL("Muon 状态张量数不匹配：期望 " + std::to_string(velocities_.size()) +
+            EX_FAIL("Muon 状态张量数不匹配：期望 " + std::to_string(velocities_.size()) +
                     "（每参数 1 个动量缓冲），实际 " + std::to_string(in.size()));
         for (std::size_t i = 0; i < in.size(); ++i)
-            NN_TRY_CHECK(restore_state_tensor_(velocities_[i], in[i], "momentum"));
+            EX_TRY_CHECK(restore_state_tensor_(velocities_[i], in[i], "momentum"));
         return {};
     }
 };

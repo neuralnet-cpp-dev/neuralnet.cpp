@@ -44,7 +44,7 @@
 #include <vector>
 
 #include <neuralnet.cpp/core_config.hpp>           // nn::Scalar
-#include <neuralnet.cpp/core_errors.hpp>           // nn::Result / NN_FAIL / NN_TRY
+#include <exstl/errors.hpp>           // exstl::Result / EX_FAIL / EX_TRY
 #include <neuralnet.cpp/model_keyvalue_record.hpp> // nn::KeyValueRecord
 #include <neuralnet.cpp/precision.hpp>             // nn::Precision / nn::PrecisionProfile
 
@@ -156,9 +156,9 @@ public:
     // 域字段落盘（基类通用字段之后追加）
     virtual void write_extra_kv(KeyValueRecord& /*kv*/) const {}
     // 域字段读回（缺失键 → 保持默认）
-    [[nodiscard]] virtual Result<void> read_extra_kv(const KeyValueRecord& /*kv*/) { return {}; }
+    [[nodiscard]] virtual exstl::Result<void> read_extra_kv(const KeyValueRecord& /*kv*/) { return {}; }
     // 域级续训交叉校验（`verify_resume` 在通用校验后调用；返回错误 = 不可续训）
-    [[nodiscard]] virtual Result<void> verify_extra(const TrainState& /*current*/) const
+    [[nodiscard]] virtual exstl::Result<void> verify_extra(const TrainState& /*current*/) const
     { return {}; }
 
     TrainCounters counters;
@@ -190,7 +190,7 @@ public:
         kv.set("dataset_loss_scope", dataset.loss_scope);
     }
 
-    [[nodiscard]] Result<void> read_extra_kv(const KeyValueRecord& kv) override
+    [[nodiscard]] exstl::Result<void> read_extra_kv(const KeyValueRecord& kv) override
     {
         std::uint64_t u = 0;
         if (kv.get("stride", u)) stride = u;
@@ -209,17 +209,17 @@ public:
         return {};
     }
 
-    [[nodiscard]] Result<void> verify_extra(const TrainState& current) const override
+    [[nodiscard]] exstl::Result<void> verify_extra(const TrainState& current) const override
     {
         const auto* ts = dynamic_cast<const TextTrainState*>(&current);
         if (ts == nullptr)
-            NN_FAIL("续训交叉校验: 断点是文本状态（text）而本次不是文本状态（kind=" +
+            EX_FAIL("续训交叉校验: 断点是文本状态（text）而本次不是文本状态（kind=" +
                     std::string(current.state_kind()) + "）");
         const std::string why = dataset_mismatch_reason(dataset, ts->dataset);
         if (!why.empty())
-            NN_FAIL("续训交叉校验: 数据集身份不一致（内容身份变了 ⇒ 续训不存在正确语义）:\n" + why);
+            EX_FAIL("续训交叉校验: 数据集身份不一致（内容身份变了 ⇒ 续训不存在正确语义）:\n" + why);
         if (stride != ts->stride)
-            NN_FAIL("续训交叉校验: 滑窗 stride 不一致（" + std::to_string(stride) + " vs " +
+            EX_FAIL("续训交叉校验: 滑窗 stride 不一致（" + std::to_string(stride) + " vs " +
                     std::to_string(ts->stride) + "）");
         return {};
     }
@@ -282,21 +282,21 @@ inline constexpr std::uint64_t TRAIN_STATE_VERSION = 1;
 }
 
 // 精度槽读回：只接受**存储精度**与三值（BF16/F64 是保留值，文件里出现即报错）
-[[nodiscard]] inline Result<Precision>
+[[nodiscard]] inline exstl::Result<Precision>
 precision_from_state_kv(const KeyValueRecord& kv, const std::string& key, Precision fallback)
 {
     std::uint64_t v = 0;
     if (!kv.get(key, v)) return fallback;
     const auto p = static_cast<Precision>(v);
     if (p != Precision::F16 && p != Precision::F32 && p != Precision::T1_58)
-        NN_FAIL("训练状态段的 " + key + " 精度非法（值 " + std::to_string(v) +
+        EX_FAIL("训练状态段的 " + key + " 精度非法（值 " + std::to_string(v) +
                 "）；BF16/F64 为保留值，T1_58/F16/F32 之外不接受");
     return p;
 }
 
 // 工厂：kind → 子类实例。旧文件缺 `state_kind` 键 ⇒ "text"（历史断点全部是
 // 文本训练；零破坏）。未知 kind ⇒ 硬报错（不用错误类型的字段布局读文件）。
-[[nodiscard]] inline Result<std::unique_ptr<TrainState>>
+[[nodiscard]] inline exstl::Result<std::unique_ptr<TrainState>>
 train_state_from_kv(const KeyValueRecord& kv)
 {
     std::string kind = "text";
@@ -305,7 +305,7 @@ train_state_from_kv(const KeyValueRecord& kv)
     std::unique_ptr<TrainState> s;
     if (kind == "text") s = std::make_unique<TextTrainState>();
     else
-        NN_FAIL("未知的训练状态 kind=\"" + kind +
+        EX_FAIL("未知的训练状态 kind=\"" + kind +
                 "\"（本构建只认识 text；"
                 "自定义域请注册对应 TrainState 子类的读回路径）");
 
@@ -319,14 +319,14 @@ train_state_from_kv(const KeyValueRecord& kv)
     if (kv.get("optimizer_step", u)) s->optimizer_step = u;
     if (kv.get("optimizer_blob_count", u)) s->optimizer_blob_count = u;
 
-    NN_TRY(p_param, precision_from_state_kv(kv, "precision_param", s->recipe.precision.param));
+    EX_TRY(p_param, precision_from_state_kv(kv, "precision_param", s->recipe.precision.param));
     s->recipe.precision.param = *p_param;
-    NN_TRY(p_compute,
+    EX_TRY(p_compute,
            precision_from_state_kv(kv, "precision_compute", s->recipe.precision.compute));
     s->recipe.precision.compute = *p_compute;
-    NN_TRY(p_stable, precision_from_state_kv(kv, "precision_stable", s->recipe.precision.stable));
+    EX_TRY(p_stable, precision_from_state_kv(kv, "precision_stable", s->recipe.precision.stable));
     s->recipe.precision.stable = *p_stable;
-    NN_TRY(p_optimizer,
+    EX_TRY(p_optimizer,
            precision_from_state_kv(kv, "precision_optimizer", s->recipe.precision.optimizer));
     s->recipe.precision.optimizer = *p_optimizer;
 
@@ -348,7 +348,7 @@ train_state_from_kv(const KeyValueRecord& kv)
         if (kv.get("batch_size_semantics", semantics))
         {
             if (semantics != "global" && semantics != "micro")
-                NN_FAIL("训练状态的 batch_size_semantics 非法（只接受 global/micro）");
+                EX_FAIL("训练状态的 batch_size_semantics 非法（只接受 global/micro）");
             s->recipe.batch_size_is_global = (semantics == "global");
         }
     }
@@ -364,7 +364,7 @@ train_state_from_kv(const KeyValueRecord& kv)
         }
     }
 
-    NN_TRY(x, s->read_extra_kv(kv));
+    EX_TRY(x, s->read_extra_kv(kv));
     return s;
 }
 
@@ -378,11 +378,11 @@ enum class ResumePolicy
     Relaxed
 };
 
-[[nodiscard]] inline Result<void> verify_resume(const TrainState& saved, const TrainState& current,
+[[nodiscard]] inline exstl::Result<void> verify_resume(const TrainState& saved, const TrainState& current,
                                                 ResumePolicy policy = ResumePolicy::Strict)
 {
     if (std::string(saved.state_kind()) != std::string(current.state_kind()))
-        NN_FAIL("续训交叉校验: 状态 kind 不一致（" + std::string(saved.state_kind()) + " vs " +
+        EX_FAIL("续训交叉校验: 状态 kind 不一致（" + std::string(saved.state_kind()) + " vs " +
                 std::string(current.state_kind()) + "）");
     if (policy == ResumePolicy::Relaxed) return {};
 
@@ -393,35 +393,35 @@ enum class ResumePolicy
         return std::string("续训交叉校验: 配方 ") + name + " 不一致（断点 \"" + x +
                "\" vs 本次 \"" + y + "\"）；lr 曲线形状必须跨续训不变";
     };
-    if (a.optimizer != b.optimizer) NN_FAIL(mismatch("optimizer", a.optimizer, b.optimizer));
+    if (a.optimizer != b.optimizer) EX_FAIL(mismatch("optimizer", a.optimizer, b.optimizer));
     if (a.lr_schedule != b.lr_schedule)
-        NN_FAIL(mismatch("lr_schedule", a.lr_schedule, b.lr_schedule));
+        EX_FAIL(mismatch("lr_schedule", a.lr_schedule, b.lr_schedule));
     if (a.epochs != b.epochs)
-        NN_FAIL(mismatch("epochs", std::to_string(a.epochs), std::to_string(b.epochs)));
+        EX_FAIL(mismatch("epochs", std::to_string(a.epochs), std::to_string(b.epochs)));
     if (a.total_steps != b.total_steps)
-        NN_FAIL(
+        EX_FAIL(
             mismatch("total_steps", std::to_string(a.total_steps), std::to_string(b.total_steps)));
     if (a.warmup_epochs != b.warmup_epochs)
-        NN_FAIL(mismatch("warmup_epochs", std::to_string(a.warmup_epochs),
+        EX_FAIL(mismatch("warmup_epochs", std::to_string(a.warmup_epochs),
                          std::to_string(b.warmup_epochs)));
     if (a.warmup_steps != b.warmup_steps)
-        NN_FAIL(mismatch("warmup_steps", std::to_string(a.warmup_steps),
+        EX_FAIL(mismatch("warmup_steps", std::to_string(a.warmup_steps),
                          std::to_string(b.warmup_steps)));
     if (a.batch_size != b.batch_size)
-        NN_FAIL(mismatch("batch_size", std::to_string(a.batch_size), std::to_string(b.batch_size)));
+        EX_FAIL(mismatch("batch_size", std::to_string(a.batch_size), std::to_string(b.batch_size)));
     if (a.accum_steps != b.accum_steps)
-        NN_FAIL(
+        EX_FAIL(
             mismatch("accum_steps", std::to_string(a.accum_steps), std::to_string(b.accum_steps)));
     if (a.precision.param != b.precision.param || a.precision.compute != b.precision.compute ||
         a.precision.stable != b.precision.stable || a.precision.optimizer != b.precision.optimizer)
-        NN_FAIL(mismatch("precision", "(见断点)", "(见本次)"));
+        EX_FAIL(mismatch("precision", "(见断点)", "(见本次)"));
 
     // 计数器不越界：断点已训完的 epoch 超过本次配方的 epochs ⇒ 配方缩水
     if (b.epochs != 0 && saved.counters.epoch > b.epochs)
-        NN_FAIL("续训交叉校验: 断点已训完 " + std::to_string(saved.counters.epoch) +
+        EX_FAIL("续训交叉校验: 断点已训完 " + std::to_string(saved.counters.epoch) +
                 " 个 epoch，超过本次配方 epochs=" + std::to_string(b.epochs));
 
-    NN_TRY(x, saved.verify_extra(current));
+    EX_TRY(x, saved.verify_extra(current));
     return {};
 }
 

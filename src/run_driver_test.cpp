@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 import nn.model;
 import nn.train;
 import nn.engine;
@@ -84,7 +84,7 @@ struct Recorder
     {
         nn::RunHooks h;
         h.do_update = [this](nn::TrainingSession&,
-                             const nn::UpdateRequest& r) -> nn::Result<nn::UpdateOutcome>
+                             const nn::UpdateRequest& r) -> exstl::Result<nn::UpdateOutcome>
         {
             reqs.push_back(r);
             const std::size_t call = do_update_calls++;
@@ -100,19 +100,19 @@ struct Recorder
             }
             return o;
         };
-        h.on_checkpoint = [this](nn::TrainingSession&, const nn::TrainState& st) -> nn::Result<void>
+        h.on_checkpoint = [this](nn::TrainingSession&, const nn::TrainState& st) -> exstl::Result<void>
         {
-            if (fail_ckpt) NN_FAIL("模拟断点失败");
+            if (fail_ckpt) EX_FAIL("模拟断点失败");
             ++ckpt_calls;
             ckpt_counters.push_back(st.counters);
             return {};
         };
-        h.evaluate = [this](nn::TrainingSession&, std::size_t) -> nn::Result<nn::Scalar>
+        h.evaluate = [this](nn::TrainingSession&, std::size_t) -> exstl::Result<nn::Scalar>
         {
             ++eval_calls;
             return nn::Scalar{0.5f};
         };
-        h.on_epoch_end = [this](const nn::RunReport&, std::size_t) -> nn::Result<void>
+        h.on_epoch_end = [this](const nn::RunReport&, std::size_t) -> exstl::Result<void>
         {
             ++epoch_end_calls;
             return {};
@@ -126,7 +126,7 @@ nn::IndexedBatchSource make_source(std::size_t n, std::size_t bs, std::uint64_t 
 {
     auto r = nn::IndexedBatchSource::create(
         n, bs, seed,
-        [](std::span<const std::size_t> ix) -> nn::Result<std::pair<std::any, std::size_t>>
+        [](std::span<const std::size_t> ix) -> exstl::Result<std::pair<std::any, std::size_t>>
         { return std::make_pair(std::any(), ix.size()); });
     // create 对合法参数必成功
     if (!r)
@@ -141,7 +141,7 @@ nn::IndexedBatchSource make_source(std::size_t n, std::size_t bs, std::uint64_t 
 class StepOnlySource : public nn::BatchSource
 {
 public:
-    [[nodiscard]] nn::Result<nn::BatchAt> next(std::size_t) override
+    [[nodiscard]] exstl::Result<nn::BatchAt> next(std::size_t) override
     {
         nn::BatchAt b;
         b.samples = 4;
@@ -149,7 +149,7 @@ public:
         b.epoch_done = false;
         return b;
     }
-    [[nodiscard]] nn::Result<void> rewind(std::size_t, std::size_t) override { return {}; }
+    [[nodiscard]] exstl::Result<void> rewind(std::size_t, std::size_t) override { return {}; }
 };
 
 // 空步钩子（0 步运行时不会被调用，但 fit 要求存在）
@@ -157,7 +157,7 @@ static nn::RunHooks rec_empty_hooks()
 {
     nn::RunHooks h;
     h.do_update = [](nn::TrainingSession&,
-                     const nn::UpdateRequest&) -> nn::Result<nn::UpdateOutcome>
+                     const nn::UpdateRequest&) -> exstl::Result<nn::UpdateOutcome>
     { return nn::UpdateOutcome{}; };
     return h;
 }

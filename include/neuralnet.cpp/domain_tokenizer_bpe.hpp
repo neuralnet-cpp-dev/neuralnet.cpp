@@ -26,7 +26,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include <neuralnet.cpp/core_errors.hpp>   // Result / NN_FAIL / NN_TRY
+#include <exstl/errors.hpp>   // Result / EX_FAIL / EX_TRY
 
 #include "domain_tokenizer_base.hpp"
 
@@ -73,15 +73,15 @@ public:
     [[nodiscard]] std::size_t bos_id() const noexcept override { return BOS_ID; }
     [[nodiscard]] std::size_t eos_id() const noexcept override { return EOS_ID; }
 
-    Result<void> train(const std::string& text) { return train(text, Config{}); }
+    exstl::Result<void> train(const std::string& text) { return train(text, Config{}); }
 
-    Result<void> train(const std::string& text, const Config& config)
+    exstl::Result<void> train(const std::string& text, const Config& config)
     {
         // 库 API 守卫（与 CLI 的 >=258 校验对齐）：vocab_size < BYTE_BASE+2 时，
         // 下方 merges_.reserve(config.vocab_size - BYTE_BASE - 2) 会发生无符号
         // 下溢 → ~SIZE_MAX 分配 → bad_alloc/terminate（-fno-exceptions 下不回 Result）。
         if (config.vocab_size < BYTE_BASE + 2)
-            NN_FAIL("BPETokenizer::train: vocab_size 必须 >= " + std::to_string(BYTE_BASE + 2) +
+            EX_FAIL("BPETokenizer::train: vocab_size 必须 >= " + std::to_string(BYTE_BASE + 2) +
                     "（256 字节 token + BOS/EOS）");
 
         auto log = config.log ? config.log : LogFn{[](std::string_view) { /* 静默 */ }};
@@ -296,7 +296,7 @@ protected:
 
 public:
     // ── 旧 JSON 词表读取（模型 v5 内嵌词表 / dataset_convert vocab 用）──
-    [[nodiscard]] Result<void> load_from_string(const std::string& content) override
+    [[nodiscard]] exstl::Result<void> load_from_string(const std::string& content) override
     {
         vocab_.clear();
         merges_.clear();

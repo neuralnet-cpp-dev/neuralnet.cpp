@@ -7,7 +7,7 @@
 // 引擎选择：--gpu 启用 GpuEngine（需要 Vulkan），否则 CpuEngine。
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -140,7 +140,7 @@ InferConfig parse_args(int argc, char* argv[])
         else if (arg == "--interactive") cfg.interactive = true;
         else if (arg == "--max-tokens" && i + 1 < argc)
         {
-            auto v = nn::parse_number<int>(argv[++i]);
+            auto v = exstl::parse_number<int>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --max-tokens\n";
@@ -155,7 +155,7 @@ InferConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--temperature" && i + 1 < argc)
         {
-            auto v = nn::parse_number<double>(argv[++i]);
+            auto v = exstl::parse_number<double>(argv[++i]);
             if (!v)
             {
                 std::cerr << "无效 --temperature\n";
@@ -165,7 +165,7 @@ InferConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--top-k" && i + 1 < argc)
         {
-            auto v = nn::parse_number<int>(argv[++i]);
+            auto v = exstl::parse_number<int>(argv[++i]);
             if (!v || *v < 0)
             {
                 std::cerr << "--top-k 必须 >= 0\n";
@@ -175,7 +175,7 @@ InferConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--top-p" && i + 1 < argc)
         {
-            auto v = nn::parse_number<double>(argv[++i]);
+            auto v = exstl::parse_number<double>(argv[++i]);
             if (!v || *v <= 0.0 || *v > 1.0)
             {
                 std::cerr << "--top-p 必须在 (0, 1] 区间\n";
@@ -185,7 +185,7 @@ InferConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--repeat-penalty" && i + 1 < argc)
         {
-            auto v = nn::parse_number<double>(argv[++i]);
+            auto v = exstl::parse_number<double>(argv[++i]);
             if (!v || *v <= 0.0)
             {
                 std::cerr << "--repeat-penalty 必须 > 0（1.0 = 关闭）\n";
@@ -195,7 +195,7 @@ InferConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--repeat-window" && i + 1 < argc)
         {
-            auto v = nn::parse_number<int>(argv[++i]);
+            auto v = exstl::parse_number<int>(argv[++i]);
             if (!v || *v < 0)
             {
                 std::cerr << "--repeat-window 必须 >= 0（0 = 全部上下文）\n";
@@ -209,7 +209,7 @@ InferConfig parse_args(int argc, char* argv[])
         }
         else if (arg == "--seed" && i + 1 < argc)
         {
-            auto v = nn::parse_number<long long>(argv[++i]);
+            auto v = exstl::parse_number<long long>(argv[++i]);
             if (!v || *v < 0)
             {
                 std::cerr << "--seed 必须 >= 0\n";
@@ -294,7 +294,7 @@ nn::SamplingConfig sampling_config(const InferConfig& cfg)
     return sc;
 }
 
-nn::Result<std::vector<std::size_t>> generate_text(nn::Model& model, nn::ComputeEngine& engine,
+exstl::Result<std::vector<std::size_t>> generate_text(nn::Model& model, nn::ComputeEngine& engine,
                                                    const std::vector<std::size_t>& prompt_tokens,
                                                    std::size_t max_new_tokens,
                                                    const nn::SamplingConfig& sc,
@@ -310,7 +310,7 @@ nn::Result<std::vector<std::size_t>> generate_text(nn::Model& model, nn::Compute
         return gpt_ptr->generate(engine, prompt_tokens, max_new_tokens, sc, eos_token_id, min_new);
     if (auto* rapt_ptr = dynamic_cast<nn::RAPTModel*>(&layer_ref))
         return rapt_ptr->generate(engine, prompt_tokens, max_new_tokens, sc, eos_token_id, min_new);
-    NN_FAIL("Model does not contain a GPTModel or RAPTModel layer");
+    EX_FAIL("Model does not contain a GPTModel or RAPTModel layer");
 }
 
 // ==================== 交互模式 ====================
@@ -403,10 +403,10 @@ int main(int argc, char* argv[])
 
     // ── 从模型文件读取规格（v5/v6/v7 同一 magic，自动按版本分流）──────────
     auto spec_result = nn::peek_any_model_spec(cfg.model_path);
-    NN_EXIT(spec_result, 1, "读取模型文件失败: ");
+    EX_EXIT(spec_result, 1, "读取模型文件失败: ");
     nn::ModelSpec spec = spec_result.value();
     auto role_r = nn::peek_model_role(cfg.model_path);
-    NN_EXIT(role_r, 1, "读取模型文件失败: ");
+    EX_EXIT(role_r, 1, "读取模型文件失败: ");
     if (!spec.is_gpt() && !spec.is_rapt())
     {
         std::cerr << "模型文件不是 GPT/RAPT 类型 (type=" << spec.type_name() << ")\n";
@@ -442,7 +442,7 @@ int main(int argc, char* argv[])
     eng_cfg.use_gpu = cfg.gpu_enabled;
     eng_cfg.gpu_device = cfg.gpu_device;
     auto engine_res = nn::cli::create_engine(eng_cfg, std::cout);
-    NN_EXIT(engine_res, 1, "引擎创建失败: ");
+    EX_EXIT(engine_res, 1, "引擎创建失败: ");
     auto engine = std::move(*engine_res);
 
     // ── 构建 GPT 模型 ────────────────────────────────────────
@@ -455,7 +455,7 @@ int main(int argc, char* argv[])
     else std::cout << " [Learned]";
     std::cout << "\n";
 
-    nn::Result<nn::Model> model_result;
+    exstl::Result<nn::Model> model_result;
     // 免 latent 构建（2026-11）：role=Model（.nnmodel）→ 三值层按部署形态构建
     // （BitLinear 不分配 f32 latent，权重由载入的打包字 + τ 接管）——消除
     // "先按规格建出全部 latent 再被部署条目丢弃"的载入期瞬时峰值
@@ -466,7 +466,7 @@ int main(int argc, char* argv[])
     else  // 统一的 GPTModel 通过 pos_encoding 区分 Learned/Sinusoidal/ALiBi
         model_result = nn::build_gpt_model_from_spec(*engine, spec, nn::PrecisionProfile{},
                                                     inference_only);
-    NN_EXIT(model_result, 1, "构建模型失败: ");
+    EX_EXIT(model_result, 1, "构建模型失败: ");
     auto model = std::move(*model_result);
 
     // ── 加载模型参数 + tokenizer（.nnmodel 的打包三值层 → 只读推理态）──────
@@ -475,12 +475,12 @@ int main(int argc, char* argv[])
     std::string embedded_vocab;
     {
         auto load_result = nn::load_model(cfg.model_path, model, &model_version);
-        NN_EXIT(load_result, 1, "加载模型失败: ");
+        EX_EXIT(load_result, 1, "加载模型失败: ");
         embedded_vocab = std::move(*load_result);
         std::cout << "模型已加载（角色: " << nn::model_role_name(*role_r) << "）" << std::endl;
         // 载入期的解码/中转底材已无活跃引用 → 归还整块空闲池底材，让驱动可见
         // 显存回落到推理足迹（训练路径每块结束也这么做，见 text_trainer）。
-        NN_EXIT(engine->release_idle_pool_blocks(), 1, "显存回收失败: ");
+        EX_EXIT(engine->release_idle_pool_blocks(), 1, "显存回收失败: ");
     }
 
     // ── 加载 tokenizer（按模型版本分派：v5=JSON / v6=.nnvocab kvrec）──
@@ -488,7 +488,7 @@ int main(int argc, char* argv[])
     if (!embedded_vocab.empty())
     {
         auto tok_r = nn::load_tokenizer_from_model_blob(embedded_vocab, model_version);
-        NN_EXIT(tok_r, 1, "解析嵌入 tokenizer 失败: ");
+        EX_EXIT(tok_r, 1, "解析嵌入 tokenizer 失败: ");
         tokenizer = std::move(*tok_r);
         std::cout << "已从模型文件加载嵌入 tokenizer" << std::endl;
     }
@@ -517,7 +517,7 @@ int main(int argc, char* argv[])
     {
         nn::Tensor warm_x =
             engine->create_tensor(seq_len, 1, nn::Precision::F32, nn::InitSpec::zero());
-        NN_EXIT(nn::cli::jit_warmup(model, *engine, warm_x, cfg.jit_warmup), 1, "预热失败: ");
+        EX_EXIT(nn::cli::jit_warmup(model, *engine, warm_x, cfg.jit_warmup), 1, "预热失败: ");
     }
 
     // ── 交互模式 ─────────────────────────────────────────────
@@ -556,7 +556,7 @@ int main(int argc, char* argv[])
         auto t_end = std::chrono::steady_clock::now();
         Scalar gen_sec = std::chrono::duration<Scalar>(t_end - t_start).count();
 
-        NN_EXIT(gen_result, 1, "生成失败: ");
+        EX_EXIT(gen_result, 1, "生成失败: ");
         auto generated = std::move(*gen_result);
 
         // 对话模板：去掉末尾的 assistant 结束标记（不把标记写进回复）
@@ -639,7 +639,7 @@ int main(int argc, char* argv[])
     auto t_end = std::chrono::steady_clock::now();
     Scalar gen_sec = std::chrono::duration<Scalar>(t_end - t_start).count();
 
-    NN_EXIT(gen_result, 1, "生成失败: ");
+    EX_EXIT(gen_result, 1, "生成失败: ");
     auto generated = std::move(*gen_result);
 
     std::cout << cfg.prompt << tokenizer->decode(generated) << std::endl;

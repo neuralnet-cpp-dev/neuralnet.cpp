@@ -18,7 +18,7 @@
 #include <string>
 #include <vector>
 
-#include <neuralnet.cpp/core_errors.hpp>
+#include <exstl/errors.hpp>
 #include "compute_engine.hpp"
 #include "model_container.hpp"
 #include "model_spec.hpp"
@@ -87,15 +87,15 @@ inline const std::vector<std::size_t>& MNIST_CNN_FC = mnist_cnn_fc();
 { return (in + 2 * p - k) / s + 1; }
 
 // ── 构建 CNN 模型（CnnConfig 版本，推荐使用） ────────────────────────────
-[[nodiscard]] inline Result<Model> build_cnn_model(ComputeEngine& engine, const CnnConfig& cfg)
+[[nodiscard]] inline exstl::Result<Model> build_cnn_model(ComputeEngine& engine, const CnnConfig& cfg)
 {
-    if (cfg.convs.empty()) NN_FAIL("CNN: convs must not be empty");
-    if (cfg.fc_dims.size() < 2) NN_FAIL("CNN: fc_dims must have at least 2 elements");
+    if (cfg.convs.empty()) EX_FAIL("CNN: convs must not be empty");
+    if (cfg.fc_dims.size() < 2) EX_FAIL("CNN: fc_dims must have at least 2 elements");
     if (cfg.in_channels == 0 || cfg.in_size == 0)
-        NN_FAIL("CNN: in_channels/in_size must be positive");
+        EX_FAIL("CNN: in_channels/in_size must be positive");
     if (cfg.norm_place != NormPlace::None && cfg.norm_place != NormPlace::Conv &&
         cfg.norm_place != NormPlace::Head && cfg.norm_place != NormPlace::Both)
-        NN_FAIL("CNN: norm_place must be none/conv/head/both (final is ViT-only)");
+        EX_FAIL("CNN: norm_place must be none/conv/head/both (final is ViT-only)");
     Model model(engine);
     // 精度须在 add 之前注入（权重/梯度按 param 精度创建，见 Model 的
     // set_default_precision_profile 注释）；默认全 F32 → 历史逐位不变。
@@ -108,12 +108,12 @@ inline const std::vector<std::size_t>& MNIST_CNN_FC = mnist_cnn_fc();
     {
         const CnnConvSpec& cv = cfg.convs[i];
         if (cv.out_channels == 0 || cv.kernel == 0)
-            NN_FAIL("CNN: conv out_channels/kernel must be positive");
+            EX_FAIL("CNN: conv out_channels/kernel must be positive");
         if (cv.kernel > h + 2 * cv.padding || cv.kernel > w + 2 * cv.padding)
-            NN_FAIL("CNN: kernel larger than input spatial size");
+            EX_FAIL("CNN: kernel larger than input spatial size");
         {
             auto r = model.add<Conv2D>(c, cv.out_channels, cv.kernel, cv.stride, cv.padding, h, w);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
         }
         h = conv_out_size(h, cv.kernel, cv.stride, cv.padding);
         w = conv_out_size(w, cv.kernel, cv.stride, cv.padding);
@@ -122,7 +122,7 @@ inline const std::vector<std::size_t>& MNIST_CNN_FC = mnist_cnn_fc();
         if (cfg.pool > 0)
         {
             auto r = model.add<MaxPool2D>(c, h, w, cfg.pool);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
             h = (h - cfg.pool) / cfg.pool + 1;
             w = (w - cfg.pool) / cfg.pool + 1;
         }
@@ -132,39 +132,39 @@ inline const std::vector<std::size_t>& MNIST_CNN_FC = mnist_cnn_fc();
         if (cfg.norm_place == NormPlace::Conv || cfg.norm_place == NormPlace::Both)
         {
             auto r = model.add_layer(make_norm_layer(c * h * w, cfg.norm_type));
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
         }
     }
 
     const std::size_t flattened = c * h * w;
-    if (flattened == 0) NN_FAIL("CNN: flattened size is zero");
+    if (flattened == 0) EX_FAIL("CNN: flattened size is zero");
     // 全连接头：Linear(flatten → fc_dims[0]) → [Norm] → ReLU → ...
     // → Linear(→ num_classes)；Norm 只挂隐藏层，最后一层保持原始 logits。
     const bool norm_head = (cfg.norm_place == NormPlace::Head || cfg.norm_place == NormPlace::Both);
     {
         auto r = model.add<Linear>(flattened, cfg.fc_dims[0]);
-        NN_TRY_CHECK(r);
+        EX_TRY_CHECK(r);
         if (norm_head)
         {
             auto rn = model.add_layer(make_norm_layer(cfg.fc_dims[0], cfg.norm_type));
-            NN_TRY_CHECK(rn);
+            EX_TRY_CHECK(rn);
         }
     }
     for (std::size_t i = 1; i < cfg.fc_dims.size(); ++i)
     {
         {
             auto r = model.add<ReLU>();
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
         }
         {
             auto r = model.add<Linear>(cfg.fc_dims[i - 1], cfg.fc_dims[i]);
-            NN_TRY_CHECK(r);
+            EX_TRY_CHECK(r);
         }
         // 隐藏层后再挂一份 Norm（最后一层 fc_dims.size()-1 不挂）
         if (norm_head && i + 1 < cfg.fc_dims.size())
         {
             auto rn = model.add_layer(make_norm_layer(cfg.fc_dims[i], cfg.norm_type));
-            NN_TRY_CHECK(rn);
+            EX_TRY_CHECK(rn);
         }
     }
     return model;
@@ -196,15 +196,15 @@ make_cnn_spec(std::size_t in_channels, std::size_t in_size, std::size_t pool,
 }
 
 // ── 从 ModelSpec 还原 CnnConfig ──────────────────────────────────────────
-[[nodiscard]] inline Result<CnnConfig> cnn_config_from_spec(const ModelSpec& spec)
+[[nodiscard]] inline exstl::Result<CnnConfig> cnn_config_from_spec(const ModelSpec& spec)
 {
     const auto* c = spec.as<CnnSpec>();
-    if (c == nullptr) NN_FAIL("cnn_config_from_spec: not a CNN spec");
+    if (c == nullptr) EX_FAIL("cnn_config_from_spec: not a CNN spec");
     if (c->cnn_channels.size() != c->cnn_kernels.size() ||
         c->cnn_channels.size() != c->cnn_strides.size() ||
         c->cnn_channels.size() != c->cnn_paddings.size())
-        NN_FAIL("CNN spec: conv vectors length mismatch");
-    if (c->cnn_channels.empty()) NN_FAIL("CNN spec: no conv layers");
+        EX_FAIL("CNN spec: conv vectors length mismatch");
+    if (c->cnn_channels.empty()) EX_FAIL("CNN spec: no conv layers");
     CnnConfig cfg;
     cfg.in_channels = c->cnn_in_channels;
     cfg.in_size = c->cnn_in_size;
@@ -214,7 +214,7 @@ make_cnn_spec(std::size_t in_channels, std::size_t in_size, std::size_t pool,
     cfg.norm_place = c->norm_place;
     if (cfg.norm_place != NormPlace::None && cfg.norm_place != NormPlace::Conv &&
         cfg.norm_place != NormPlace::Head && cfg.norm_place != NormPlace::Both)
-        NN_FAIL("CNN spec: norm_place must be none/conv/head/both (final is ViT-only)");
+        EX_FAIL("CNN spec: norm_place must be none/conv/head/both (final is ViT-only)");
     for (std::size_t i = 0; i < c->cnn_channels.size(); ++i)
     {
         cfg.convs.push_back(CnnConvSpec{
@@ -230,12 +230,12 @@ make_cnn_spec(std::size_t in_channels, std::size_t in_size, std::size_t pool,
 // ── 从 ModelSpec 构建 CNN 模型（用于从二进制文件加载时自动还原） ─────────
 // precision：模型级精度配置（P2-3）。**精度是运行期配置、不进 ModelSpec**
 //（与 GPT 一致：GptConfig::precision 同样只在构建期传）——由调用方显式给。
-[[nodiscard]] inline Result<Model>
+[[nodiscard]] inline exstl::Result<Model>
 build_cnn_model_from_spec(ComputeEngine& engine, const ModelSpec& spec,
                           const PrecisionProfile& precision = PrecisionProfile{})
 {
     auto cfg_r = cnn_config_from_spec(spec);
-    NN_TRY_CHECK(cfg_r);
+    EX_TRY_CHECK(cfg_r);
     cfg_r->precision = precision;
     auto model = build_cnn_model(engine, *cfg_r);
     if (model) model->set_spec(spec);  // 记录架构规格，供 load_model 校验

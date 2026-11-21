@@ -10,7 +10,7 @@
 // 用法：conv2d_gradcheck [--gpu]
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -131,7 +131,7 @@ int main(int argc, char* argv[])
     nn::cli::EngineConfig ecfg;
     ecfg.use_gpu = use_gpu;
     auto engine_res = nn::cli::create_engine(ecfg, std::cout);
-    NN_EXIT(engine_res, 1, "引擎创建失败: ");
+    EX_EXIT(engine_res, 1, "引擎创建失败: ");
     auto engine = std::move(*engine_res);
     ComputeEngine& eng = *engine;
 
@@ -178,18 +178,18 @@ int main(int argc, char* argv[])
     };
 
     auto x = eng.from_matrix(ref.x);
-    NN_EXIT(x, 1);
+    EX_EXIT(x, 1);
     auto out = conv.forward(*x);
-    NN_EXIT(out, 1, "  forward 失败: ");
+    EX_EXIT(out, 1, "  forward 失败: ");
     auto om = eng.to_matrix(*out);
-    NN_EXIT(om, 1);
+    EX_EXIT(om, 1);
     report("forward", *om, ref.fwd());
 
     Matrix gm = fill(C_out * OH * OW, B);
     auto go = eng.from_matrix(gm);
-    NN_EXIT(go, 1);
+    EX_EXIT(go, 1);
     auto gx = conv.backward(*go);
-    NN_EXIT(gx, 1, "  backward 失败: ");
+    EX_EXIT(gx, 1, "  backward 失败: ");
 
     Matrix gw_ref, gb_ref;
     ref.bwd(gm, gw_ref, gb_ref);

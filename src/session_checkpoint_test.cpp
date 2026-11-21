@@ -12,7 +12,7 @@
 //   [7] 失败路径无半提交：Strict 校验失败后模型参数逐位不变（issue #43）
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -58,7 +58,7 @@ std::vector<nn::Scalar> snapshot(nn::ComputeEngine& e, nn::Model& m)
     for (auto& t : m.parameters())
     {
         auto m2 = e.to_matrix(t.get(), nn::Precision::F32);
-        NN_ASSERT_ALWAYS(m2, "snapshot: to_matrix");
+        EX_ASSERT_ALWAYS(m2, "snapshot: to_matrix");
         for (auto v : m2->span())
             out.push_back(v);
     }
@@ -66,7 +66,7 @@ std::vector<nn::Scalar> snapshot(nn::ComputeEngine& e, nn::Model& m)
 }
 
 // 走一遍 train_step（固定输入/标签，确定性）
-nn::Result<nn::TrainingStepReport> one_step(nn::TrainingSession& s, const nn::Tensor& x,
+exstl::Result<nn::TrainingStepReport> one_step(nn::TrainingSession& s, const nn::Tensor& x,
                                             nn::Scalar lr)
 {
     nn::TrainingStepOptions opts;
@@ -75,14 +75,14 @@ nn::Result<nn::TrainingStepReport> one_step(nn::TrainingSession& s, const nn::Te
     opts.force_update = true;
     return s.train_step(
         0, opts,
-        [&](nn::Model& model, nn::ComputeEngine& eng, int) -> nn::Result<nn::TrainingStepOutput>
+        [&](nn::Model& model, nn::ComputeEngine& eng, int) -> exstl::Result<nn::TrainingStepOutput>
         {
-            NN_TRY(logits, model.forward(x));
+            EX_TRY(logits, model.forward(x));
             // step_fn 契约：返回**对模型输出**的梯度；model.backward 由 session 执行
             //（本测试焦点是断点编排，直接给常数输出梯度，不经 loss 层）
             auto go = eng.create_tensor(logits->rows(), logits->cols(), nn::Precision::F32,
                                         nn::InitSpec::constant(0.01f));
-            if (!go.valid()) NN_FAIL("one_step: go 分配失败");
+            if (!go.valid()) EX_FAIL("one_step: go 分配失败");
             return nn::TrainingStepOutput{std::move(go), 1, {}, 0};
         });
 }

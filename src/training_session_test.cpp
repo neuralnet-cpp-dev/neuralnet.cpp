@@ -9,7 +9,7 @@
 //   [6] 未知优化器 / 未绑定引擎 → Result 错误
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -43,7 +43,7 @@ std::vector<nn::Scalar> snapshot_params(nn::ComputeEngine& eng, nn::Model& model
     for (auto& t : model.parameters())
     {
         auto m = eng.to_matrix(t.get(), nn::Precision::F32);
-        NN_ASSERT_ALWAYS(m, "snapshot_params: to_matrix failed");
+        EX_ASSERT_ALWAYS(m, "snapshot_params: to_matrix failed");
         for (auto v : m->span())
             out.push_back(v);
     }
@@ -84,7 +84,7 @@ void test_create_and_train()
 
     for (int step = 0; step < 8; ++step)
     {
-        NN_UNWRAP(session.zero_grad());
+        EX_UNWRAP(session.zero_grad());
         auto logits = session.model().forward(x);
         CHECK(logits.has_value(), "forward");
         if (!logits) return;
@@ -113,7 +113,7 @@ void test_create_and_train()
     CHECK(infer.has_value(), "session.model().forward 推理可用");
 }
 
-[[nodiscard]] nn::Result<nn::TrainingStepReport> run_mse_step(nn::TrainingSession& session,
+[[nodiscard]] exstl::Result<nn::TrainingStepReport> run_mse_step(nn::TrainingSession& session,
                                                               const nn::Tensor& x,
                                                               std::size_t normalization_units,
                                                               bool force_update = false)
@@ -123,17 +123,17 @@ void test_create_and_train()
     opts.force_update = force_update;
     return session.train_step(x, opts,
                               [&](nn::Model& model, nn::ComputeEngine& engine,
-                                  const nn::Tensor& input) -> nn::Result<nn::TrainingStepOutput>
+                                  const nn::Tensor& input) -> exstl::Result<nn::TrainingStepOutput>
                               {
                                   auto logits_r = model.forward(input);
-                                  NN_TRY_CHECK(logits_r);
+                                  EX_TRY_CHECK(logits_r);
                                   nn::MSELoss loss;
                                   auto target = make_tensor(engine, logits_r->rows(),
                                                             logits_r->cols(), 0.f, 0.f);
                                   auto loss_r = loss.forward(engine, *logits_r, target);
-                                  NN_TRY_CHECK(loss_r);
+                                  EX_TRY_CHECK(loss_r);
                                   auto grad_r = loss.backward();
-                                  NN_TRY_CHECK(grad_r);
+                                  EX_TRY_CHECK(grad_r);
                                   nn::TrainingStepOutput out;
                                   out.grad = std::move(*grad_r);
                                   out.gradient_units = logits_r->size();
@@ -177,9 +177,9 @@ void test_global_batch_normalization()
     auto make_zero_model = [&]()
     {
         nn::Model model(*engine);
-        NN_ASSERT_ALWAYS(model.add<nn::Linear>(1, 1), "norm: add");
+        EX_ASSERT_ALWAYS(model.add<nn::Linear>(1, 1), "norm: add");
         for (auto& p : model.parameters())
-            NN_ASSERT_ALWAYS(engine->zero(p.get()), "norm: zero parameter");
+            EX_ASSERT_ALWAYS(engine->zero(p.get()), "norm: zero parameter");
         return model;
     };
     auto make_sgd_session = [&](std::size_t accum)
@@ -190,7 +190,7 @@ void test_global_batch_normalization()
         cfg.weight_decay = 0.0f;
         cfg.grad_accum_steps = accum;
         auto s = nn::TrainingSession::create(make_zero_model(), cfg);
-        NN_ASSERT_ALWAYS(s, "norm: create session");
+        EX_ASSERT_ALWAYS(s, "norm: create session");
         return std::move(*s);
     };
 
@@ -247,20 +247,20 @@ void test_before_update_abort()
     const auto x = make_tensor(*engine, 4, 2, 0.1f, 0.05f);
     nn::TrainingStepOptions opts;
     opts.normalization_units = 6;
-    opts.before_update = []() -> nn::Result<bool> { return true; };
+    opts.before_update = []() -> exstl::Result<bool> { return true; };
     auto r = s->train_step(x, std::move(opts),
                            [&](nn::Model& m, nn::ComputeEngine& e,
-                               const nn::Tensor& input) -> nn::Result<nn::TrainingStepOutput>
+                               const nn::Tensor& input) -> exstl::Result<nn::TrainingStepOutput>
                            {
                                auto logits = m.forward(input);
-                               NN_TRY_CHECK(logits);
+                               EX_TRY_CHECK(logits);
                                nn::MSELoss loss;
                                auto target =
                                    make_tensor(e, logits->rows(), logits->cols(), 0.f, 0.f);
                                auto l = loss.forward(e, *logits, target);
-                               NN_TRY_CHECK(l);
+                               EX_TRY_CHECK(l);
                                auto g = loss.backward();
-                               NN_TRY_CHECK(g);
+                               EX_TRY_CHECK(g);
                                nn::TrainingStepOutput out;
                                out.grad = std::move(*g);
                                out.gradient_units = logits->size();
@@ -290,7 +290,7 @@ void test_move_session_keeps_refs_valid()
     CHECK(moved.step_count() == 0, "移动后计数器保留");
 
     const auto x = make_tensor(*engine, 4, 2, 0.2f, 0.1f);
-    NN_UNWRAP(moved.zero_grad());
+    EX_UNWRAP(moved.zero_grad());
     auto logits = moved.model().forward(x);
     CHECK(logits.has_value(), "移动后 forward");
     if (!logits) return;
@@ -339,7 +339,7 @@ void test_precision_passthrough()
           "模型参数按 f16 存储");
 
     const auto x = make_tensor(*engine, 4, 2, 0.1f, 0.05f);
-    NN_UNWRAP(session.zero_grad());
+    EX_UNWRAP(session.zero_grad());
     auto logits = session.model().forward(x);
     CHECK(logits.has_value(), "f16 forward");
     if (!logits) return;

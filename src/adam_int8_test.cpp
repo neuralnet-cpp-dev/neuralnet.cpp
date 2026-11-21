@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 #include <random>
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -355,7 +355,7 @@ void test_state_roundtrip(nn::ComputeEngine& eng, const char* tag)
     const std::uint64_t saved_step = opt.state_step();
     const nn::Matrix p3 = download(eng, p);
     std::vector<nn::Tensor> saved;
-    NN_UNWRAP(opt.save_state(saved), "save_state");
+    EX_UNWRAP(opt.save_state(saved), "save_state");
     CHECK(saved.size() == 4, "每参数 4 张量（m_packed/v_packed/sm/sv）");
     // ⚠ save_state 是**句柄共享**（同一存储）：后续 step 会改动快照 → 必须
     // 立即把数据快照成宿主副本，load 前再重建为独立张量。
@@ -368,12 +368,12 @@ void test_state_roundtrip(nn::ComputeEngine& eng, const char* tag)
     const nn::Matrix p4a = download(eng, p);
 
     // 回滚：参数 ← P3、t_ ← 3、状态 ← 快照（重建独立张量），再走第 4 步 → 结果 B
-    NN_UNWRAP(eng.write(p, p3.span()), "参数回滚写回");
+    EX_UNWRAP(eng.write(p, p3.span()), "参数回滚写回");
     opt.set_state_step(saved_step);
     std::vector<nn::Tensor> restored;
     for (const auto& m : snap)
         restored.push_back(upload(eng, m));
-    NN_UNWRAP(opt.load_state(restored), "load_state");
+    EX_UNWRAP(opt.load_state(restored), "load_state");
     auto r5 = opt.step();
     CHECK(r5.has_value(), "载入后 step 成功");
     if (!r5.has_value()) return;
@@ -403,7 +403,7 @@ int main(int argc, char* argv[])
         nn::cli::EngineConfig ec;
         ec.use_gpu = true;
         auto eng_r = nn::cli::create_engine(ec);
-        NN_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
+        EX_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
         run_all(**eng_r, "GPU");
     }
     else

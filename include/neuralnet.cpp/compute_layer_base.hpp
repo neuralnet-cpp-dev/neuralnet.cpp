@@ -152,7 +152,7 @@ split_ternary_profile(const char* layer_name, const PrecisionProfile& profile, b
 {
     if (!ternary && profile.param == Precision::T1_58)
     {
-        NN_UNWRAP(false, std::string("层 ") + layer_name +
+        EX_UNWRAP(false, std::string("层 ") + layer_name +
                              "：收到 param=t1_58，但该层不是"
                              "三值模式（weight_quant=None）—— 三值权重只对 BitLinear 有意义；"
                              "请以 weight_quant=t1_58 构造该层，或把 param 改回 f16/f32"
@@ -298,14 +298,14 @@ protected:
             const std::string msg =
                 std::string("[layer-lifetime] ") + layer_name() +
                 ": 上一次 init 失败（层处于半初始化状态）—— 修复原因后重新 init(engine)";
-            detail::fatal_at("NN_FATAL", loc.file_name(), static_cast<int>(loc.line()),
+            exstl::detail::fatal_at("EX_FATAL", loc.file_name(), static_cast<int>(loc.line()),
                              msg.c_str());
         }
         if (!engine_)
         {
             const std::string msg = std::string("[layer-lifetime] ") + layer_name() +
                                     ": 未绑定引擎（先调 init(engine)）";
-            detail::fatal_at("NN_FATAL", loc.file_name(), static_cast<int>(loc.line()),
+            exstl::detail::fatal_at("EX_FATAL", loc.file_name(), static_cast<int>(loc.line()),
                              msg.c_str());
         }
         return *engine_;
@@ -340,7 +340,7 @@ public:
     {
         if (binding_state_ == BindingState::ready)
         {
-            NN_UNWRAP(false, std::string(
+            EX_UNWRAP(false, std::string(
                                  "set_precision_profile: 层已 init，精度 profile 之后不可变（层=") +
                                  layer_name() +
                                  "）—— 请在 init(engine) 之前注入"
@@ -358,34 +358,34 @@ public:
     { return PrecisionSupport::rounding_all_slots(); }
 
     // forward/backward 只写一次，CPU/GPU 由引擎实现自动分发（引擎来自 init 绑定）
-    [[nodiscard]] virtual Result<Tensor> forward(const Tensor& input) = 0;
+    [[nodiscard]] virtual exstl::Result<Tensor> forward(const Tensor& input) = 0;
 
-    [[nodiscard]] virtual Result<Tensor> backward(const Tensor& grad_output) = 0;
+    [[nodiscard]] virtual exstl::Result<Tensor> backward(const Tensor& grad_output) = 0;
 
     // ── 具名多输出协议（docs/internal/31 RL-0）─────────────────────────────
     // 默认层是单端口 "output"；复合层（OutputBundleLayer）覆盖下列入口。
     // 不接受 schema 的重载只供单层直接使用；序列中的最后一层由 Model 把
     // ModelSpec 中登记的 schema 显式传入。
-    [[nodiscard]] virtual Result<TensorSchema> output_schema() const
+    [[nodiscard]] virtual exstl::Result<TensorSchema> output_schema() const
     {
         return TensorSchema::create(std::string(layer_name()) + ".output",
                                     {tensor_field("output")});
     }
 
-    [[nodiscard]] virtual Result<NamedTensorSet> forward_named(const Tensor& input)
+    [[nodiscard]] virtual exstl::Result<NamedTensorSet> forward_named(const Tensor& input)
     {
-        NN_TRY(schema, output_schema());
+        EX_TRY(schema, output_schema());
         return forward_named(input, *schema);
     }
 
-    [[nodiscard]] virtual Result<NamedTensorSet> forward_named(const Tensor& input,
+    [[nodiscard]] virtual exstl::Result<NamedTensorSet> forward_named(const Tensor& input,
                                                                const TensorSchema& schema)
     {
         if (!schema.valid() || schema.size() != 1)
-            NN_FAIL(std::string("Layer::forward_named: 默认单输出层要求 schema 恰有"
+            EX_FAIL(std::string("Layer::forward_named: 默认单输出层要求 schema 恰有"
                                 "一个字段（层=") +
                     layer_name() + "）");
-        NN_TRY(out, forward(input));
+        EX_TRY(out, forward(input));
         std::vector<NamedTensor> values;
         values.push_back(NamedTensor{
             .name = schema.fields()[0].name,
@@ -394,25 +394,25 @@ public:
         return NamedTensorSet::create(schema, std::move(values));
     }
 
-    [[nodiscard]] virtual Result<Tensor> backward_named(const GradientBundle& gradients)
+    [[nodiscard]] virtual exstl::Result<Tensor> backward_named(const GradientBundle& gradients)
     {
-        NN_TRY(schema, output_schema());
+        EX_TRY(schema, output_schema());
         return backward_named(gradients, *schema);
     }
 
-    [[nodiscard]] virtual Result<Tensor> backward_named(const GradientBundle& gradients,
+    [[nodiscard]] virtual exstl::Result<Tensor> backward_named(const GradientBundle& gradients,
                                                         const TensorSchema& schema)
     {
         if (!schema.valid() || schema.size() != 1)
-            NN_FAIL(std::string("Layer::backward_named: 默认单输出层要求 schema "
+            EX_FAIL(std::string("Layer::backward_named: 默认单输出层要求 schema "
                                 "恰有一个字段（层=") +
                     layer_name() + "）");
         if (gradients.schema() != schema)
-            NN_FAIL(std::string("Layer::backward_named: gradient schema 不匹配"
+            EX_FAIL(std::string("Layer::backward_named: gradient schema 不匹配"
                                 "（层=") +
                     layer_name() + "）");
         const FieldHandle handle{gradients.schema().fingerprint(), 0};
-        NN_TRY(g, gradients.require(handle));
+        EX_TRY(g, gradients.require(handle));
         return backward(**g);
     }
 
@@ -429,7 +429,7 @@ public:
     // 载入时形态不被接受（如把打包形态塞进普通 Linear）→ fail-fast。
     [[nodiscard]] virtual std::size_t param_count() { return parameters().size(); }
 
-    [[nodiscard]] virtual Result<ParamEntry> export_param(std::size_t index, ModelRole role)
+    [[nodiscard]] virtual exstl::Result<ParamEntry> export_param(std::size_t index, ModelRole role)
     {
         auto children = param_children();
         const std::size_t own = own_param_count_();
@@ -442,16 +442,16 @@ public:
                 if (index < n) return c->export_param(index, role);
                 index -= n;
             }
-            NN_FAIL(std::string("export_param: 参数下标越界（复合层=") + layer_name() + "）");
+            EX_FAIL(std::string("export_param: 参数下标越界（复合层=") + layer_name() + "）");
         }
         (void)role;
         auto ps = parameters();
         if (index >= ps.size())
-            NN_FAIL(std::string("export_param: 参数下标越界（层=") + layer_name() + "）");
+            EX_FAIL(std::string("export_param: 参数下标越界（层=") + layer_name() + "）");
         return dense_entry_(ps[index].get());
     }
 
-    [[nodiscard]] virtual Result<void> import_param(std::size_t index, const ParamEntry& entry)
+    [[nodiscard]] virtual exstl::Result<void> import_param(std::size_t index, const ParamEntry& entry)
     {
         auto children = param_children();
         const std::size_t own = own_param_count_();
@@ -464,14 +464,14 @@ public:
                 if (index < n) return c->import_param(index, entry);
                 index -= n;
             }
-            NN_FAIL(std::string("import_param: 参数下标越界（复合层=") + layer_name() + "）");
+            EX_FAIL(std::string("import_param: 参数下标越界（复合层=") + layer_name() + "）");
         }
         if (entry.kind != ParamKind::Dense)
-            NN_FAIL(std::string("import_param: 该层不接受此参数形态（层=") + layer_name() +
+            EX_FAIL(std::string("import_param: 该层不接受此参数形态（层=") + layer_name() +
                     "，kind=" + param_kind_name(entry.kind) + "，可接受 {Dense}）");
         auto ps = parameters();
         if (index >= ps.size())
-            NN_FAIL(std::string("import_param: 参数下标越界（层=") + layer_name() + "）");
+            EX_FAIL(std::string("import_param: 参数下标越界（层=") + layer_name() + "）");
         Tensor& t = ps[index].get();
         return import_into_(t, entry);
     }
@@ -521,10 +521,10 @@ protected:
     }
 
     // 条目 → 目标张量（形状/精度校验；同精度零转换，异精度经引擎 cast）。
-    [[nodiscard]] Result<void> import_into_(Tensor& dst, const ParamEntry& e)
+    [[nodiscard]] exstl::Result<void> import_into_(Tensor& dst, const ParamEntry& e)
     {
         if (e.rows != dst.rows() || e.cols != dst.cols())
-            NN_FAIL(std::string("import_param: 形状不匹配（层=") + layer_name() + "，期望 " +
+            EX_FAIL(std::string("import_param: 形状不匹配（层=") + layer_name() + "，期望 " +
                     std::to_string(dst.rows()) + "x" + std::to_string(dst.cols()) + "，实际 " +
                     std::to_string(e.rows) + "x" + std::to_string(e.cols) + "）");
         if (e.payload.precision() == dst.precision()) return engine_ref().copy_into(dst, e.payload);
@@ -580,17 +580,17 @@ protected:
     //   add_prec = 两处残差相加的**表达式输出精度**。各块历史行为不同（GPT/
     //   Transformer 传 p.compute；RAPT 的残差相加历史上未传 profile、恒 F32），
     //   故显式传入以保持逐位不变——不要"顺手统一"成 p.compute。
-    [[nodiscard]] static Result<Tensor>
+    [[nodiscard]] static exstl::Result<Tensor>
     prenorm_residual_backward_(ComputeEngine& engine, const Tensor& grad_output, Layer& norm1,
                                Layer& sub1, Layer& norm2, Layer& sub2, Precision add_prec)
     {
-        NN_TRY(grad_s2, sub2.backward(grad_output));
-        NN_TRY(b_n2, norm2.backward(*grad_s2));
+        EX_TRY(grad_s2, sub2.backward(grad_output));
+        EX_TRY(b_n2, norm2.backward(*grad_s2));
         auto grad_x2 = dsl::compute(engine, dsl::leaf(grad_output) + dsl::leaf(*b_n2),
                                     grad_output.rows(), grad_output.cols(), add_prec);
-        NN_TRY_CHECK(grad_x2);
-        NN_TRY(grad_s1, sub1.backward(*grad_x2));
-        NN_TRY(b_n1, norm1.backward(*grad_s1));
+        EX_TRY_CHECK(grad_x2);
+        EX_TRY(grad_s1, sub1.backward(*grad_x2));
+        EX_TRY(b_n1, norm1.backward(*grad_s1));
         return dsl::compute(engine, dsl::leaf(*grad_x2) + dsl::leaf(*b_n1), grad_x2->rows(),
                             grad_x2->cols(), add_prec);
     }
@@ -598,23 +598,23 @@ protected:
     // ── Pre-Norm 残差块前向的一个残差分支 ─────────────────────────────────
     // 返回 x + sub(norm(x))（GPT/Transformer/RAPT 三块的两个残差分支共用）。
     //   add_prec 同上：显式传以保持各块历史精度行为逐位不变。
-    [[nodiscard]] static Result<Tensor> prenorm_residual_forward_(ComputeEngine& engine,
+    [[nodiscard]] static exstl::Result<Tensor> prenorm_residual_forward_(ComputeEngine& engine,
                                                                   const Tensor& x, Layer& norm,
                                                                   Layer& sub, Precision add_prec)
     {
-        NN_TRY(n, norm.forward(x));
-        NN_TRY(s, sub.forward(*n));
+        EX_TRY(n, norm.forward(x));
+        EX_TRY(s, sub.forward(*n));
         return dsl::compute(engine, dsl::leaf(x) + dsl::leaf(*s), x.rows(), x.cols(), add_prec);
     }
 
 public:
     // 梯度清零（每个训练 step 开始前调用）
-    [[nodiscard]] virtual Result<void> zero_grad()
+    [[nodiscard]] virtual exstl::Result<void> zero_grad()
     {
         ComputeEngine& engine = engine_ref();
         for (auto& grad : param_gradients())
         {
-            NN_TRY(r, engine.zero(grad));
+            EX_TRY(r, engine.zero(grad));
         }
         return {};
     }
@@ -637,7 +637,7 @@ public:
     // 非可学习状态收集（默认空，BatchNorm 的 running 统计量等需要 override）
     [[nodiscard]] virtual std::vector<TensorRef> extra_state() { return {}; }
 
-    // 引擎相关初始化（创建/上传权重张量），替换构造函数中的 NN_ASSERT 模式。
+    // 引擎相关初始化（创建/上传权重张量），替换构造函数中的 EX_ASSERT 模式。
     // **NVI（M6 段 C）**：公共入口负责绑定 engine_，各层 override `init_impl`
     //（层代码不感知绑定，改名由编译器穷尽驱动：`init(...) override` → `init_impl`）。
     // 默认实现空操作；各层在构造后由 Model::add<T>() 调用（测试里也必须调一次）。
@@ -648,24 +648,24 @@ public:
     // **不需要任何聚合/递归求交逻辑**（那会把静态声明变成递归求交，复杂度升一个量级）。
     // 校验必须在 init_impl **之前**：init_impl 会用 p_.param 建权重张量
     //（T1_58 走到那里才会报"不是存储精度"，离根因太远）。
-    [[nodiscard]] Result<void> init(ComputeEngine& engine)
+    [[nodiscard]] exstl::Result<void> init(ComputeEngine& engine)
     {
         // 纯静态校验先做：失败时层保持未绑定，不留下"指针已写、init_impl 没跑"
         // 的半初始化状态（旧实现会把它误判成"已 init"，后续改 profile 直接 abort）。
-        NN_TRY_CHECK(check_precision_support_());
+        EX_TRY_CHECK(check_precision_support_());
 
         // 强引用提升：引擎必须由 shared_ptr 管理。栈上引擎无法保证"层存活
         // 期间引擎不析构"，因此在入口明确拒绝，而不是留下悬垂引用。
         auto keepalive = engine.weak_from_this().lock();
         if (!keepalive)
-            NN_FAIL(std::string("Layer::init: 引擎必须由 shared_ptr 管理"
+            EX_FAIL(std::string("Layer::init: 引擎必须由 shared_ptr 管理"
                                 "（使用 CpuEngine::create() / GpuEngine::create()）；层=") +
                     layer_name());
 
         if (binding_state_ == BindingState::ready)
         {
             if (engine_.get() != &engine)
-                NN_FAIL(std::string("Layer 已绑定到另一个引擎（层=") + layer_name() +
+                EX_FAIL(std::string("Layer 已绑定到另一个引擎（层=") + layer_name() +
                         "）：跨引擎重绑会让旧权重留在原引擎、新引擎读到未初始化存储；"
                         "请构造新层");
         }
@@ -687,9 +687,9 @@ public:
     }
 
     // 便捷重载：引擎工厂返回 shared_ptr，调用方不必手写 *engine。
-    [[nodiscard]] Result<void> init(const std::shared_ptr<ComputeEngine>& engine)
+    [[nodiscard]] exstl::Result<void> init(const std::shared_ptr<ComputeEngine>& engine)
     {
-        if (!engine) NN_FAIL("Layer::init: engine 为空");
+        if (!engine) EX_FAIL("Layer::init: engine 为空");
         return init(*engine);
     }
 
@@ -704,14 +704,14 @@ public:
     // 子层，故每个子层各自校验一次即可、不会漏。`precision_bytes(p_.param) == 0`
     // 的情形（T1_58 等非存储精度声明）跳过——那时参数形态由层自定（BitLinear
     // 的 latent 恒 f32）。
-    [[nodiscard]] Result<void> check_param_precision_()
+    [[nodiscard]] exstl::Result<void> check_param_precision_()
     {
         if (precision_bytes(p_.param) == 0) return {};
         for (const TensorRef& ref : parameters())
         {
             const Tensor& t = ref.get();
             if (t.precision() != p_.param)
-                NN_FAIL(std::string("参数存储精度与 param 槽不一致: 层 ") + layer_name() + " 的 " +
+                EX_FAIL(std::string("参数存储精度与 param 槽不一致: 层 ") + layer_name() + " 的 " +
                         t.shape_str() + " 实际 " + precision_name(t.precision()) +
                         "，但 param=" + precision_name(p_.param) +
                         "（硬编码 F32 会让 --f16 在该层静默失效；见 docs/internal/18 P1-6 R2）");
@@ -721,7 +721,7 @@ public:
 
 protected:
     // ── 能力校验实现：把 profile 的四个槽逐个对照 precision_support() ────────
-    [[nodiscard]] Result<void> check_precision_support_() const
+    [[nodiscard]] exstl::Result<void> check_precision_support_() const
     {
         const PrecisionSupport sup = precision_support();
         const PrecisionProfile& p = p_;
@@ -735,10 +735,10 @@ protected:
     }
 
     // 错误信息口径（§7 验收 2）：层名 + 槽位 + 取值 + 该槽**允许的集合**
-    [[nodiscard]] Result<void> precision_slot_error_(const char* slot, Precision got,
+    [[nodiscard]] exstl::Result<void> precision_slot_error_(const char* slot, Precision got,
                                                      const PrecisionSet& allowed) const
     {
-        NN_FAIL(std::string("精度能力校验失败: 层 ") + layer_name() + " 不支持 " + slot + "=" +
+        EX_FAIL(std::string("精度能力校验失败: 层 ") + layer_name() + " 不支持 " + slot + "=" +
                 precision_name(got) + "（该槽允许: " + allowed.to_string() +
                 "）—— 见 docs/internal/21-quantized-weights.md §4.2");
     }
@@ -772,7 +772,7 @@ public:
     // 从保存的输入重算 forward，重建本层 backward 所需的中间缓存。
     // 默认实现：临时关闭 checkpoint 模式重跑 forward（保留缓存）再恢复。
     // 复合层（GPTBlock 等）override 以同时关闭子层的 checkpoint 模式。
-    [[nodiscard]] virtual Result<Tensor> forward_recompute(const Tensor& saved_input)
+    [[nodiscard]] virtual exstl::Result<Tensor> forward_recompute(const Tensor& saved_input)
     {
         const bool prev = checkpoint_mode_;
         checkpoint_mode_ = false;
@@ -783,7 +783,7 @@ public:
 
 protected:
     // 各层的初始化实现（原 `init(ComputeEngine&)` override 全部改名至此）
-    [[nodiscard]] virtual Result<void> init_impl(ComputeEngine& /*engine*/) { return {}; }
+    [[nodiscard]] virtual exstl::Result<void> init_impl(ComputeEngine& /*engine*/) { return {}; }
 
 public:
     // 梯度检查点粒度（默认 0 = 不启用；由 GPTModel 等 override）
@@ -856,7 +856,7 @@ public:
     }
 
     // 导出：逐个写入 slab，写入后置空成员张量（数据已在 host slab）
-    [[nodiscard]] Result<void> export_activations(ComputeEngine& engine,
+    [[nodiscard]] exstl::Result<void> export_activations(ComputeEngine& engine,
                                                   std::vector<TensorRef> refs)
     {
         if (!enabled_) return {};
@@ -864,7 +864,7 @@ public:
         // 走到这里说明上一轮导出既没被 backward 消费、也没在 forward 入口丢弃
         // ——继续覆盖 slab 会让后续 backward 静默读到本轮写了一半的数据。
         if (offloaded_)
-            NN_FAIL("ActivationOffloader::export_activations: 上一轮导出的激活尚未 import"
+            EX_FAIL("ActivationOffloader::export_activations: 上一轮导出的激活尚未 import"
                     "（forward 未配对 backward，且 forward 入口未 discard）");
         // 只保留有效缓存：refs_/shapes_/offsets_ 必须逐项对齐（import 用同一下标
         // 写回 refs_），因此在这里**压缩**，而不是在写入循环里 skip 无效项。
@@ -889,7 +889,7 @@ public:
             // 更宽的精度（bf16/f64/t1_58）Phase 1 既不建 Tensor 也不进 slab。
             const Precision pr = ref.get().precision();
             if (pr != Precision::F32 && pr != Precision::F16)
-                NN_FAIL("ActivationOffloader::export_activations: 仅支持 f32/f16 激活（当前 " +
+                EX_FAIL("ActivationOffloader::export_activations: 仅支持 f32/f16 激活（当前 " +
                         std::string(precision_name(pr)) +
                         "）；bf16/f64/t1_58 请改用 --checkpoint-every");
             // 每个条目按 8 B 对齐：VkBufferCopy 的 offset 需 4 B 对齐，且 f16 的
@@ -908,12 +908,12 @@ public:
         // 缓存置空、import 再把 1×1 写回，等于毒化 backward。CLI 早已忽略该组合，
         // 这里对**所有**非 CLI 调用方统一 fail-fast（唯一的正确做法是别开）。
         if (engine.device() != Device::GPU)
-            NN_FAIL("ActivationOffloader::export_activations: activation offload 仅支持"
+            EX_FAIL("ActivationOffloader::export_activations: activation offload 仅支持"
                     " GPU 引擎（CPU 引擎的 offload 原语是 no-op，开启会破坏 backward；"
                     "请改用 --checkpoint-every）");
         if (!slab_.valid() || slab_bytes() < needed)
         {
-            NN_TRY(slab, engine.create_offload_buffer(needed));
+            EX_TRY(slab, engine.create_offload_buffer(needed));
             slab_ = std::move(*slab);
             // 契约 tripwire（#G1，仅 slab 重建时执行一次）：引擎必须分配出
             // ≥ 请求字节的容量（f32 视图 + 向上取整，与 slab_bytes() 同一常量）。
@@ -921,14 +921,14 @@ public:
             // 等 offload_save 的 M2 越界校验以"写越界"形态暴露，易误归因为
             // 偏移记账算错。
             if (slab_bytes() < needed)
-                NN_FAIL("ActivationOffloader::export_activations: offload slab 容量不足（slab_bytes="
+                EX_FAIL("ActivationOffloader::export_activations: offload slab 容量不足（slab_bytes="
                         + std::to_string(slab_bytes()) + " < needed=" + std::to_string(needed)
                         + "）——引擎分配口径与 ComputeEngine::kOffloadSlabElemBytes 失配");
         }
         for (std::size_t i = 0; i < refs_.size(); ++i)
         {
             auto& ref = refs_[i];
-            NN_TRY(r, engine.offload_save(slab_, offsets_[i], ref.get()));
+            EX_TRY(r, engine.offload_save(slab_, offsets_[i], ref.get()));
             shapes_.push_back({ref.get().rows(), ref.get().cols()});
             ref.get() = Tensor{};   // 释放 GPU 版（数据已在 host slab）
         }
@@ -937,14 +937,14 @@ public:
     }
 
     // 导入：从 host slab 恢复激活到缓存成员（backward 前调用，替代重计算）
-    [[nodiscard]] Result<void> import_activations(ComputeEngine& engine)
+    [[nodiscard]] exstl::Result<void> import_activations(ComputeEngine& engine)
     {
         if (!offloaded_) return {};
         for (std::size_t i = 0; i < offsets_.size(); ++i)
         {
             auto t = engine.offload_restore(slab_, offsets_[i], shapes_[i].first, shapes_[i].second,
                                             precisions_[i]);
-            NN_TRY_CHECK(t);
+            EX_TRY_CHECK(t);
             refs_[i].get() = std::move(*t);
         }
         offloaded_ = false;
@@ -961,12 +961,12 @@ public:
     // 若两侧口径失配：本函数会算错容量——高估时 export 的 `slab_bytes() >= needed`
     // 放行越界写；此时由引擎侧 M2 校验兜底（offload_save/restore 逐一校验
     // byte_offset+size 不越出 slab 容量，越界返回错误而非 GPU 越写），
-    // 错误经 export_activations 的 NN_TRY 上抛，不产生静默的显存破坏。
+    // 错误经 export_activations 的 EX_TRY 上抛，不产生静默的显存破坏。
     [[nodiscard]] std::size_t slab_bytes() const noexcept
     { return slab_.valid() ? slab_.size() * ComputeEngine::kOffloadSlabElemBytes : 0; }
 };
 
-[[nodiscard]] inline Result<Tensor> clone_tensor(ComputeEngine& engine, const Tensor& src)
+[[nodiscard]] inline exstl::Result<Tensor> clone_tensor(ComputeEngine& engine, const Tensor& src)
 { return engine.clone(src); }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1029,7 +1029,7 @@ struct SamplingConfig
 {
     const std::size_t n = logits.size();
     // RV-01：n == 0 时下面的 `logits[0]` / max 归约都越界 → 无条件终止
-    NN_ASSERT_ALWAYS(n > 0, "sample_next_token_: empty logits");
+    EX_ASSERT_ALWAYS(n > 0, "sample_next_token_: empty logits");
 
     // ── ⓪ 外部 logits 变换钩子（issue #34）：全部库内策略之前 ────────
     // 未设置（默认）时零开销，RNG 消耗序与旧路径逐位一致。

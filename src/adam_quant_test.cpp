@@ -15,7 +15,7 @@
 // ───────────────────────────────────────────────────────────────────────────
 
 #include <memory>
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cmath>
 #include <cstdio>
 #include <span>
@@ -132,7 +132,7 @@ bool train_mlp(nn::ComputeEngine& eng, const char* opt_name, int steps, nn::Scal
                std::vector<nn::Scalar>& w_before_out, std::vector<nn::Scalar>& w_after_out)
 {
     nn::PrecisionProfile prof;   // 默认 f32
-    nn::Result<nn::Model> m_r =
+    exstl::Result<nn::Model> m_r =
         nn::build_mnist_mlp_model(eng, nn::MNIST_LAYER_DIMS, nn::NormType::LayerNorm, prof);
     if (!m_r) return false;
     nn::Model& model = *m_r;
@@ -264,7 +264,7 @@ int main(int argc, char* argv[])
         nn::cli::EngineConfig ec;
         ec.use_gpu = true;
         auto eng_r = nn::cli::create_engine(ec);
-        NN_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
+        EX_EXIT(eng_r, 77, "GPU 不可用，跳过: ");
         test_state_bytes(**eng_r, "GPU");
         test_scales(**eng_r, "GPU");
         test_zero_grad_first_step(**eng_r, "GPU");

@@ -13,7 +13,7 @@
 //   [7] Layer init 失败回滚与 profile 注入
 // ─────────────────────────────────────────────────────────────────────────
 
-#include <nn_error_macros.hpp>
+#include <exstl/error_macros.hpp>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -44,19 +44,19 @@ namespace
 class FlakyLayer : public nn::Layer
 {
 public:
-    [[nodiscard]] nn::Result<nn::Tensor> forward(const nn::Tensor&) override
-    { NN_FAIL("FlakyLayer::forward: 未实现"); }
-    [[nodiscard]] nn::Result<nn::Tensor> backward(const nn::Tensor&) override
-    { NN_FAIL("FlakyLayer::backward: 未实现"); }
+    [[nodiscard]] exstl::Result<nn::Tensor> forward(const nn::Tensor&) override
+    { EX_FAIL("FlakyLayer::forward: 未实现"); }
+    [[nodiscard]] exstl::Result<nn::Tensor> backward(const nn::Tensor&) override
+    { EX_FAIL("FlakyLayer::backward: 未实现"); }
     [[nodiscard]] const char* layer_name() const noexcept override { return "FlakyLayer"; }
 
     int attempts = 0;
 
 protected:
-    [[nodiscard]] nn::Result<void> init_impl(nn::ComputeEngine&) override
+    [[nodiscard]] exstl::Result<void> init_impl(nn::ComputeEngine&) override
     {
         ++attempts;
-        if (attempts == 1) NN_FAIL("first init fails（测试注入）");
+        if (attempts == 1) EX_FAIL("first init fails（测试注入）");
         return {};
     }
 };
