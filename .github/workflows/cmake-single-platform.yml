@@ -114,18 +114,28 @@ jobs:
         "$SDK_DIR/bin/glslc" --version
 
     # ========== Windows: 安装 LLVM Clang + Ninja ==========
+    # ⚠ 必须 ≥ Clang 22：windows-latest 的 MSVC STL（VS 18 / 14.52）在
+    # yvals_core.h 里 static_assert「expected Clang 22 or newer」——runner 预装
+    # 的 llvm 20.1.8 会被 choco 判「already installed」而跳过升级 → BMI 编译
+    # 直接挂 STL1000。故显式装指定版本并核对 --version。
+    # ccache 不再走 choco（v1.17 实测 GitHub release 504 导致整 job 挂）；
+    # 由 hendrikmuhs/ccache-action 自行提供二进制。
     - name: Install Clang & Ninja (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        choco install llvm --yes --no-progress
+        $llvmVer = "22.1.0"
+        choco install llvm --version=$llvmVer --yes --no-progress --force
         choco install ninja --yes --no-progress
         choco install 7zip --yes --no-progress
-        # ccache：缓存编译产物，加速跨运行增量构建
-        choco install ccache --yes --no-progress
-        # 将 LLVM 的 bin 目录加入 PATH
+        # 将 LLVM 的 bin 目录加入 PATH（置于最前，压过 runner 预装旧版）
         $llvmPath = "C:\Program Files\LLVM\bin"
-        echo "$llvmPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        echo $llvmPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        & "$llvmPath\clang++.exe" --version
+        $cv = & "$llvmPath\clang++.exe" --version | Select-Object -First 1
+        if ($cv -notmatch 'clang version (2[2-9]|[3-9][0-9])') {
+          throw "Clang >= 22 required for MSVC STL; got: $cv"
+        }
 
     # 两边工具链安装完成后统一挂载 ccache。由 action 自己管理平台的默认
     # CCACHE_DIR、restore/save 与统计，避免手写 runner 路径漂移。

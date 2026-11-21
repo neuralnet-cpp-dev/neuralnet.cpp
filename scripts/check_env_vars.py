@@ -49,16 +49,20 @@ MACRO_OR_CMAKE = {
     'NN_EXECUTABLE_TARGETS', 'NN_MODULES_ENABLED', 'NN_PCH_CANDIDATES',
     'NN_PCH_COMPAT_OPTIONS', 'NN_SCAN_JOBS', 'NN_SCAN_NO_ANCHOR',
     'NN_DETAIL_', 'NN_TEST_COUNTER',
+    'NN_BMI_EXT',  # CMake：ifc/pcm 后缀选择
+    'NN_KVREC_INC', 'NN_EXSTL_INC',  # CMake：闭包路径变量
 }
 
 # 历史文档（归档性质，不参与"死变量"判定——它们记载的变量可能已被正当删除）
 HISTORY_DIRS = ('docs/history', 'docs/release-notes', 'docs/benchmarks', 'research')
 
+# 代码侧环境变量读取点（exstl 迁移后含 ::exstl::env::*；getenv 带 std:: 前缀）
 READ_PAT = re.compile(
     r'(?:env_flag_raw|env_string_raw|env_int_raw|probe_flag_raw|probe_string_raw|'
-    r'tool_env_flag|tool_env_int|env_flag|get_env|prec_env_flag)'
+    r'tool_env_flag|tool_env_int|env_flag|get_env|prec_env_flag|'
+    r'(?:exstl::)?env::flag|(?:(?:exstl::)?env)::str|(?:(?:exstl::)?env)::integer)'
     r'\("([A-Z][A-Z0-9_]{2,})"'
-    r'|getenv\("([A-Z][A-Z0-9_]{2,})"'
+    r'|(?:std::)?getenv\("([A-Z][A-Z0-9_]{2,})"'
     r'|_dupenv_s\(&buf, &len, "([A-Z][A-Z0-9_]{2,})"'
 )
 
@@ -86,6 +90,18 @@ def code_env_vars():
 
 def doc_env_vars():
     found = set()
+    # 归一化历史目录前缀：Windows 上 os.path.join(ROOT, 'docs/history')
+    # 仍是混合分隔符，与 abspath(p) 的 '\' 对不上 → history.md 漏排除
+    # （实测 NN_TEXT_INCLUDE_SHIM 仅存于 history 却被判死变量）。
+    hist_prefixes = tuple(
+        os.path.normcase(os.path.normpath(os.path.join(ROOT, h)))
+        for h in HISTORY_DIRS
+    )
+
+    def is_history(path: str) -> bool:
+        ap = os.path.normcase(os.path.normpath(os.path.abspath(path)))
+        return any(ap.startswith(hp) for hp in hist_prefixes)
+
     targets = [os.path.join(ROOT, 'AGENTS.md')]
     for sub in ('docs',):
         base = os.path.join(ROOT, sub)
@@ -93,17 +109,21 @@ def doc_env_vars():
             for fn in files:
                 if fn.endswith('.md'):
                     p = os.path.join(root, fn)
-                    if any(p.startswith(os.path.join(ROOT, h)) for h in HISTORY_DIRS):
+                    if is_history(p):
                         continue
                     targets.append(p)
     for p in targets:
-        if not os.path.isfile(p):
+        if not os.path.isfile(p) or is_history(p):
             continue
         with open(p, encoding='utf-8', errors='replace') as f:
             text = f.read()
         for m in DOC_VAR_PAT.finditer(text):
             v = m.group(1)
             if NON_ENV_PREFIX.match(v) or v in MACRO_OR_CMAKE:
+                continue
+            # 通配片段（`NN_FOLD_*` / `NN_MM_KSPLIT_*` 在文档里被 \b 截成
+            # `NN_FOLD_` / `NN_MM_KSPLIT_`）——不是真实变量名
+            if v.endswith('_'):
                 continue
             found.add(v)
     return {v for v in found if v not in PLATFORM_VARS}
